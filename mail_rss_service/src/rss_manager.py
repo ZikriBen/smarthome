@@ -28,6 +28,7 @@ def add_item(uid: str, from_addr: str, subject: str, summary: str, published: st
     item = {
         "guid": uid,
         "title": subject or f"Email from {from_addr}",
+        "link": settings.RSS_LINK,
         "summary": summary,
         "published": published,
         "from": from_addr,

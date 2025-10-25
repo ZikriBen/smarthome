@@ -1,8 +1,11 @@
-from settings import settings
+import logging
 
+from settings import settings
 from src.email_fetcher import fetch_latest_by_sender_scan
 from src.openai_parser import extract_data_with_openai
 from src.rss_manager import load_state, add_item
+
+logger = logging.getLogger(__name__)
 
 def poll_once():
     """Check for new email and add to RSS feed if found."""
@@ -17,7 +20,7 @@ def poll_once():
     )
 
     if not result:
-        print("[INFO] No matching email found")
+        logger.info("No matching email found")
         return None
 
     uid, from_addr, subject, body, iso_dt = result
@@ -25,10 +28,10 @@ def poll_once():
     # Check if already processed
     state = load_state()
     if state.get("last_uid") == uid:
-        print(f"[INFO] Email {uid} processed")
+        logger.info(f"Email {uid} processed")
         return None
 
-    print(f"[INFO] Processing new email from {from_addr}: {subject}")
+    logger.info(f"Processing new email from {from_addr}: {subject}")
 
     # Extract/parse data with OpenAI
     parsed_summary = extract_data_with_openai(body)
@@ -37,7 +40,7 @@ def poll_once():
     added = add_item(uid, from_addr, subject, parsed_summary, iso_dt)
 
     if added:
-        print(f"[INFO] Added new feed item: {subject}")
+        logger.info(f"Added new feed item: {subject}")
         return {
             "uid": uid,
             "from": from_addr,

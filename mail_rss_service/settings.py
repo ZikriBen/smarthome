@@ -17,7 +17,7 @@ class Settings(BaseSettings):
 
     # RSS settings
     RSS_TITLE: str = "Email RSS Feed"
-    RSS_LINK: str = "http://localhost/rss"
+    RSS_LINK: str = "http://localhost:8000/rss"
     MAX_ITEMS: int = 50
 
     # Polling interval in seconds (e.g., 3600 = 1 hour)
@@ -25,6 +25,7 @@ class Settings(BaseSettings):
 
     # State file
     STATE_FILE: str = "data/state.json"
+    LOG_LEVEL : str = "INFO"
 
     class Config:
         env_file = ".env"
