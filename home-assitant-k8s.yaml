@@ -1,0 +1,85 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: home-assistant-config
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi   # 512Mi is too small in practice
+  storageClassName: local-path
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: home-assistant
+  labels:
+    app: home-assistant
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: home-assistant
+  template:
+    metadata:
+      labels:
+        app: home-assistant
+    spec:
+      # Discoveries (mDNS/SSDP) and USB integrations work best with host networking
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      nodeSelector:
+        environment: zigbee
+      containers:
+        - name: home-assistant
+          image: ghcr.io/home-assistant/home-assistant:stable
+          securityContext:
+            privileged: true   # often needed for USB access; you can tighten later
+          env:
+            - name: TZ
+              value: "Asia/Jerusalem"
+          ports:
+            - containerPort: 8123
+          volumeMounts:
+            - name: home-assistant-config
+              mountPath: /config
+            - name: tz
+              mountPath: /etc/localtime
+              readOnly: true
+            - name: udev
+              mountPath: /run/udev
+              readOnly: true
+            - name: serial
+              mountPath: /dev/serial/by-id
+              readOnly: false
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 8123
+              scheme: HTTP
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 8123
+              scheme: HTTP
+            initialDelaySeconds: 60
+            periodSeconds: 20
+      volumes:
+        - name: home-assistant-config
+          persistentVolumeClaim:
+            claimName: home-assistant-config
+        - name: tz
+          hostPath:
+            path: /etc/localtime
+            type: File
+        - name: udev
+          hostPath:
+            path: /run/udev
+            type: Directory
+        - name: serial
+          hostPath:
+            path: /dev/serial/by-id
+            type: Directory
