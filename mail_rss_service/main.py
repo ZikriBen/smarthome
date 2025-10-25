@@ -2,8 +2,8 @@ import asyncio
 from fastapi import FastAPI, Response
 from contextlib import asynccontextmanager, suppress
 from settings import settings
-import rss_manager
-import email_poller as email_poller
+import src.rss_manager as rss_manager
+import src.email_poller as email_poller
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):

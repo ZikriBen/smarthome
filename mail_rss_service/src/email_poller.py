@@ -1,7 +1,8 @@
-from email_fetcher import fetch_latest_by_sender_scan
-from openai_parser import extract_data_with_openai
 from settings import settings
-from rss_manager import load_state, save_state, add_item
+
+from src.email_fetcher import fetch_latest_by_sender_scan
+from src.openai_parser import extract_data_with_openai
+from src.rss_manager import load_state, add_item
 
 def poll_once():
     """Check for new email and add to RSS feed if found."""
