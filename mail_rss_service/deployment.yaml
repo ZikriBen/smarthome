@@ -35,7 +35,7 @@ spec:
         image: zikriben/mail-rss-service:latest
         envFrom:
         - secretRef:
-          name: mail-rss-secrets
+            name: mail-rss-secrets
         imagePullPolicy: IfNotPresent
         ports:
         - containerPort: 8000
