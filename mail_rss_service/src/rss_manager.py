@@ -1,4 +1,5 @@
-import json, hashlib, os
+import os
+import json
 from feedgen.feed import FeedGenerator
 from settings import settings
 
@@ -15,8 +16,6 @@ def save_state(state):
     with open(path, "w", encoding="utf-8") as f:
         json.dump(state, f, indent=2)
 
-def uid_guid(uid):
-    return hashlib.sha1(uid.encode()).hexdigest()
 
 def add_item(uid: str, from_addr: str, subject: str, summary: str, published: str):
     """Add a new item to the RSS feed."""
@@ -27,7 +26,7 @@ def add_item(uid: str, from_addr: str, subject: str, summary: str, published: st
         return False
 
     item = {
-        "guid": uid_guid(uid),
+        "guid": uid,
         "title": subject or f"Email from {from_addr}",
         "summary": summary,
         "published": published,

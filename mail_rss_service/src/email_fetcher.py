@@ -1,7 +1,6 @@
-# email_fetcher_sender.py
-from imap_tools import MailBox, AND
-from datetime import timezone
 import re
+from imap_tools import MailBox, AND # pyright: ignore[reportPrivateImportUsage]
+from datetime import timezone
 from typing import Optional, Tuple
 
 def _to_plain_text(text: str | None, html: str | None) -> str:
