@@ -1,7 +1,7 @@
 [project]
 name = "mail-rss-service"
 version = "0.1.0"
-description = "Add your description here"
+description = "Fetch latest email matching a sender, extract structured data via OpenAI, and expose as RSS for Home Assistant."
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [

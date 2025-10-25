@@ -9,7 +9,7 @@ class Settings(BaseSettings):
     IMAP_MAILBOX: str = "INBOX"
 
     # Filtering
-    EMAIL_SENDER: str = "2halachotbeyom@2halachot.org"
+    EMAIL_SENDER: str = ""
     EXACT_MATCH: bool = True
 
     # OpenAI
