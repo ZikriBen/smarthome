@@ -22,5 +22,7 @@ def extract_data_with_openai(text: str) -> str:
             {"role": "user", "content": text},
         ],
     )
+    if not resp.choices or not resp.choices[0].message or not resp.choices[0].message.content:
+        return text[:500]
 
     return resp.choices[0].message.content
