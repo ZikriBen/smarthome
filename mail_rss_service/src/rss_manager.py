@@ -2,6 +2,7 @@ import os
 import json
 from feedgen.feed import FeedGenerator
 from settings import settings
+import datetime
 
 def load_state():
     path = settings.STATE_FILE
@@ -28,15 +29,14 @@ def add_item(uid: str, from_addr: str, subject: str, summary: str, published: st
     item = {
         "guid": uid,
         "title": subject or f"Email from {from_addr}",
-        "link": settings.RSS_LINK,
+        "link": settings.RSS_LINK + f'/{uid}',
         "summary": summary,
         "published": published,
         "from": from_addr,
     }
 
     # Add new item and keep only MAX_ITEMS
-    items = [item] + state.get("items", [])
-    state["items"] = items[:settings.MAX_ITEMS]
+    state["items"] = [item]
     state["last_uid"] = uid
     save_state(state)
     return True
@@ -57,6 +57,7 @@ def build_rss():
         fe.link(href=it["link"])
         fe.description(it["summary"])
         fe.published(it["published"])
+        fg.lastBuildDate(datetime.datetime.now(datetime.timezone.utc))
 
     return fg.rss_str(pretty=True, encoding='utf-8')
 
