@@ -1,0 +1,86 @@
+
+# PersistentVolumeClaim for state storage
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: ac-ir-controller-data
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 256Mi
+  storageClassName: local-path
+
+---
+# Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ac-ir-controller
+  labels:
+    app: ac-ir-controller
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ac-ir-controller
+  template:
+    metadata:
+      labels:
+        app: ac-ir-controller
+    spec:
+      containers:
+      - name: ac-ir-controller
+        image: zikriben/ac-ir-controller:latest
+        envFrom:
+        - secretRef:
+            name: ac-ir-controller-secrets
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 8000
+          name: http
+        volumeMounts:
+        - name: data
+          mountPath: /app/data
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 30
+          periodSeconds: 120
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 10
+          periodSeconds: 10
+      volumes:
+      - name: data
+        persistentVolumeClaim:
+          claimName: ac-ir-controller-data
+
+---
+# Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: ac-ir-controller-service
+  labels:
+    app: ac-ir-controller
+spec:
+  type: ClusterIP
+  ports:
+  - port: 8000
+    targetPort: 8000
+    protocol: TCP
+    name: http
+  selector:
+    app: ac-ir-controller
