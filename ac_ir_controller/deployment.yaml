@@ -33,9 +33,6 @@ spec:
       containers:
       - name: ac-ir-controller
         image: zikriben/ac-ir-controller:latest
-        envFrom:
-        - secretRef:
-            name: ac-ir-controller-secrets
         imagePullPolicy: IfNotPresent
         ports:
         - containerPort: 8000
