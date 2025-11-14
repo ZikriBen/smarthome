@@ -13,5 +13,6 @@ dependencies = [
     "openai>=2.6.0",
     "pydantic>=2.12.3",
     "pydantic-settings>=2.11.0",
+    "tinytuya>=1.17.4",
     "uvicorn>=0.38.0",
 ]
