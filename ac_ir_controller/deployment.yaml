@@ -33,9 +33,6 @@ spec:
       containers:
       - name: ac-ir-controller
         image: ac-ir-controller:latest  # build locally, or prefix with your registry user
-        envFrom:
-        - secretRef:
-            name: ac-ir-controller-secrets
         imagePullPolicy: IfNotPresent
         ports:
         - containerPort: 8000
