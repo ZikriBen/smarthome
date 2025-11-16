@@ -4,6 +4,8 @@ from fastapi.responses import RedirectResponse
 from contextlib import asynccontextmanager
 from pydantic import BaseModel
 from settings import settings
+from src.code_mapper import load_codes, lookup_ir
+
 
 # Configure logging with timestamps
 logging.basicConfig(
@@ -20,12 +22,16 @@ class RequestCodePost(BaseModel):
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # startup
     logger.info("Starting application")
+    codes_path = getattr(settings, "CODES_PATH", "data/ir_codes.json")
+    try:
+        app.state.codes = load_codes(codes_path)
+    except Exception:
+        logger.exception("Failed to load IR codes from %s", codes_path)
+        raise
     try:
         yield
     finally:
-        # shutdown
         logger.info("Stopping application")
 
 app = FastAPI(
@@ -60,7 +66,12 @@ def fetch_ac_ir_codes(req: RequestCodePost):
     """Fetch AC IR codes endpoint."""
     # Placeholder implementation
     logger.info("Fetching AC IR codes")
-
+    
     return {
-        "payload": req,
+        lookup_ir(
+            app.state.codes,
+            req.mode,
+            req.fan_speed,
+            req.temperature,
+        )
     }

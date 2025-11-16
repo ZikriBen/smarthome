@@ -1,0 +1,61 @@
+{
+    "off": "IR_OFF_SAMPLE",
+    "heat": {
+        "low": {
+            "20": "IR_HEAT_LOW_20",
+            "21": "IR_HEAT_LOW_21",
+            "22": "IR_HEAT_LOW_22",
+            "23": "IR_HEAT_LOW_23",
+            "24": "IR_HEAT_LOW_24",
+            "25": "IR_HEAT_LOW_25",
+            "26": "IR_HEAT_LOW_26"
+        },
+        "medium": {
+            "20": "IR_HEAT_MEDIUM_20",
+            "21": "IR_HEAT_MEDIUM_21",
+            "22": "IR_HEAT_MEDIUM_22",
+            "23": "IR_HEAT_MEDIUM_23",
+            "24": "IR_HEAT_MEDIUM_24",
+            "25": "IR_HEAT_MEDIUM_25",
+            "26": "IR_HEAT_MEDIUM_26"
+        },
+        "high": {
+            "20": "IR_HEAT_HIGH_20",
+            "21": "IR_HEAT_HIGH_21",
+            "22": "IR_HEAT_HIGH_22",
+            "23": "IR_HEAT_HIGH_23",
+            "24": "IR_HEAT_HIGH_24",
+            "25": "IR_HEAT_HIGH_25",
+            "26": "IR_HEAT_HIGH_26"
+        }
+    },
+    "cool": {
+        "low": {
+            "20": "IR_COOL_LOW_20",
+            "21": "IR_COOL_LOW_21",
+            "22": "IR_COOL_LOW_22",
+            "23": "IR_COOL_LOW_23",
+            "24": "IR_COOL_LOW_24",
+            "25": "IR_COOL_LOW_25",
+            "26": "IR_COOL_LOW_26"
+        },
+        "medium": {
+            "20": "IR_COOL_MEDIUM_20",
+            "21": "IR_COOL_MEDIUM_21",
+            "22": "IR_COOL_MEDIUM_22",
+            "23": "IR_COOL_MEDIUM_23",
+            "24": "IR_COOL_MEDIUM_24",
+            "25": "IR_COOL_MEDIUM_25",
+            "26": "IR_COOL_MEDIUM_26"
+        },
+        "high": {
+            "20": "IR_COOL_HIGH_20",
+            "21": "IR_COOL_HIGH_21",
+            "22": "IR_COOL_HIGH_22",
+            "23": "IR_COOL_HIGH_23",
+            "24": "IR_COOL_HIGH_24",
+            "25": "IR_COOL_HIGH_25",
+            "26": "IR_COOL_HIGH_26"
+        }
+    }
+}
