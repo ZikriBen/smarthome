@@ -2,7 +2,7 @@ type: custom:button-card
 name: LivingRoom
 styles:
   grid:
-    - grid-template-areas: "\"temp btn2 btn1\" \"n btn2 btn1\""
+    - grid-template-areas: '"temp btn2 btn1" "n btn2 btn1"'
     - grid-template-columns: 1fr min-content min-content
     - grid-template-rows: 65% 1fr
   card:
