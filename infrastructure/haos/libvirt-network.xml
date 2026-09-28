@@ -1,0 +1,18 @@
+<network>
+  <name>default</name>
+  <uuid>bc629cd8-d711-424c-bf1f-2e8f109e8738</uuid>
+  <forward mode='nat'>
+    <nat>
+      <port start='1024' end='65535'/>
+    </nat>
+  </forward>
+  <bridge name='virbr0' stp='on' delay='0'/>
+  <mac address='52:54:00:45:36:72'/>
+  <ip address='192.168.122.1' netmask='255.255.255.0'>
+    <dhcp>
+      <range start='192.168.122.2' end='192.168.122.254'/>
+      <host mac='52:54:00:ba:90:c4' name='homeassistant' ip='192.168.122.119'/>
+    </dhcp>
+  </ip>
+</network>
+

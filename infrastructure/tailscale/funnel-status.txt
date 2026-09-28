@@ -1,0 +1,11 @@
+
+# Funnel on:
+#     - https://home-server-ubuntu.tailf473.ts.net
+#     - https://home-server-ubuntu.tailf473.ts.net:8443
+
+https://home-server-ubuntu.tailf473.ts.net (Funnel on)
+|-- / proxy http://127.0.0.1:8088
+
+https://home-server-ubuntu.tailf473.ts.net:8443 (Funnel on)
+|-- / proxy http://192.168.122.119:8123
+

@@ -1,0 +1,9 @@
+100.124.149.125  home-server-ubuntu  zikri.ben@  linux    -                            
+100.77.48.38     bens-macbook-pro-1  zikri.ben@  macOS    offline, last seen 13h ago   
+100.114.109.110  galaxy-s25          zikri.ben@  android  offline, last seen 17d ago   
+100.86.70.121    xiaomi-2311drk48g   zikri.ben@  android  offline, last seen 326d ago  
+
+# Funnel on:
+#     - https://home-server-ubuntu.tailf473.ts.net
+#     - https://home-server-ubuntu.tailf473.ts.net:8443
+
