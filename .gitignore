@@ -1,0 +1,26 @@
+cat >> ~/smarthome/.gitignore <<'EOF'
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+
+# macOS
+.DS_Store
+
+# Secrets
+.env
+.env.*
+!.env.example
+
+# Docker persistent data
+**/data/
+**/*_data/
+
+# Logs
+*.log
+EOF
+
+.env
+.env.*
+!.env.example
