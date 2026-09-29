@@ -7,35 +7,62 @@ from app.models import DownloadJob
 from app.notifications import accepted_message
 
 
-def get_filename(message: Message) -> str | None:
+def get_filename(
+    message: Message,
+) -> str | None:
     if message.file:
         return message.file.name
 
     return None
 
 
-def get_file_size(message: Message) -> int | None:
+def get_file_size(
+    message: Message,
+) -> int | None:
     if message.file:
         return message.file.size
 
     return None
 
 
-async def get_sender_name(message: Message) -> tuple[int | None, str | None]:
+async def get_sender_name(
+    message: Message,
+) -> tuple[int | None, str | None]:
     sender = await message.get_sender()
 
     if not sender:
         return None, None
 
-    sender_id = getattr(sender, "id", None)
+    sender_id = getattr(
+        sender,
+        "id",
+        None,
+    )
 
-    first_name = getattr(sender, "first_name", None)
-    last_name = getattr(sender, "last_name", None)
-    username = getattr(sender, "username", None)
+    first_name = getattr(
+        sender,
+        "first_name",
+        None,
+    )
+
+    last_name = getattr(
+        sender,
+        "last_name",
+        None,
+    )
+
+    username = getattr(
+        sender,
+        "username",
+        None,
+    )
 
     name = " ".join(
         part
-        for part in (first_name, last_name)
+        for part in (
+            first_name,
+            last_name,
+        )
         if part
     )
 
@@ -45,11 +72,12 @@ async def get_sender_name(message: Message) -> tuple[int | None, str | None]:
     return sender_id, name or None
 
 
-def contains_downloadable_media(message: Message) -> bool:
+def contains_downloadable_media(
+    message: Message,
+) -> bool:
     if not message.media:
         return False
 
-    # Telegram videos are frequently sent as generic documents.
     if message.video:
         return True
 
@@ -74,37 +102,16 @@ class TelegramService:
             config.telegram_api_hash,
         )
 
-    async def print_dialogs(self) -> None:
-        print("\nTelegram dialogs:")
-        print("-" * 80)
-
-        async for dialog in self.client.iter_dialogs(limit=50):
-            print(
-                f"{dialog.id:<22} "
-                f"{dialog.name}"
-            )
-
-        print("-" * 80)
-
-    async def start(self) -> None:
+    async def connect(self) -> None:
         await self.client.start()
 
         me = await self.client.get_me()
 
         print(
-            f"Connected to Telegram as "
-            f"{me.first_name} ({me.id})"
+            "Connected to Telegram as "
+            f"{me.first_name} ({me.id})",
+            flush=True,
         )
-
-        if self.config.telegram_chat_id is None:
-            print()
-            print("TELEGRAM_CHAT_ID is not configured.")
-            await self.print_dialogs()
-            print()
-            print(
-                "Set TELEGRAM_CHAT_ID in .env and restart."
-            )
-            return
 
         self.client.add_event_handler(
             self.on_new_message,
@@ -115,9 +122,11 @@ class TelegramService:
 
         print(
             "Listening to Telegram chat "
-            f"{self.config.telegram_chat_id}"
+            f"{self.config.telegram_chat_id}",
+            flush=True,
         )
 
+    async def run(self) -> None:
         await self.client.run_until_disconnected()
 
     async def on_new_message(
@@ -126,12 +135,16 @@ class TelegramService:
     ) -> None:
         message = event.message
 
-        if not contains_downloadable_media(message):
+        if not contains_downloadable_media(
+            message
+        ):
             return
 
         chat = await message.get_chat()
 
-        sender_id, sender_name = await get_sender_name(message)
+        sender_id, sender_name = (
+            await get_sender_name(message)
+        )
 
         job = DownloadJob(
             telegram_chat_id=event.chat_id,
@@ -141,27 +154,37 @@ class TelegramService:
                 None,
             ),
             telegram_message_id=message.id,
-            telegram_media_group_id=message.grouped_id,
+            telegram_media_group_id=(
+                message.grouped_id
+            ),
             sender_id=sender_id,
             sender_name=sender_name,
             caption=message.text or None,
-            original_filename=get_filename(message),
+            original_filename=(
+                get_filename(message)
+            ),
             file_size=get_file_size(message),
         )
 
-        created = await self.database.create_job(job)
+        created = (
+            await self.database.create_job(job)
+        )
 
         if not created:
             print(
                 "Ignoring duplicate message "
-                f"{event.chat_id}/{message.id}"
+                f"{event.chat_id}/"
+                f"{message.id}",
+                flush=True,
             )
             return
 
         print(
             "Accepted job "
-            f"{event.chat_id}/{message.id} "
-            f"{job.original_filename}"
+            f"{event.chat_id}/"
+            f"{message.id} "
+            f"{job.original_filename}",
+            flush=True,
         )
 
         await message.reply(
