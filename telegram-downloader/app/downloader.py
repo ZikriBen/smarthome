@@ -7,8 +7,14 @@ from pathlib import Path
 
 from telethon import TelegramClient
 
+from app.classifier import (
+    MediaType,
+    classify_media,
+)
 from app.config import Config
 from app.database import Database
+from app.jellyfin import JellyfinClient
+from app.media_paths import build_media_path
 from app.models import JobRecord
 from app.notifications import (
     available_message,
@@ -16,7 +22,7 @@ from app.notifications import (
 )
 
 
-REQUEST_SIZE = 512 * 1024  # 512 KiB
+REQUEST_SIZE = 512 * 1024
 
 
 def safe_filename(
@@ -45,7 +51,6 @@ class ProgressReporter:
         self.job = job
         self.initial_bytes = initial_bytes
         self.interval = interval
-
         self.started = time.monotonic()
         self.last_print = 0.0
 
@@ -57,7 +62,8 @@ class ProgressReporter:
         now = time.monotonic()
 
         if (
-            now - self.last_print < self.interval
+            now - self.last_print
+            < self.interval
             and current != total
         ):
             return
@@ -69,20 +75,25 @@ class ProgressReporter:
             0.001,
         )
 
-        transferred_this_run = max(
+        transferred = max(
             current - self.initial_bytes,
             0,
         )
 
         speed_mb_s = (
-            transferred_this_run
+            transferred
             / 1024
             / 1024
             / elapsed
         )
 
-        current_mb = current / 1024 / 1024
-        total_mb = total / 1024 / 1024
+        current_mb = (
+            current / 1024 / 1024
+        )
+
+        total_mb = (
+            total / 1024 / 1024
+        )
 
         percent = (
             current / total * 100
@@ -92,7 +103,8 @@ class ProgressReporter:
 
         print(
             f"[job {self.job.id}] "
-            f"{current_mb:.1f}/{total_mb:.1f} MB "
+            f"{current_mb:.1f}/"
+            f"{total_mb:.1f} MB "
             f"({percent:.1f}%) "
             f"{speed_mb_s:.1f} MB/s",
             flush=True,
@@ -110,9 +122,27 @@ class Downloader:
         self.database = database
         self.client = client
 
+        self.jellyfin = JellyfinClient(
+            config
+        )
+
+        self.media_root = Path(
+            config.media_root
+        )
+
         self.incoming_dir = (
-            Path(config.media_root)
+            self.media_root
             / "incoming"
+        )
+
+        self.tv_dir = (
+            self.media_root
+            / "tv"
+        )
+
+        self.movies_dir = (
+            self.media_root
+            / "movies"
         )
 
         self.part_dir = (
@@ -120,15 +150,16 @@ class Downloader:
             / ".part"
         )
 
-        self.incoming_dir.mkdir(
-            parents=True,
-            exist_ok=True,
-        )
-
-        self.part_dir.mkdir(
-            parents=True,
-            exist_ok=True,
-        )
+        for directory in (
+            self.incoming_dir,
+            self.tv_dir,
+            self.movies_dir,
+            self.part_dir,
+        ):
+            directory.mkdir(
+                parents=True,
+                exist_ok=True,
+            )
 
     def get_free_disk_gb(self) -> float:
         usage = shutil.disk_usage(
@@ -146,6 +177,94 @@ class Downloader:
         return (
             self.get_free_disk_gb()
             >= self.config.min_free_disk_gb
+        )
+
+    def get_final_path(
+        self,
+        job: JobRecord,
+        filename: str,
+    ) -> Path:
+        classification = classify_media(
+            filename=job.original_filename,
+            caption=job.caption,
+        )
+
+        if (
+            classification.media_type
+            in (
+                MediaType.TV,
+                MediaType.MOVIE,
+            )
+        ):
+            final_path = build_media_path(
+                media_root=str(
+                    self.media_root
+                ),
+                classification=classification,
+                original_filename=filename,
+            )
+
+            if (
+                classification.media_type
+                == MediaType.TV
+            ):
+                episode = (
+                    classification.episode
+                )
+
+                if episode is not None:
+                    if (
+                        episode.episode_end
+                        is not None
+                    ):
+                        episode_text = (
+                            f"S"
+                            f"{(episode.season or 0):02d}"
+                            f"E"
+                            f"{episode.episode_start:02d}"
+                            f"-E"
+                            f"{episode.episode_end:02d}"
+                        )
+                    else:
+                        episode_text = (
+                            f"S"
+                            f"{(episode.season or 0):02d}"
+                            f"E"
+                            f"{episode.episode_start:02d}"
+                        )
+
+                    print(
+                        f"[job {job.id}] "
+                        f"classified as TV: "
+                        f"{classification.title} "
+                        f"{episode_text}",
+                        flush=True,
+                    )
+
+            elif (
+                classification.media_type
+                == MediaType.MOVIE
+            ):
+                print(
+                    f"[job {job.id}] "
+                    f"classified as MOVIE: "
+                    f"{classification.title} "
+                    f"({classification.year})",
+                    flush=True,
+                )
+
+            return final_path
+
+        print(
+            f"[job {job.id}] "
+            "classification unknown; "
+            "keeping in incoming",
+            flush=True,
+        )
+
+        return (
+            self.incoming_dir
+            / filename
         )
 
     async def _download_resumable(
@@ -174,13 +293,12 @@ class Downloader:
         if existing_size > total_size:
             print(
                 f"[job {job.id}] "
-                "partial file larger than source; "
-                "starting over",
+                "partial file larger "
+                "than source; restarting",
                 flush=True,
             )
 
             part_path.unlink()
-
             existing_size = 0
 
         if existing_size == total_size:
@@ -189,7 +307,6 @@ class Downloader:
                 "partial file already complete",
                 flush=True,
             )
-
             return
 
         if existing_size:
@@ -211,24 +328,33 @@ class Downloader:
             else "wb"
         )
 
-        with part_path.open(mode) as output:
-            async for chunk in self.client.iter_download(
-                message.media,
-                offset=existing_size,
-                request_size=REQUEST_SIZE,
-                chunk_size=REQUEST_SIZE,
-                file_size=total_size,
+        with part_path.open(
+            mode
+        ) as output:
+            async for chunk in (
+                self.client.iter_download(
+                    message.media,
+                    offset=existing_size,
+                    request_size=REQUEST_SIZE,
+                    chunk_size=REQUEST_SIZE,
+                    file_size=total_size,
+                )
             ):
                 output.write(chunk)
 
-                current_size = output.tell()
+                current_size = (
+                    output.tell()
+                )
 
                 reporter.report(
                     current=current_size,
                     total=total_size,
                 )
 
-                if current_size >= total_size:
+                if (
+                    current_size
+                    >= total_size
+                ):
                     break
 
             output.flush()
@@ -247,28 +373,6 @@ class Downloader:
                 f"{total_size} bytes"
             )
 
-    async def _notify_low_disk(
-        self,
-        job: JobRecord,
-        filename: str,
-    ) -> None:
-        free_gb = self.get_free_disk_gb()
-
-        await self.client.send_message(
-            job.telegram_chat_id,
-            (
-                "⚠️ Download rejected\n\n"
-                f"{filename}\n\n"
-                "Server storage is too low.\n"
-                f"Free: {free_gb:.1f} GB\n"
-                f"Minimum required: "
-                f"{self.config.min_free_disk_gb} GB"
-            ),
-            reply_to=(
-                job.telegram_message_id
-            ),
-        )
-
     async def process(
         self,
         job: JobRecord,
@@ -280,9 +384,14 @@ class Downloader:
             job.id,
         )
 
-        final_path = (
-            self.incoming_dir
-            / filename
+        final_path = self.get_final_path(
+            job,
+            filename,
+        )
+
+        final_path.parent.mkdir(
+            parents=True,
+            exist_ok=True,
         )
 
         part_path = (
@@ -291,43 +400,25 @@ class Downloader:
         )
 
         if final_path.exists():
-            print(
-                f"[job {job.id}] "
-                f"final file already exists: "
-                f"{final_path}",
-                flush=True,
-            )
-
             await self.database.mark_available(
                 job.id,
                 str(final_path),
             )
-
             return
 
         if not self.has_enough_disk_space():
-            free_gb = self.get_free_disk_gb()
-
-            error = (
-                "Insufficient free disk space: "
-                f"{free_gb:.1f} GB free, "
-                f"minimum "
-                f"{self.config.min_free_disk_gb} GB"
+            free_gb = (
+                self.get_free_disk_gb()
             )
 
-            print(
-                f"[job {job.id}] {error}",
-                flush=True,
+            error = (
+                "Insufficient free disk "
+                f"space: {free_gb:.1f} GB"
             )
 
             await self.database.mark_failed(
                 job.id,
                 error,
-            )
-
-            await self._notify_low_disk(
-                job,
-                filename,
             )
 
             return
@@ -358,9 +449,7 @@ class Downloader:
                 message = (
                     await self.client.get_messages(
                         job.telegram_chat_id,
-                        ids=(
-                            job.telegram_message_id
-                        ),
+                        ids=job.telegram_message_id,
                     )
                 )
 
@@ -399,32 +488,20 @@ class Downloader:
                     - started
                 )
 
-                avg_speed_mb_s = 0.0
-
-                if (
-                    job.file_size
-                    and duration > 0
-                ):
-                    avg_speed_mb_s = (
-                        job.file_size
-                        / 1024
-                        / 1024
-                        / duration
-                    )
-
                 print(
                     f"[job {job.id}] "
-                    f"available: {final_path} "
-                    f"| {duration:.0f}s "
-                    f"| avg "
-                    f"{avg_speed_mb_s:.1f} MB/s",
+                    f"available: "
+                    f"{final_path}",
                     flush=True,
                 )
+
+                # Ask Jellyfin to scan the libraries.
+                await self.jellyfin.refresh_library()
 
                 await self.client.send_message(
                     job.telegram_chat_id,
                     available_message(
-                        filename,
+                        final_path.name,
                         duration,
                     ),
                     reply_to=(
@@ -441,7 +518,6 @@ class Downloader:
                     "partial file preserved",
                     flush=True,
                 )
-
                 raise
 
             except Exception as exc:
@@ -489,10 +565,6 @@ class Downloader:
                     * attempt
                 )
 
-                print(
-                    f"[job {job.id}] "
-                    f"retrying in {delay}s",
-                    flush=True,
+                await asyncio.sleep(
+                    delay
                 )
-
-                await asyncio.sleep(delay)
