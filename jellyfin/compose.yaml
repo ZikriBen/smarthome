@@ -1,0 +1,16 @@
+services:
+  jellyfin:
+    image: jellyfin/jellyfin:latest
+    container_name: jellyfin
+    restart: unless-stopped
+
+    ports:
+      - "8096:8096"
+      - "7359:7359/udp"
+
+    volumes:
+      - ./config:/config
+      - ./cache:/cache
+      - /home/ben/media/incoming:/media/telegram
+      - /home/ben/media/tv:/media/tv
+      - /home/ben/media/movies:/media/movies

@@ -20,15 +20,25 @@ class Config:
     retry_base_seconds: int
 
     min_free_disk_gb: int
+
     health_host: str
     health_port: int
+
+    jellyfin_url: str
+    jellyfin_api_key: str
 
 
 def load_config() -> Config:
     return Config(
-        telegram_api_id=int(os.environ["TELEGRAM_API_ID"]),
-        telegram_api_hash=os.environ["TELEGRAM_API_HASH"],
-        telegram_chat_id=int(os.environ["TELEGRAM_CHAT_ID"]),
+        telegram_api_id=int(
+            os.environ["TELEGRAM_API_ID"]
+        ),
+        telegram_api_hash=os.environ[
+            "TELEGRAM_API_HASH"
+        ],
+        telegram_chat_id=int(
+            os.environ["TELEGRAM_CHAT_ID"]
+        ),
 
         database_path=os.getenv(
             "DATABASE_PATH",
@@ -41,19 +51,31 @@ def load_config() -> Config:
         ),
 
         max_concurrent_downloads=int(
-            os.getenv("MAX_CONCURRENT_DOWNLOADS", "2")
+            os.getenv(
+                "MAX_CONCURRENT_DOWNLOADS",
+                "2",
+            )
         ),
 
         max_retries=int(
-            os.getenv("MAX_RETRIES", "5")
+            os.getenv(
+                "MAX_RETRIES",
+                "5",
+            )
         ),
 
         retry_base_seconds=int(
-            os.getenv("RETRY_BASE_SECONDS", "5")
+            os.getenv(
+                "RETRY_BASE_SECONDS",
+                "5",
+            )
         ),
 
         min_free_disk_gb=int(
-            os.getenv("MIN_FREE_DISK_GB", "50")
+            os.getenv(
+                "MIN_FREE_DISK_GB",
+                "50",
+            )
         ),
 
         health_host=os.getenv(
@@ -62,6 +84,19 @@ def load_config() -> Config:
         ),
 
         health_port=int(
-            os.getenv("HEALTH_PORT", "8787")
+            os.getenv(
+                "HEALTH_PORT",
+                "8787",
+            )
+        ),
+
+        jellyfin_url=os.getenv(
+            "JELLYFIN_URL",
+            "http://10.0.0.13:8096",
+        ).rstrip("/"),
+
+        jellyfin_api_key=os.getenv(
+            "JELLYFIN_API_KEY",
+            "",
         ),
     )

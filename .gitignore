@@ -38,3 +38,8 @@ telegram-downloader/data/*
 !telegram-downloader/data/.gitkeep
 telegram-downloader/**/*.session
 telegram-downloader/**/*.session-journal
+telegram-downloader-poc/
+
+# Jellyfin runtime data
+jellyfin/cache/
+jellyfin/config/
