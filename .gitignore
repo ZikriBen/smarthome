@@ -24,3 +24,17 @@ EOF
 .env
 .env.*
 !.env.example
+
+# Telegram downloader PoC
+telegram-downloader-poc/.venv/
+telegram-downloader-poc/*.session
+telegram-downloader-poc/*.session-journal
+telegram-downloader-poc/downloads/*
+!telegram-downloader-poc/downloads/.gitkeep
+
+# Telegram downloader
+telegram-downloader/.env
+telegram-downloader/data/*
+!telegram-downloader/data/.gitkeep
+telegram-downloader/**/*.session
+telegram-downloader/**/*.session-journal

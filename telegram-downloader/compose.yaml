@@ -1,0 +1,15 @@
+services:
+  telegram-downloader:
+    build: .
+    container_name: telegram-downloader
+    restart: unless-stopped
+
+    env_file:
+      - .env
+
+    environment:
+      PYTHONUNBUFFERED: "1"
+
+    volumes:
+      - ./data:/data
+      - /home/ben/media:/media
