@@ -27,3 +27,24 @@ class DownloadJob:
     file_size: int | None
 
     status: JobStatus = JobStatus.QUEUED
+
+
+@dataclass
+class JobRecord:
+    id: int
+
+    telegram_chat_id: int
+    telegram_chat_name: str | None
+    telegram_message_id: int
+    telegram_media_group_id: int | None
+
+    sender_id: int | None
+    sender_name: str | None
+
+    caption: str | None
+    original_filename: str | None
+    file_size: int | None
+
+    status: JobStatus
+    local_path: str | None
+    attempt_count: int

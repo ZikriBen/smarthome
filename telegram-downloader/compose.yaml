@@ -13,3 +13,5 @@ services:
     volumes:
       - ./data:/data
       - /home/ben/media:/media
+    ports:
+      - "8787:8787"

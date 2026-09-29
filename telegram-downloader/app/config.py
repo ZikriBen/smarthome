@@ -10,16 +10,58 @@ load_dotenv()
 class Config:
     telegram_api_id: int
     telegram_api_hash: str
-    telegram_chat_id: int | None
+    telegram_chat_id: int
+
     database_path: str
+    media_root: str
+
+    max_concurrent_downloads: int
+    max_retries: int
+    retry_base_seconds: int
+
+    min_free_disk_gb: int
+    health_host: str
+    health_port: int
 
 
 def load_config() -> Config:
-    chat_id_raw = os.getenv("TELEGRAM_CHAT_ID", "").strip()
-
     return Config(
         telegram_api_id=int(os.environ["TELEGRAM_API_ID"]),
         telegram_api_hash=os.environ["TELEGRAM_API_HASH"],
-        telegram_chat_id=int(chat_id_raw) if chat_id_raw else None,
-        database_path=os.getenv("DATABASE_PATH", "/data/downloader.db"),
+        telegram_chat_id=int(os.environ["TELEGRAM_CHAT_ID"]),
+
+        database_path=os.getenv(
+            "DATABASE_PATH",
+            "/data/downloader.db",
+        ),
+
+        media_root=os.getenv(
+            "MEDIA_ROOT",
+            "/media",
+        ),
+
+        max_concurrent_downloads=int(
+            os.getenv("MAX_CONCURRENT_DOWNLOADS", "2")
+        ),
+
+        max_retries=int(
+            os.getenv("MAX_RETRIES", "5")
+        ),
+
+        retry_base_seconds=int(
+            os.getenv("RETRY_BASE_SECONDS", "5")
+        ),
+
+        min_free_disk_gb=int(
+            os.getenv("MIN_FREE_DISK_GB", "50")
+        ),
+
+        health_host=os.getenv(
+            "HEALTH_HOST",
+            "0.0.0.0",
+        ),
+
+        health_port=int(
+            os.getenv("HEALTH_PORT", "8787")
+        ),
     )
