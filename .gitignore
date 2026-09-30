@@ -43,3 +43,6 @@ telegram-downloader-poc/
 # Jellyfin runtime data
 jellyfin/cache/
 jellyfin/config/
+
+# Local development / PoCs
+telegram-fast-download-poc/

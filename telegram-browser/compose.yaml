@@ -1,0 +1,20 @@
+services:
+  telegram-browser:
+    build: .
+
+    container_name: telegram-browser
+
+    restart: unless-stopped
+
+    env_file:
+      - .env
+
+    environment:
+      PYTHONPATH: /shared
+
+    ports:
+      - "8788:8788"
+
+    volumes:
+      - ./data:/data
+      - ../shared:/shared:ro
