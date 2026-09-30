@@ -28,6 +28,7 @@ from fastapi.templating import (
 from telethon import TelegramClient
 
 from app.database import CatalogDatabase
+from app.searchgram import SearchGram
 from app.sync import CatalogSyncer
 
 
@@ -48,6 +49,18 @@ SOURCE_CHAT_ID = int(
     os.environ[
         "TELEGRAM_SOURCE_CHAT_ID"
     ]
+)
+
+SEARCH_CHAT_ID = int(
+    os.getenv(
+        "SEARCH_CHAT_ID",
+        "-1002468837108",
+    )
+)
+
+SEARCH_DELIVERY_BOT = os.getenv(
+    "SEARCH_DELIVERY_BOT",
+    "searchgram_bbot",
 )
 
 SESSION = os.getenv(
@@ -125,6 +138,8 @@ client: TelegramClient | None = None
 
 syncer: CatalogSyncer | None = None
 
+searchgram: SearchGram | None = None
+
 background_sync_task: (
     asyncio.Task | None
 ) = None
@@ -175,11 +190,7 @@ def cleanup_poster_cache() -> None:
             item[0]
     )
 
-    for (
-        _,
-        size,
-        path,
-    ) in entries:
+    for _, size, path in entries:
         try:
             path.unlink()
 
@@ -233,7 +244,7 @@ def _downloader_post_sync(
     try:
         with urllib.request.urlopen(
             request,
-            timeout=10,
+            timeout=15,
         ) as response:
             return (
                 response.status,
@@ -287,9 +298,7 @@ def _downloader_get_sync(
     )
 
     if query:
-        url += (
-            f"?{query}"
-        )
+        url += f"?{query}"
 
     request = urllib.request.Request(
         url,
@@ -299,7 +308,7 @@ def _downloader_get_sync(
     try:
         with urllib.request.urlopen(
             request,
-            timeout=10,
+            timeout=15,
         ) as response:
             return (
                 response.status,
@@ -385,12 +394,25 @@ async def downloader_get(
         )
 
 
+def require_searchgram() -> SearchGram:
+    if searchgram is None:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "SearchGram unavailable"
+            ),
+        )
+
+    return searchgram
+
+
 @asynccontextmanager
 async def lifespan(
     app: FastAPI,
 ):
     global client
     global syncer
+    global searchgram
     global background_sync_task
 
     client = TelegramClient(
@@ -425,6 +447,30 @@ async def lifespan(
     await syncer.initialize()
 
     await syncer.sync_newer()
+
+    searchgram = SearchGram(
+        client=client,
+        search_chat_id=(
+            SEARCH_CHAT_ID
+        ),
+        delivery_bot=(
+            SEARCH_DELIVERY_BOT
+        ),
+    )
+
+    try:
+        await searchgram.initialize()
+
+    except Exception as exc:
+        print(
+            "SearchGram initialization "
+            "failed: "
+            f"{type(exc).__name__}: "
+            f"{exc}",
+            flush=True,
+        )
+
+        searchgram = None
 
     cleanup_poster_cache()
 
@@ -521,6 +567,329 @@ async def downloads_page(
 
 
 @app.get(
+    "/search",
+    response_class=HTMLResponse,
+)
+async def search_page(
+    request: Request,
+):
+    return (
+        templates.TemplateResponse(
+            request=request,
+            name="search.html",
+            context={},
+        )
+    )
+
+
+@app.post(
+    "/api/search",
+)
+async def api_search(
+    request: Request,
+):
+    try:
+        payload = await request.json()
+
+    except Exception:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid JSON",
+        )
+
+    query = str(
+        payload.get(
+            "query",
+            "",
+        )
+    ).strip()
+
+    if not query:
+        raise HTTPException(
+            status_code=400,
+            detail="Search query is empty",
+        )
+
+    service = require_searchgram()
+
+    try:
+        result = (
+            await service.search(
+                query
+            )
+        )
+
+    except TimeoutError as exc:
+        raise HTTPException(
+            status_code=504,
+            detail=str(exc),
+        )
+
+    except Exception as exc:
+        print(
+            "SearchGram search failed: "
+            f"{type(exc).__name__}: "
+            f"{exc}",
+            flush=True,
+        )
+
+        raise HTTPException(
+            status_code=502,
+            detail="SearchGram search failed",
+        )
+
+    return result.to_dict()
+
+
+@app.post(
+    "/api/search/navigate",
+)
+async def api_search_navigate(
+    request: Request,
+):
+    try:
+        payload = await request.json()
+
+        message_id = int(
+            payload["message_id"]
+        )
+
+        callback_data = str(
+            payload["callback_data"]
+        )
+
+        query = str(
+            payload["query"]
+        )
+
+    except (
+        Exception,
+        KeyError,
+        TypeError,
+        ValueError,
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Invalid search "
+                "navigation request"
+            ),
+        )
+
+    service = require_searchgram()
+
+    try:
+        result = (
+            await service.navigate(
+                message_id=message_id,
+                callback_data=callback_data,
+                query=query,
+            )
+        )
+
+    except Exception as exc:
+        print(
+            "SearchGram navigation failed: "
+            f"{type(exc).__name__}: "
+            f"{exc}",
+            flush=True,
+        )
+
+        raise HTTPException(
+            status_code=502,
+            detail=(
+                "SearchGram navigation failed"
+            ),
+        )
+
+    return result.to_dict()
+
+
+@app.post(
+    "/api/search/download",
+)
+async def api_search_download(
+    request: Request,
+):
+    try:
+        payload = await request.json()
+
+        message_id = int(
+            payload["message_id"]
+        )
+
+        callback_data = str(
+            payload["callback_data"]
+        )
+
+    except (
+        Exception,
+        KeyError,
+        TypeError,
+        ValueError,
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Invalid search "
+                "download request"
+            ),
+        )
+
+    service = require_searchgram()
+
+    try:
+        media = (
+            await service.request_media(
+                message_id=message_id,
+                callback_data=(
+                    callback_data
+                ),
+            )
+        )
+
+    except TimeoutError as exc:
+        raise HTTPException(
+            status_code=504,
+            detail=str(exc),
+        )
+
+    except Exception as exc:
+        print(
+            "SearchGram delivery failed: "
+            f"{type(exc).__name__}: "
+            f"{exc}",
+            flush=True,
+        )
+
+        raise HTTPException(
+            status_code=502,
+            detail=(
+                "SearchGram media "
+                "delivery failed"
+            ),
+        )
+
+    status_code, result = (
+        await downloader_post(
+            "/enqueue",
+            {
+                "chat_id":
+                    media.chat_id,
+
+                "message_id":
+                    media.message_id,
+            },
+        )
+    )
+
+    if status_code >= 400:
+        raise HTTPException(
+            status_code=status_code,
+            detail=(
+                result.get(
+                    "error",
+                    "Downloader error",
+                )
+            ),
+        )
+
+    return {
+        "status":
+            result.get(
+                "status",
+                "queued",
+            ),
+
+        "delivery": {
+            "chat_id":
+                media.chat_id,
+
+            "message_id":
+                media.message_id,
+
+            "filename":
+                media.filename,
+
+            "file_size":
+                media.file_size,
+        },
+
+        "job":
+            result,
+    }
+
+
+@app.post(
+    "/api/job-status",
+)
+async def api_job_status(
+    request: Request,
+):
+    try:
+        payload = await request.json()
+
+        chat_id = int(
+            payload["chat_id"]
+        )
+
+        message_id = int(
+            payload["message_id"]
+        )
+
+    except (
+        Exception,
+        KeyError,
+        TypeError,
+        ValueError,
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Invalid job status request"
+            ),
+        )
+
+    status_code, result = (
+        await downloader_post(
+            "/jobs/status",
+            {
+                "chat_id":
+                    chat_id,
+
+                "message_ids": [
+                    message_id
+                ],
+            },
+        )
+    )
+
+    if status_code >= 400:
+        raise HTTPException(
+            status_code=status_code,
+            detail=(
+                result.get(
+                    "error",
+                    "Downloader error",
+                )
+            ),
+        )
+
+    return {
+        "job": (
+            result.get(
+                "jobs",
+                {},
+            ).get(
+                str(
+                    message_id
+                )
+            )
+        )
+    }
+
+
+@app.get(
     "/api/items",
 )
 async def api_items(
@@ -586,9 +955,7 @@ async def api_items(
     "/api/genres",
 )
 async def api_genres():
-    return (
-        database.get_genres()
-    )
+    return database.get_genres()
 
 
 @app.post(
@@ -665,9 +1032,7 @@ async def select_download(
 
     if status_code >= 400:
         raise HTTPException(
-            status_code=(
-                status_code
-            ),
+            status_code=status_code,
             detail=(
                 result.get(
                     "error",
@@ -791,12 +1156,31 @@ async def downloads_api(
     ),
     status: str = "",
 ):
+    chat_ids = [
+        SOURCE_CHAT_ID
+    ]
+
+    if (
+        searchgram is not None
+        and searchgram
+        .delivery_chat_id
+        is not None
+    ):
+        chat_ids.append(
+            searchgram
+            .delivery_chat_id
+        )
+
     status_code, result = (
         await downloader_get(
             "/jobs",
             {
-                "chat_id":
-                    SOURCE_CHAT_ID,
+                "chat_ids":
+                    ",".join(
+                        str(value)
+                        for value
+                        in chat_ids
+                    ),
 
                 "page":
                     page,
@@ -981,6 +1365,9 @@ async def health():
 
         "downloader_url":
             DOWNLOADER_URL,
+
+        "searchgram":
+            searchgram is not None,
     }
 
 

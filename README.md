@@ -198,3 +198,59 @@ The media platform is operational end-to-end:
 - Telegram status uses reactions instead of reply messages
 
 See `telegram-downloader/DESIGN.md` for architecture and future work.
+
+## SearchGram Search
+
+In addition to the local Lulu catalog, the browser can search SearchGram.
+
+Open:
+
+    http://10.0.0.13:8788/search
+
+Flow:
+
+    browser search
+        |
+        v
+    SearchGram group
+        |
+        v
+    inline search results
+        |
+        v
+    user selects a result
+        |
+        v
+    SearchGram callback
+        |
+        v
+    searchgram_bbot start token
+        |
+        v
+    private media delivery
+        |
+        v
+    telegram-downloader
+        |
+        v
+    Jellyfin
+
+The browser does not download Telegram media itself.
+
+It only orchestrates SearchGram and passes the delivered Telegram message ID and chat ID to `telegram-downloader`.
+
+Search result state uses the same visual language as the catalog:
+
+    Blue    -> ready
+    Orange  -> preparing / queued / downloading / processing
+    Green   -> available
+    Red     -> failed
+
+SearchGram interactions are serialized to prevent multiple simultaneous Telegram conversations from mixing their responses.
+
+Configuration is stored in `telegram-browser/.env`:
+
+    SEARCH_CHAT_ID=-1002468837108
+    SEARCH_DELIVERY_BOT=searchgram_bbot
+
+Do not commit the real `.env`.

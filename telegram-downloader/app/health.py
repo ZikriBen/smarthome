@@ -518,32 +518,84 @@ class HealthServer:
             }
         )
 
+    def _parse_job_chat_ids(
+        self,
+        request: web.Request,
+    ) -> list[int]:
+        raw_chat_ids = (
+            request.query.get(
+                "chat_ids",
+                "",
+            )
+            .strip()
+        )
+
+        if raw_chat_ids:
+            result = []
+
+            for value in (
+                raw_chat_ids.split(
+                    ","
+                )
+            ):
+                value = value.strip()
+
+                if not value:
+                    continue
+
+                result.append(
+                    int(
+                        value
+                    )
+                )
+
+            return list(
+                dict.fromkeys(
+                    result
+                )
+            )
+
+        raw_chat_id = (
+            request.query.get(
+                "chat_id"
+            )
+        )
+
+        if raw_chat_id is None:
+            raise ValueError(
+                "Missing chat ID"
+            )
+
+        return [
+            int(
+                raw_chat_id
+            )
+        ]
+
     async def jobs(
         self,
         request: web.Request,
     ) -> web.Response:
-        """
-        Paginated job history.
-
-        GET /jobs
-            ?chat_id=-1001075658842
-            &page=1
-            &page_size=30
-            &status=DOWNLOADING
-        """
-
         try:
-            chat_id = int(
-                request.query[
-                    "chat_id"
-                ]
+            chat_ids = (
+                self._parse_job_chat_ids(
+                    request
+                )
             )
 
         except (
-            KeyError,
             TypeError,
             ValueError,
         ):
+            return web.json_response(
+                {
+                    "status": "error",
+                    "error": "invalid_chat_id",
+                },
+                status=400,
+            )
+
+        if not chat_ids:
             return web.json_response(
                 {
                     "status": "error",
@@ -609,12 +661,20 @@ class HealthServer:
                 status=400,
             )
 
+        placeholders = ",".join(
+            "?"
+            for _ in chat_ids
+        )
+
         where = [
-            "telegram_chat_id = ?"
+            (
+                "telegram_chat_id "
+                f"IN ({placeholders})"
+            )
         ]
 
         params = [
-            chat_id
+            *chat_ids
         ]
 
         if status_filter:
@@ -641,64 +701,69 @@ class HealthServer:
                 aiosqlite.Row
             )
 
-            count_cursor = await db.execute(
-                f"""
-                SELECT COUNT(*)
-                FROM download_jobs
-                WHERE {where_sql}
-                """,
-                params,
+            count_cursor = (
+                await db.execute(
+                    f"""
+                    SELECT COUNT(*)
+                    FROM download_jobs
+                    WHERE {where_sql}
+                    """,
+                    params,
+                )
             )
 
             total = (
                 await count_cursor.fetchone()
             )[0]
 
-            jobs_cursor = await db.execute(
-                f"""
-                SELECT
-                    id,
-                    telegram_chat_id,
-                    telegram_message_id,
-                    caption,
-                    original_filename,
-                    file_size,
-                    status,
-                    local_path,
-                    attempt_count,
-                    last_error,
-                    created_at,
-                    started_at,
-                    completed_at
-                FROM download_jobs
-                WHERE {where_sql}
-                ORDER BY id DESC
-                LIMIT ?
-                OFFSET ?
-                """,
-                [
-                    *params,
-                    page_size,
-                    offset,
-                ],
+            jobs_cursor = (
+                await db.execute(
+                    f"""
+                    SELECT
+                        id,
+                        telegram_chat_id,
+                        telegram_message_id,
+                        caption,
+                        original_filename,
+                        file_size,
+                        status,
+                        local_path,
+                        attempt_count,
+                        last_error,
+                        created_at,
+                        started_at,
+                        completed_at
+                    FROM download_jobs
+                    WHERE {where_sql}
+                    ORDER BY id DESC
+                    LIMIT ?
+                    OFFSET ?
+                    """,
+                    [
+                        *params,
+                        page_size,
+                        offset,
+                    ],
+                )
             )
 
             rows = (
                 await jobs_cursor.fetchall()
             )
 
-            counts_cursor = await db.execute(
-                """
-                SELECT
-                    status,
-                    COUNT(*) AS count
-                FROM download_jobs
-                WHERE telegram_chat_id = ?
-                GROUP BY status
-                """,
-                (
-                    chat_id,
-                ),
+            counts_cursor = (
+                await db.execute(
+                    f"""
+                    SELECT
+                        status,
+                        COUNT(*) AS count
+                    FROM download_jobs
+                    WHERE telegram_chat_id
+                        IN ({placeholders})
+                    GROUP BY status
+                    """,
+                    chat_ids,
+                )
             )
 
             count_rows = (

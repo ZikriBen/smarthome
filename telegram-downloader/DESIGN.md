@@ -472,3 +472,64 @@ Browser flow:
     open Jellyfin
 
 Infrastructure should remain invisible to normal users.
+
+## SearchGram Acquisition Flow
+
+The browser supports a third acquisition path using SearchGram.
+
+    search query
+        |
+        v
+    SearchGram group
+        |
+        v
+    inline callback results
+        |
+        v
+    dl_* callback
+        |
+        v
+    Telegram deep-link result
+        |
+        v
+    /start <token>
+    sent to searchgram_bbot
+        |
+        v
+    private media message
+        |
+        v
+    existing downloader API
+        |
+        v
+    normal download pipeline
+
+The SearchGram search result itself does not contain media.
+
+Its `dl_*` callback returns a Telegram bot deep link containing a `start` token.
+
+The browser then sends:
+
+    /start <token>
+
+to `searchgram_bbot`.
+
+The bot responds with an actual Telegram media message. That message's chat ID and message ID are passed to the existing downloader `/enqueue` endpoint.
+
+### Design Rules
+
+- SearchGram remains an acquisition source only.
+- telegram-browser never downloads large media files.
+- telegram-downloader remains the single download pipeline.
+- SearchGram interactions are serialized with an `asyncio.Lock`.
+- The delivery bot conversation is treated as read-only from the downloader's notification perspective.
+- Telegram callback and delivery failures do not modify unrelated download jobs.
+- SearchGram jobs are visible on the same `/downloads` page as Lulu browser jobs.
+
+This keeps all three entry flows converging on the same persistent downloader:
+
+    ZikriMedia -----------+
+                          |
+    Lulu catalog ---------+--> downloader --> Jellyfin
+                          |
+    SearchGram -----------+

@@ -1,0 +1,876 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+
+<head>
+    <meta charset="UTF-8">
+
+    <meta
+        name="viewport"
+        content="width=device-width, initial-scale=1"
+    >
+
+    <title>חיפוש בטלגרם · Zikri Media</title>
+
+    <link
+        rel="stylesheet"
+        href="/static/styles.css"
+    >
+
+    <link
+        rel="stylesheet"
+        href="/static/search.css"
+    >
+</head>
+
+<body>
+
+<header class="topbar">
+
+    <div>
+        <h1>חיפוש בטלגרם</h1>
+
+        <div class="subtitle">
+            חיפוש נוסף דרך SearchGram
+        </div>
+    </div>
+
+    <div class="topbar-actions">
+
+        <a
+            class="nav-button"
+            href="/"
+        >
+            ספרייה
+        </a>
+
+        <a
+            class="nav-button"
+            href="/downloads"
+        >
+            הורדות
+        </a>
+
+    </div>
+
+</header>
+
+
+<main class="search-page">
+
+    <section class="search-panel">
+
+        <form id="searchForm">
+
+            <input
+                id="queryInput"
+                type="search"
+                placeholder="שם סרט, סדרה או קובץ..."
+                autocomplete="off"
+                required
+            >
+
+            <button
+                id="searchButton"
+                type="submit"
+                class="search-submit"
+            >
+                חיפוש
+            </button>
+
+        </form>
+
+        <div
+            id="searchStatus"
+            class="search-status"
+        >
+            הקלד שם לחיפוש
+        </div>
+
+    </section>
+
+
+    <section
+        id="results"
+        class="search-results"
+    >
+    </section>
+
+
+    <nav
+        id="searchPagination"
+        class="search-pagination"
+    >
+    </nav>
+
+</main>
+
+
+<script>
+
+const ACTIVE_STATES =
+    new Set([
+        "QUEUED",
+        "DOWNLOADING",
+        "PROCESSING",
+        "RETRY_WAIT",
+    ]);
+
+
+let currentSearch = null;
+
+const activeJobs =
+    new Map();
+
+let statusTimer = null;
+
+
+function escapeHtml(
+    value
+) {
+
+    if (
+        value === null
+        || value === undefined
+    ) {
+        return "";
+    }
+
+    return String(value)
+        .replaceAll(
+            "&",
+            "&amp;"
+        )
+        .replaceAll(
+            "<",
+            "&lt;"
+        )
+        .replaceAll(
+            ">",
+            "&gt;"
+        )
+        .replaceAll(
+            '"',
+            "&quot;"
+        )
+        .replaceAll(
+            "'",
+            "&#039;"
+        );
+}
+
+
+function statusText(
+    status
+) {
+
+    const labels = {
+        "QUEUED":
+            "בתור",
+
+        "DOWNLOADING":
+            "מוריד…",
+
+        "PROCESSING":
+            "מעבד…",
+
+        "RETRY_WAIT":
+            "ממתין לניסיון נוסף",
+
+        "AVAILABLE":
+            "זמין ✓",
+
+        "FAILED":
+            "נכשל",
+    };
+
+    return (
+        labels[status]
+        || status
+    );
+}
+
+
+function setStatus(
+    text
+) {
+
+    document.getElementById(
+        "searchStatus"
+    ).textContent = text;
+}
+
+
+function renderLoading() {
+
+    const results =
+        document.getElementById(
+            "results"
+        );
+
+    results.innerHTML = "";
+
+    for (
+        let i = 0;
+        i < 7;
+        i++
+    ) {
+
+        const row =
+            document.createElement(
+                "div"
+            );
+
+        row.className =
+            "search-result-row search-result-skeleton";
+
+        row.innerHTML = `
+            <div>
+                <div
+                    class="skeleton-line skeleton-title"
+                ></div>
+
+                <div
+                    class="skeleton-line skeleton-subtitle"
+                ></div>
+            </div>
+
+            <div
+                class="skeleton-search-button"
+            ></div>
+        `;
+
+        results.appendChild(
+            row
+        );
+    }
+}
+
+
+function renderSearch(
+    data
+) {
+
+    currentSearch = data;
+
+    const results =
+        document.getElementById(
+            "results"
+        );
+
+    results.innerHTML = "";
+
+    if (!data.items.length) {
+
+        results.innerHTML = `
+            <div class="empty">
+                לא נמצאו תוצאות
+            </div>
+        `;
+
+    } else {
+
+        data.items.forEach(
+            (
+                item,
+                index
+            ) => {
+
+                const row =
+                    document.createElement(
+                        "article"
+                    );
+
+                row.className =
+                    "search-result-row";
+
+                row.innerHTML = `
+
+                    <div class="search-result-main">
+
+                        <div
+                            class="search-result-title"
+                        >
+                            ${escapeHtml(
+                                item.title
+                            )}
+                        </div>
+
+                        <div
+                            class="search-result-size"
+                        >
+                            ${escapeHtml(
+                                item.size
+                                || ""
+                            )}
+                        </div>
+
+                    </div>
+
+                    <button
+                        class="search-download-button"
+                        data-index="${index}"
+                    >
+                        הורד
+                    </button>
+                `;
+
+                const button =
+                    row.querySelector(
+                        ".search-download-button"
+                    );
+
+                button.addEventListener(
+                    "click",
+                    () => {
+                        startDownload(
+                            item,
+                            button
+                        );
+                    }
+                );
+
+                results.appendChild(
+                    row
+                );
+            }
+        );
+    }
+
+    renderNavigation(
+        data
+    );
+
+    let text = "";
+
+    if (
+        data.total_results
+        !== null
+        &&
+        data.total_results
+        !== undefined
+    ) {
+
+        text =
+            `${data.total_results} תוצאות`;
+
+    } else {
+
+        text =
+            `${data.items.length} תוצאות`;
+    }
+
+    if (
+        data.page
+        &&
+        data.total_pages
+    ) {
+
+        text +=
+            ` · עמוד ${data.page}`
+            +
+            ` מתוך ${data.total_pages}`;
+    }
+
+    setStatus(
+        text
+    );
+}
+
+
+function renderNavigation(
+    data
+) {
+
+    const container =
+        document.getElementById(
+            "searchPagination"
+        );
+
+    container.innerHTML = "";
+
+    for (
+        const nav
+        of data.navigation
+    ) {
+
+        const button =
+            document.createElement(
+                "button"
+            );
+
+        button.textContent =
+            nav.text;
+
+        button.addEventListener(
+            "click",
+            () => {
+                navigateSearch(
+                    nav.callback_data,
+                    button
+                );
+            }
+        );
+
+        container.appendChild(
+            button
+        );
+    }
+}
+
+
+async function runSearch(
+    query
+) {
+
+    renderLoading();
+
+    document.getElementById(
+        "searchPagination"
+    ).innerHTML = "";
+
+    setStatus(
+        "מחפש בטלגרם…"
+    );
+
+    const searchButton =
+        document.getElementById(
+            "searchButton"
+        );
+
+    searchButton.disabled =
+        true;
+
+    try {
+
+        const response =
+            await fetch(
+                "/api/search",
+                {
+                    method:
+                        "POST",
+
+                    headers: {
+                        "Content-Type":
+                            "application/json",
+                    },
+
+                    body:
+                        JSON.stringify({
+                            query:
+                                query,
+                        }),
+                }
+            );
+
+        const data =
+            await response.json();
+
+        if (!response.ok) {
+            throw new Error(
+                data.detail
+                || "Search failed"
+            );
+        }
+
+        renderSearch(
+            data
+        );
+
+    } catch (
+        error
+    ) {
+
+        console.error(
+            error
+        );
+
+        document.getElementById(
+            "results"
+        ).innerHTML = `
+            <div class="search-error">
+                החיפוש נכשל
+            </div>
+        `;
+
+        setStatus(
+            "לא ניתן לבצע חיפוש כרגע"
+        );
+
+    } finally {
+
+        searchButton.disabled =
+            false;
+    }
+}
+
+
+async function navigateSearch(
+    callbackData,
+    button
+) {
+
+    if (!currentSearch) {
+        return;
+    }
+
+    button.disabled =
+        true;
+
+    setStatus(
+        "טוען עמוד…"
+    );
+
+    try {
+
+        const response =
+            await fetch(
+                "/api/search/navigate",
+                {
+                    method:
+                        "POST",
+
+                    headers: {
+                        "Content-Type":
+                            "application/json",
+                    },
+
+                    body:
+                        JSON.stringify({
+                            message_id:
+                                currentSearch
+                                .message_id,
+
+                            callback_data:
+                                callbackData,
+
+                            query:
+                                currentSearch
+                                .query,
+                        }),
+                }
+            );
+
+        const data =
+            await response.json();
+
+        if (!response.ok) {
+            throw new Error(
+                data.detail
+                || "Navigation failed"
+            );
+        }
+
+        renderSearch(
+            data
+        );
+
+    } catch (
+        error
+    ) {
+
+        console.error(
+            error
+        );
+
+        setStatus(
+            "טעינת העמוד נכשלה"
+        );
+
+        button.disabled =
+            false;
+    }
+}
+
+
+async function startDownload(
+    item,
+    button
+) {
+
+    if (!currentSearch) {
+        return;
+    }
+
+    button.disabled =
+        true;
+
+    button.className =
+        "search-download-button downloading";
+
+    button.textContent =
+        "מכין…";
+
+    try {
+
+        const response =
+            await fetch(
+                "/api/search/download",
+                {
+                    method:
+                        "POST",
+
+                    headers: {
+                        "Content-Type":
+                            "application/json",
+                    },
+
+                    body:
+                        JSON.stringify({
+                            message_id:
+                                currentSearch
+                                .message_id,
+
+                            callback_data:
+                                item.callback_data,
+                        }),
+                }
+            );
+
+        const data =
+            await response.json();
+
+        if (!response.ok) {
+            throw new Error(
+                data.detail
+                || "Download request failed"
+            );
+        }
+
+        const delivery =
+            data.delivery;
+
+        button.dataset.chatId =
+            delivery.chat_id;
+
+        button.dataset.messageId =
+            delivery.message_id;
+
+        activeJobs.set(
+            button,
+            {
+                chat_id:
+                    delivery.chat_id,
+
+                message_id:
+                    delivery.message_id,
+            }
+        );
+
+        button.textContent =
+            "בתור";
+
+        startStatusPolling();
+
+        await refreshJobStatuses();
+
+    } catch (
+        error
+    ) {
+
+        console.error(
+            error
+        );
+
+        button.className =
+            "search-download-button failed";
+
+        button.textContent =
+            "נכשל";
+
+        button.title =
+            error.message;
+
+        button.disabled =
+            false;
+    }
+}
+
+
+function applyJobState(
+    button,
+    job
+) {
+
+    if (!job) {
+        return;
+    }
+
+    const status =
+        job.status;
+
+    button.textContent =
+        statusText(
+            status
+        );
+
+    if (
+        ACTIVE_STATES.has(
+            status
+        )
+    ) {
+
+        button.className =
+            "search-download-button downloading";
+
+        button.disabled =
+            true;
+
+    } else if (
+        status === "AVAILABLE"
+    ) {
+
+        button.className =
+            "search-download-button available";
+
+        button.disabled =
+            true;
+
+        activeJobs.delete(
+            button
+        );
+
+    } else if (
+        status === "FAILED"
+    ) {
+
+        button.className =
+            "search-download-button failed";
+
+        button.disabled =
+            false;
+
+        button.title =
+            job.last_error
+            || "Download failed";
+
+        activeJobs.delete(
+            button
+        );
+    }
+}
+
+
+async function refreshJobStatuses() {
+
+    if (!activeJobs.size) {
+
+        stopStatusPolling();
+
+        return;
+    }
+
+    for (
+        const [
+            button,
+            reference
+        ]
+        of [...activeJobs.entries()]
+    ) {
+
+        try {
+
+            const response =
+                await fetch(
+                    "/api/job-status",
+                    {
+                        method:
+                            "POST",
+
+                        headers: {
+                            "Content-Type":
+                                "application/json",
+                        },
+
+                        body:
+                            JSON.stringify(
+                                reference
+                            ),
+                    }
+                );
+
+            if (!response.ok) {
+                continue;
+            }
+
+            const data =
+                await response.json();
+
+            applyJobState(
+                button,
+                data.job
+            );
+
+        } catch (
+            error
+        ) {
+
+            console.error(
+                "Status polling failed:",
+                error
+            );
+        }
+    }
+
+    if (!activeJobs.size) {
+        stopStatusPolling();
+    }
+}
+
+
+function startStatusPolling() {
+
+    if (statusTimer) {
+        return;
+    }
+
+    statusTimer =
+        setInterval(
+            refreshJobStatuses,
+            3000
+        );
+}
+
+
+function stopStatusPolling() {
+
+    if (!statusTimer) {
+        return;
+    }
+
+    clearInterval(
+        statusTimer
+    );
+
+    statusTimer =
+        null;
+}
+
+
+document.getElementById(
+    "searchForm"
+).addEventListener(
+    "submit",
+    event => {
+
+        event.preventDefault();
+
+        const query =
+            document.getElementById(
+                "queryInput"
+            ).value.trim();
+
+        if (!query) {
+            return;
+        }
+
+        runSearch(
+            query
+        );
+    }
+);
+
+</script>
+
+</body>
+
+</html>
