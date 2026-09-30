@@ -19,6 +19,8 @@ class Config:
     max_retries: int
     retry_base_seconds: int
 
+    telegram_download_connections: int
+
     min_free_disk_gb: int
 
     health_host: str
@@ -53,7 +55,7 @@ def load_config() -> Config:
         max_concurrent_downloads=int(
             os.getenv(
                 "MAX_CONCURRENT_DOWNLOADS",
-                "2",
+                "5",
             )
         ),
 
@@ -68,6 +70,13 @@ def load_config() -> Config:
             os.getenv(
                 "RETRY_BASE_SECONDS",
                 "5",
+            )
+        ),
+
+        telegram_download_connections=int(
+            os.getenv(
+                "TELEGRAM_DOWNLOAD_CONNECTIONS",
+                "2",
             )
         ),
 
