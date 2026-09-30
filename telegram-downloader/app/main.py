@@ -16,7 +16,11 @@ async def main() -> None:
     )
 
     await database.initialize()
-    await database.recover_incomplete_jobs()
+
+    await (
+        database
+        .recover_incomplete_jobs()
+    )
 
     telegram = TelegramService(
         config=config,
@@ -40,14 +44,17 @@ async def main() -> None:
     health = HealthServer(
         config=config,
         database=database,
+        telegram=telegram,
     )
 
     await health.start()
 
     print(
-        f"Startup complete: "
-        f"{config.max_concurrent_downloads} workers, "
-        f"disk minimum {config.min_free_disk_gb} GB",
+        "Startup complete: "
+        f"{config.max_concurrent_downloads} "
+        "workers, "
+        "disk minimum "
+        f"{config.min_free_disk_gb} GB",
         flush=True,
     )
 
@@ -58,4 +65,6 @@ async def main() -> None:
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    asyncio.run(
+        main()
+    )

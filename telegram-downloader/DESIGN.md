@@ -1,721 +1,474 @@
-# Telegram Media Downloader — Design
-
-## 1. Goal
-
-Build an always-on home-server service that accepts media submitted to a
-dedicated Telegram group, downloads it reliably, and makes it available to
-Jellyfin.
-
-The desired user experience is intentionally simple:
-
-```text
-User sends video to Telegram group
-              │
-              ▼
-       📥 Accepted
-              │
-              ▼
-         Download queue
-              │
-              ▼
-           Download
-              │
-              ▼
-          Processing
-              │
-              ▼
-       Jellyfin media
-              │
-              ▼
-       ✅ Available
-```
-
-The Telegram group is the user interface.
-
-Users should not need access to the server, Docker, Jellyfin administration,
-or any other infrastructure.
-
----
-
-# 2. Proven PoC
-
-The existing PoC has verified:
-
-- Telegram MTProto authentication using Telethon
-- Persistent Telegram user session
-- Access to Telegram messages
-- Detection of message media
-- Downloading large media files
-- Download progress reporting
-- Retry handling
-- Writing downloaded media to local storage
-- Jellyfin reading the download directory
-- Playback from another device on the home LAN
-
-Current proven flow:
-
-```text
-Telegram
-    │
-    ▼
-Telethon
-    │
-    ▼
-Ubuntu server
-    │
-    ▼
-media file
-    │
-    ▼
-Jellyfin
-    │
-    ├── Phone
-    ├── Computer
-    └── TV
-```
-
-The production implementation replaces manual message selection with an
-always-running Telegram listener and persistent queue.
-
----
-
-# 3. Deployment phases
-
-## Phase 1 — Reliable ingestion
-
-P1 creates the production foundation.
-
-### Telegram
-
-- Listen to one configured Telegram group.
-- Any member of that group may submit media.
-- Detect supported video/document media automatically.
-- One Telegram message represents one download job.
-- Preserve Telegram media-group/album ID when present.
-- Identify the submitting user.
-- Reply to the original message when accepted.
-- Reply again when the media becomes available.
-- Report permanent failures.
-
-Example:
-
-```text
-Ben:
-<movie.avi>
+# Telegram Media Platform — Design
+
+## Goal
+
+Provide a simple self-hosted media workflow backed by Telegram and Jellyfin.
+
+There are two supported entry points:
+
+1. Direct media submission through ZikriMedia.
+2. Movie discovery and selection through telegram-browser.
+
+Normal users should not need access to Docker, the server filesystem, or Jellyfin administration.
+
+## Architecture
+
+    ZikriMedia
+        |
+        | media
+        v
+    telegram-downloader
+        |
+        |-- Telethon
+        |-- SQLite queue
+        |-- concurrent workers
+        |-- parallel MTProto downloader
+        |-- classifier
+        |
+        +--------------------------+
+                                   |
+    Lulu movie channel             |
+        |                          |
+        | read-only                |
+        v                          |
+    telegram-browser               |
+        |                          |
+        |-- catalog SQLite         |
+        |-- search/filter/sort     |
+        |-- pagination             |
+        |-- download UI            |
+        |-- status UI              |
+        |                          |
+        +--------------------------+
+                                   |
+                                   v
+                             Media storage
+                                   |
+                                   v
+                                Jellyfin
+
+## Telegram Flow
+
+ZikriMedia is the interactive Telegram interface.
+
+    media message
+        |
+        v
+       👀
+        |
+        v
+      QUEUED
+        |
+        v
+    DOWNLOADING
+        |
+        v
+    PROCESSING
+        |
+        v
+    AVAILABLE
+        |
+        v
+       👍
+
+Permanent failure:
+
+    👀 -> FAILED -> 👎
+
+Telegram reactions are best-effort.
+
+A reaction failure must never change download state or trigger a retry.
 
-Downloader:
-📥 Accepted
-movie.avi
-700 MB
-Queue position: 2
-```
+The downloader listens for Telegram updates globally and filters ZikriMedia by chat ID in application code.
 
-When finished:
+## Browser Flow
 
-```text
-Downloader:
-✅ Available
-movie.avi is ready to watch in Jellyfin.
-Downloaded in 6m 24s.
-```
+telegram-browser indexes a read-only Telegram movie source.
 
-Failure:
+The catalog provides:
 
-```text
-Downloader:
-❌ Download failed
-movie.avi could not be downloaded after 5 attempts.
-```
+- posters
+- Hebrew and English titles
+- year
+- IMDb rating
+- genres
+- descriptions
+- quality variants
+- search
+- genre filtering
+- IMDb/year sorting
+- pagination
 
-### Downloading
-
-- Persistent queue.
-- Two concurrent downloads initially.
-- Configurable concurrency.
-- Retry transient Telegram/network failures.
-- Exponential/backoff retry.
-- Prevent duplicate downloads.
-- Use temporary files while downloading.
-- Never expose partially downloaded files to Jellyfin.
-- Recover queued/in-progress jobs after process restart.
-- Graceful shutdown.
-- Track download duration and errors.
-
-### Storage
-
-Downloads first enter:
-
-```text
-/home/ben/media/incoming
-```
+Selecting a quality sends the Telegram source chat ID and message ID to telegram-downloader.
 
-Temporary files:
+The Lulu channel is read-only.
 
-```text
-/home/ben/media/incoming/<file>.part
-```
+The downloader must never attempt to send messages or reactions to Lulu.
 
-Only successfully completed files are moved/renamed to their final path.
+Browser download state comes from the downloader SQLite database.
 
-P1 may initially expose completed files directly through a generic Jellyfin
-library.
+    BLUE
+    ready to download
 
-Later phases will organize them into movies and TV libraries.
+    ORANGE
+    QUEUED
+    DOWNLOADING
+    PROCESSING
+    RETRY_WAIT
 
-### State
+    GREEN
+    AVAILABLE
 
-SQLite stores persistent job state.
+    RED
+    FAILED
 
-Initial fields:
+The browser exposes `/downloads` for persistent browser-download status and history.
 
-```text
-id
-telegram_chat_id
-telegram_chat_name
-telegram_message_id
-telegram_media_group_id
+## Job State
 
-sender_id
-sender_name
+SQLite is the source of truth.
 
-caption
-original_filename
-file_size
+    QUEUED
+       |
+       v
+    DOWNLOADING
+       |
+       v
+    PROCESSING
+       |
+       v
+    AVAILABLE
 
-status
-local_path
+Retry:
 
-created_at
-started_at
-completed_at
+    DOWNLOADING
+       |
+       v
+    RETRY_WAIT
+       |
+       +----> DOWNLOADING
 
-attempt_count
-last_error
-```
+Terminal failure:
 
-Uniqueness:
+    FAILED
 
-```text
-(telegram_chat_id, telegram_message_id)
-```
+Job uniqueness is:
 
-This prevents duplicate ingestion.
+    (telegram_chat_id, telegram_message_id)
 
-### Job states
+This prevents the same Telegram message from being queued twice.
 
-```text
-RECEIVED
-    │
-    ▼
-QUEUED       ← send 📥 Accepted
-    │
-    ▼
-DOWNLOADING
-    │
-    ▼
-PROCESSING
-    │
-    ▼
-AVAILABLE    ← send ✅ Available
-```
+## Success Boundary
 
-Failure path:
+Download state and notification state are deliberately separate.
 
-```text
-DOWNLOADING
-    │
-    ▼
-RETRY_WAIT
-    │
-    ├── retry → DOWNLOADING
-    │
-    └── attempts exhausted
-              │
-              ▼
-            FAILED
-              │
-              └── send ❌ Failed
-```
+Once the final media file exists:
 
----
+    completed file
+         |
+         v
+    mark AVAILABLE in SQLite
+         |
+         +-- Jellyfin refresh (best effort)
+         |
+         +-- Telegram reaction (best effort)
 
-# 4. Phase 2 — Download performance
+Neither Jellyfin nor Telegram notification failure may cause the media to be downloaded again.
 
-Once P1 is stable, optimize throughput.
+If a recovered job already has its final file, it is restored to AVAILABLE instead of being redownloaded.
 
-There are two forms of concurrency:
+## Downloads
 
-```text
-Multiple files:
-
-file A ─────────────►
-file B ─────────────►
-
-
-Parallel chunks of one file:
-
-file A:
-chunk 1 ─────►
-chunk 2 ─────►
-chunk 3 ─────►
-```
-
-Start with multiple-file concurrency.
-
-Initial configuration:
-
-```text
-MAX_CONCURRENT_DOWNLOADS=2
-```
-
-Measure:
-
-- aggregate throughput
-- per-file throughput
-- Telegram FloodWait responses
-- timeout frequency
-- retries
-- CPU usage
-- disk throughput
-
-Then test:
-
-```text
-1 concurrent download
-2 concurrent downloads
-3 concurrent downloads
-4 concurrent downloads
-```
-
-Do not assume Telegram mobile's two-download behavior represents an
-account-level API restriction.
-
-Choose concurrency based on observed throughput and Telegram rate limiting.
-
-Later we may implement parallel chunk downloading for individual large files.
-
----
-
-# 5. Phase 3 — Telegram bot UX
-
-Separate downloading from user interaction where useful.
-
-Possible architecture:
-
-```text
-Telegram Group
-      │
-      ├── Bot
-      │    ├── status
-      │    ├── commands
-      │    ├── classification questions
-      │    └── notifications
-      │
-      └── Telethon user session
-             │
-             └── actual media download
-```
-
-Possible commands:
-
-```text
-/status
-/queue
-/retry
-/cancel
-/disk
-```
-
-Example:
-
-```text
-/queue
-
-1. Breaking Bad S02E03    62%
-2. Breaking Bad S02E04    waiting
-3. Movie.mkv              waiting
-```
-
----
-
-# 6. Phase 4 — Media classification
-
-Automatically determine whether submitted media is:
-
-```text
-Movie
-TV episode
-Other
-```
-
-Start with deterministic parsing.
-
-Inputs:
-
-- Telegram caption
-- original filename
-- sender
-- source group
-- media-group information
-
-Recognize patterns such as:
-
-```text
-S01E04
-S1E4
-1x04
-Season 1 Episode 4
-Movie Name (2007)
-```
-
-Example:
-
-```text
-Breaking.Bad.S03E07.1080p.mkv
-```
-
-becomes:
-
-```text
-Type: TV
-Series: Breaking Bad
-Season: 3
-Episode: 7
-```
-
-If confidence is insufficient, ask in Telegram rather than guessing.
-
-Example:
-
-```text
-🤔 I couldn't identify this media.
-
-[Movie]
-[TV Episode]
-[Other]
-```
-
----
-
-# 7. Phase 5 — Jellyfin organization
-
-Final media layout:
-
-```text
-/home/ben/media/
-│
-├── incoming/
-│
-├── movies/
-│   └── Sunshine (2007)/
-│       └── Sunshine (2007).mkv
-│
-└── tv/
-    └── Breaking Bad/
-        └── Season 03/
-            ├── Breaking Bad - S03E01.mkv
-            └── Breaking Bad - S03E02.mkv
-```
-
-Jellyfin libraries:
-
-```text
-Movies → /media/movies
-TV     → /media/tv
-```
-
-Jellyfin should never index `.part` files.
-
-After successful classification:
-
-```text
-incoming
-    │
-    ▼
-classify
-    │
-    ├── movie → movies/
-    │
-    └── TV → tv/
-```
-
-Optionally request a Jellyfin library refresh after media becomes available.
-
----
-
-# 8. Sender and Telegram metadata
-
-Telegram metadata should NOT normally be encoded into Jellyfin filenames.
-
-For example, avoid:
-
-```text
-Ben_SearchGram_Breaking_Bad_S01E01.mkv
-```
-
-Instead use Jellyfin-compatible filenames:
-
-```text
-Breaking Bad - S01E01.mkv
-```
-
-Store provenance separately in SQLite:
-
-```text
-Sender: Ben
-Telegram group: Family Media
-Telegram message: 12837
-Original filename: breaking.bad.s01e01.mkv
-Final path: /media/tv/Breaking Bad/Season 01/...
-```
-
-This allows future UI/features without damaging Jellyfin metadata matching.
-
----
-
-# 9. Phase 6 — Operations
-
-Add operational functionality after the core workflow is stable.
-
-## Health endpoint
-
-Expose:
-
-```text
-GET /health
-```
-
-Healthy response:
-
-```text
-HTTP 200
-```
-
-Kuma monitors this endpoint.
-
-Potential future endpoint:
-
-```text
-GET /metrics
-```
-
-## Disk protection
-
-Never allow media downloads to fill the server disk.
+Multiple files can download concurrently.
 
 Configuration:
 
-```text
-MIN_FREE_DISK_GB=50
-```
+    MAX_CONCURRENT_DOWNLOADS=5
+    TELEGRAM_DOWNLOAD_CONNECTIONS=2
 
-When below the threshold:
+A single file may use multiple MTProto senders.
 
-```text
-⚠️ Download rejected
+Parallel lane state is preserved across transient failures so downloads can resume.
 
-Server storage is low.
-42 GB free; minimum required is 50 GB.
-```
+Temporary download state lives under:
 
-## Monitoring
+    /media/incoming/.part
 
-Track:
+Incomplete files are never exposed to Jellyfin.
 
-- service health
-- queue size
-- active downloads
-- successful downloads
-- failed downloads
-- retry count
-- Telegram FloodWait events
-- current throughput
-- free disk space
+## Classification
 
----
+Classification is deterministic and conservative.
 
-# 10. Container architecture
+Supported media types:
 
-Production deployment uses Docker Compose.
+    MOVIE
+    TV
+    UNKNOWN
 
-Kubernetes is intentionally not required for the initial deployment.
+TV examples:
 
-```text
-Docker
-│
-├── telegram-downloader
-│      │
-│      ├── Telethon
-│      ├── queue workers
-│      ├── SQLite
-│      └── health server
-│
-└── jellyfin
-```
+    S03E07
+    S3E7
+    3x07
+    Season 3 Episode 7
+    עונה 3 פרק 7
+    ע3 פ7
 
-Persistent host directories:
+Movie detection primarily uses a clean title plus year.
 
-```text
-/home/ben/media
-/home/ben/smarthome/telegram-downloader/data
-```
+Release noise such as resolution, codec, translation markers, and source tags is removed where possible.
 
-Container layout:
+Unknown or ambiguous media should remain unknown rather than use risky fuzzy matching.
 
-```text
-/app
-/data
-/media
-```
+## Media Layout
 
-Example mounts:
+Host:
 
-```text
-./data            → /data
-/home/ben/media   → /media
-```
+    /home/ben/media/
+    ├── incoming/
+    │   └── .part/
+    ├── movies/
+    └── tv/
 
----
+Movie example:
 
-# 11. Secrets
+    /media/movies/Movie Name (2026)/Movie Name (2026).mkv
+
+TV example:
+
+    /media/tv/Show Name/Season 03/Show Name - S03E07.mkv
+
+Unknown media remains under:
+
+    /media/incoming
+
+## Jellyfin
+
+After successful media placement the downloader requests:
+
+    POST /Library/Refresh
+
+Jellyfin refresh is best-effort.
+
+A temporary Jellyfin failure does not turn a successful download into a failed job.
+
+## Browser Catalog
+
+telegram-browser maintains its own SQLite catalog.
+
+It performs:
+
+1. initial Telegram scan
+2. historical backfill
+3. incremental synchronization for new messages
+
+Pagination operates on the local catalog rather than directly on Telegram history.
+
+This means new Telegram messages do not destabilize older pages.
+
+Poster files are cached locally with a bounded cache.
+
+## Downloader API
+
+Default:
+
+    http://10.0.0.13:8787
+
+Important endpoints:
+
+    GET  /health
+    GET  /status
+    GET  /jobs
+    POST /enqueue
+    POST /jobs/status
+
+telegram-browser talks to this API rather than opening downloader SQLite directly.
+
+## Browser
+
+Default:
+
+    http://10.0.0.13:8788
+
+Pages:
+
+    /
+        Movie catalog
+
+    /downloads
+        Download status/history
+
+## Persistence
+
+Downloader database:
+
+    telegram-downloader/data/downloader.db
+
+Browser database:
+
+    telegram-browser/data/catalog.db
+
+Telegram sessions and runtime databases are persistent local data and must never be committed.
+
+## Security
 
 Never commit:
 
-- Telegram API hash
-- Telegram session
-- bot token
-- authentication credentials
+- .env
+- Telegram API credentials
+- Telegram session files
+- Jellyfin API keys
+- runtime SQLite databases
 
-Git contains:
+The browser is intended for the trusted home LAN.
 
-```text
-.env.example
-```
+Authentication should be added before exposing it publicly.
 
-Local machine contains:
+## Completed — v1
 
-```text
-.env
-```
+### Downloader
 
-Expected variables:
+- persistent SQLite queue
+- restart recovery
+- duplicate protection
+- concurrent workers
+- parallel single-file MTProto downloads
+- resumable transfer state
+- retry handling
+- disk protection
+- movie classification
+- TV classification
+- Jellyfin-compatible paths
+- automatic Jellyfin refresh
+- Telegram status reactions
+- health/status API
+- browser enqueue/status API
 
-```text
-TELEGRAM_API_ID=
-TELEGRAM_API_HASH=
-TELEGRAM_CHAT_ID=
+### Browser
 
-MAX_CONCURRENT_DOWNLOADS=2
-MAX_RETRIES=5
-MIN_FREE_DISK_GB=50
+- persistent Telegram catalog
+- complete history backfill
+- incremental synchronization
+- bounded poster cache
+- metadata parsing
+- quality grouping
+- search
+- genre filtering
+- IMDb sorting
+- year sorting
+- stable pagination
+- skeleton loading
+- downloader integration
+- live button status
+- persistent download-status page
 
-MEDIA_ROOT=/media
-```
+## v2
 
----
+v2 should focus on operational control and observability rather than rebuilding the ingestion pipeline.
 
-# 12. Proposed production source layout
+### Download Progress
 
-```text
-telegram-downloader/
-│
-├── app/
-│   ├── __init__.py
-│   ├── main.py
-│   ├── config.py
-│   ├── telegram.py
-│   ├── queue.py
-│   ├── downloader.py
-│   ├── database.py
-│   ├── models.py
-│   ├── notifications.py
-│   └── health.py
-│
-├── data/
-│
-├── tests/
-│
-├── Dockerfile
-├── compose.yaml
-├── requirements.txt
-├── .env.example
-├── DESIGN.md
-└── README.md
-```
+Persist:
 
-Responsibilities:
+    downloaded_bytes
+    total_bytes
+    current_speed
 
-```text
-main.py
-    application lifecycle
+Example browser status:
 
-config.py
-    environment/config validation
+    63% · 3.1 MB/s
 
-telegram.py
-    Telegram connection + event handling
+### Queue Controls
 
-queue.py
-    job scheduling and concurrency
+Possible `/downloads` actions:
 
-downloader.py
-    media transfer/retry/progress
+    retry
+    cancel
+    requeue
+    download next
 
-database.py
-    SQLite persistence
+### Explicit Job Origin
 
-models.py
-    job/domain models
+Add:
 
-notifications.py
-    Accepted / Available / Failed messages
+    origin = TELEGRAM | BROWSER
 
-health.py
-    Kuma health endpoint
-```
+This removes the need to infer origin from Telegram chat IDs.
 
----
+### Cleanup
 
-# 13. Phase 1 acceptance criteria
+Automatic retention policies for:
 
-P1 is complete when:
+- abandoned .part files
+- stale MTProto lane files
+- old failed jobs
+- old completed operational records
 
-1. Service starts automatically after server reboot.
-2. It reconnects to Telegram without manual login.
-3. A member sends a video to the configured group.
-4. The service detects it.
-5. A persistent job is created.
-6. Telegram receives an `📥 Accepted` reply.
-7. The media enters the queue.
-8. Up to two files can download concurrently.
-9. Temporary failures retry automatically.
-10. Duplicate messages are not downloaded twice.
-11. Completed media is moved atomically to the media directory.
-12. Telegram receives a `✅ Available` reply.
-13. Jellyfin can play the completed media.
-14. Restarting the container does not lose queued jobs.
-15. Kuma can monitor `/health`.
-16. Low disk space prevents new downloads.
-17. No credentials or Telegram sessions exist in Git.
+Media files themselves should not be automatically deleted.
 
----
+### Better Duplicate Detection
 
-# 14. Guiding principle
+Current uniqueness prevents duplicate requests for the same Telegram message.
 
-Telegram should feel like the application.
+Future detection may recognize that equivalent media already exists in storage even when requested from another Telegram message.
 
-The family should only need to:
+### Observability
 
-```text
-Send media
-     ↓
-📥 Accepted
-     ↓
-wait
-     ↓
-✅ Available
-     ↓
-open Jellyfin
-```
+Potential endpoint:
 
-Everything else should happen automatically.
+    GET /metrics
+
+Useful metrics:
+
+- queue size
+- active downloads
+- current throughput
+- retry rate
+- failures
+- free disk
+- Telegram FloodWait events
+
+### Tests
+
+Add regression/state-machine coverage for:
+
+- restart recovery
+- notification failure after successful download
+- duplicate enqueue
+- existing final-file recovery
+- browser-origin read-only behavior
+- retry exhaustion
+
+## Guiding Principle
+
+Telegram flow:
+
+    send media
+       |
+       v
+      👀
+       |
+       v
+      wait
+       |
+       v
+      👍
+       |
+       v
+    open Jellyfin
+
+Browser flow:
+
+    find movie
+       |
+       v
+    choose quality
+       |
+       v
+    blue -> orange -> green
+       |
+       v
+    open Jellyfin
+
+Infrastructure should remain invisible to normal users.

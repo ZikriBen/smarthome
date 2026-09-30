@@ -1,0 +1,1872 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+
+<head>
+    <meta charset="UTF-8">
+
+    <meta
+        name="viewport"
+        content="width=device-width, initial-scale=1"
+    >
+
+    <title>Zikri Media</title>
+
+    <link
+        rel="stylesheet"
+        href="/static/styles.css"
+    >
+</head>
+
+<body>
+
+<header class="topbar">
+
+    <div>
+        <h1>Zikri Media</h1>
+
+        <div class="subtitle">
+            סרטים מטלגרם
+        </div>
+    </div>
+
+    <div class="topbar-actions">
+
+        <a
+            class="nav-button"
+            href="/downloads"
+        >
+            הורדות
+        </a>
+
+        <button
+            id="refreshButton"
+            class="refresh-button"
+        >
+            רענון
+        </button>
+
+    </div>
+
+</header>
+
+
+<section class="controls">
+
+    <input
+        id="searchInput"
+        type="search"
+        placeholder="חיפוש סרט..."
+        autocomplete="off"
+    >
+
+    <select id="genreFilter">
+
+        <option value="">
+            כל הז'אנרים
+        </option>
+
+    </select>
+
+    <select id="sortSelect">
+
+        <option value="newest">
+            נוספו לאחרונה
+        </option>
+
+        <option value="rating_desc">
+            דירוג IMDb - גבוה לנמוך
+        </option>
+
+        <option value="rating_asc">
+            דירוג IMDb - נמוך לגבוה
+        </option>
+
+        <option value="year_desc">
+            שנה - חדש לישן
+        </option>
+
+        <option value="year_asc">
+            שנה - ישן לחדש
+        </option>
+
+    </select>
+
+</section>
+
+
+<div
+    id="status"
+    class="status"
+>
+    טוען סרטים...
+</div>
+
+
+<main
+    id="grid"
+    class="grid"
+>
+</main>
+
+
+<nav
+    id="pagination"
+    class="pagination"
+>
+</nav>
+
+
+<dialog id="detailsDialog">
+
+    <button
+        id="closeDialog"
+        class="dialog-close"
+    >
+        ×
+    </button>
+
+    <div id="dialogContent"></div>
+
+</dialog>
+
+
+<script>
+
+const PAGE_SIZE = 24;
+
+const ACTIVE_DOWNLOAD_STATES =
+    new Set([
+        "QUEUED",
+        "DOWNLOADING",
+        "PROCESSING",
+        "RETRY_WAIT",
+    ]);
+
+let currentPage = 1;
+let currentPagination = null;
+
+let searchTimer = null;
+let indexPollTimer = null;
+let downloadPollTimer = null;
+
+let visibleMessageIds = [];
+
+
+function readStateFromUrl() {
+
+    const params =
+        new URLSearchParams(
+            window.location.search
+        );
+
+    const page =
+        Number.parseInt(
+            params.get("page")
+            || "1",
+            10
+        );
+
+    currentPage =
+        Number.isFinite(page)
+        && page > 0
+            ? page
+            : 1;
+
+    const search =
+        params.get("search");
+
+    const genre =
+        params.get("genre");
+
+    const sort =
+        params.get("sort");
+
+    if (search !== null) {
+        document.getElementById(
+            "searchInput"
+        ).value = search;
+    }
+
+    if (genre !== null) {
+        document.getElementById(
+            "genreFilter"
+        ).dataset.initialGenre =
+            genre;
+    }
+
+    if (sort !== null) {
+        document.getElementById(
+            "sortSelect"
+        ).value = sort;
+    }
+}
+
+
+function writeStateToUrl(
+    {
+        replace = false
+    } = {}
+) {
+
+    const params =
+        new URLSearchParams();
+
+    if (currentPage > 1) {
+        params.set(
+            "page",
+            currentPage
+        );
+    }
+
+    const search =
+        document.getElementById(
+            "searchInput"
+        ).value.trim();
+
+    const genre =
+        document.getElementById(
+            "genreFilter"
+        ).value;
+
+    const sort =
+        document.getElementById(
+            "sortSelect"
+        ).value;
+
+    if (search) {
+        params.set(
+            "search",
+            search
+        );
+    }
+
+    if (genre) {
+        params.set(
+            "genre",
+            genre
+        );
+    }
+
+    if (sort !== "newest") {
+        params.set(
+            "sort",
+            sort
+        );
+    }
+
+    const query =
+        params.toString();
+
+    const url =
+        query
+            ? `/?${query}`
+            : "/";
+
+    if (replace) {
+        history.replaceState(
+            null,
+            "",
+            url
+        );
+
+    } else {
+        history.pushState(
+            null,
+            "",
+            url
+        );
+    }
+}
+
+
+function escapeHtml(
+    value
+) {
+
+    if (
+        value === null
+        || value === undefined
+    ) {
+        return "";
+    }
+
+    return String(value)
+        .replaceAll(
+            "&",
+            "&amp;"
+        )
+        .replaceAll(
+            "<",
+            "&lt;"
+        )
+        .replaceAll(
+            ">",
+            "&gt;"
+        )
+        .replaceAll(
+            '"',
+            "&quot;"
+        )
+        .replaceAll(
+            "'",
+            "&#039;"
+        );
+}
+
+
+function formatSize(
+    bytes
+) {
+
+    if (!bytes) {
+        return "";
+    }
+
+    const gb =
+        bytes
+        / 1024
+        / 1024
+        / 1024;
+
+    if (gb >= 1) {
+        return (
+            `${gb.toFixed(1)} GB`
+        );
+    }
+
+    const mb =
+        bytes
+        / 1024
+        / 1024;
+
+    return (
+        `${mb.toFixed(0)} MB`
+    );
+}
+
+
+function qualityRank(
+    quality
+) {
+
+    const ranks = {
+        "2160p": 100,
+        "1080p": 90,
+        "900p": 80,
+        "720p+": 75,
+        "720p": 70,
+        "576p": 60,
+        "570p": 59,
+        "540p": 55,
+        "480p": 50,
+        "430p": 45,
+        "360p": 40,
+        "HDTV": 30,
+        "WEBRip": 25,
+        "HDRip": 20,
+        "DVDRip": 10,
+    };
+
+    return (
+        ranks[quality]
+        ?? 0
+    );
+}
+
+
+function statusText(
+    status
+) {
+
+    const labels = {
+        "QUEUED":
+            "בתור",
+
+        "DOWNLOADING":
+            "מוריד…",
+
+        "PROCESSING":
+            "מעבד…",
+
+        "AVAILABLE":
+            "זמין ✓",
+
+        "RETRY_WAIT":
+            "ממתין לניסיון נוסף",
+
+        "FAILED":
+            "נכשל",
+    };
+
+    return (
+        labels[status]
+        || status
+    );
+}
+
+
+function renderSkeletons(
+    count = PAGE_SIZE
+) {
+
+    const grid =
+        document.getElementById(
+            "grid"
+        );
+
+    grid.innerHTML = "";
+
+    for (
+        let index = 0;
+        index < count;
+        index++
+    ) {
+
+        const card =
+            document.createElement(
+                "article"
+            );
+
+        card.className =
+            "movie-card skeleton-card";
+
+        card.innerHTML = `
+
+            <div
+                class="poster-wrapper skeleton-block"
+            ></div>
+
+            <div class="card-body">
+
+                <div class="title-area">
+
+                    <div
+                        class="skeleton-line skeleton-title"
+                    ></div>
+
+                    <div
+                        class="skeleton-line skeleton-subtitle"
+                    ></div>
+
+                </div>
+
+                <div class="metadata">
+
+                    <div
+                        class="skeleton-line skeleton-small"
+                    ></div>
+
+                    <div
+                        class="skeleton-line skeleton-small"
+                    ></div>
+
+                </div>
+
+                <div class="card-genres">
+
+                    <div
+                        class="skeleton-pill"
+                    ></div>
+
+                    <div
+                        class="skeleton-pill"
+                    ></div>
+
+                </div>
+
+                <div class="variant-buttons">
+
+                    <div
+                        class="skeleton-button"
+                    ></div>
+
+                    <div
+                        class="skeleton-button"
+                    ></div>
+
+                </div>
+
+                <div
+                    class="skeleton-details"
+                ></div>
+
+            </div>
+        `;
+
+        grid.appendChild(
+            card
+        );
+    }
+}
+
+
+async function loadGenres() {
+
+    const response =
+        await fetch(
+            "/api/genres"
+        );
+
+    if (!response.ok) {
+        return;
+    }
+
+    const genres =
+        await response.json();
+
+    const select =
+        document.getElementById(
+            "genreFilter"
+        );
+
+    const current =
+        select.value
+        ||
+        select.dataset.initialGenre
+        ||
+        "";
+
+    select.innerHTML = `
+        <option value="">
+            כל הז'אנרים
+        </option>
+    `;
+
+    for (
+        const genre
+        of genres
+    ) {
+
+        const option =
+            document.createElement(
+                "option"
+            );
+
+        option.value =
+            genre;
+
+        option.textContent =
+            genre;
+
+        select.appendChild(
+            option
+        );
+    }
+
+    select.value =
+        current;
+
+    delete (
+        select.dataset.initialGenre
+    );
+}
+
+
+async function loadItems(
+    {
+        updateUrl = true,
+        replaceUrl = false,
+        showSkeleton = true,
+    } = {}
+) {
+
+    stopDownloadPolling();
+
+    const status =
+        document.getElementById(
+            "status"
+        );
+
+    if (showSkeleton) {
+        renderSkeletons();
+    }
+
+    status.textContent =
+        "טוען סרטים...";
+
+    const requestedPage =
+        currentPage;
+
+    const search =
+        document.getElementById(
+            "searchInput"
+        ).value.trim();
+
+    const genre =
+        document.getElementById(
+            "genreFilter"
+        ).value;
+
+    const sort =
+        document.getElementById(
+            "sortSelect"
+        ).value;
+
+    const params =
+        new URLSearchParams({
+            page:
+                requestedPage,
+
+            page_size:
+                PAGE_SIZE,
+
+            search:
+                search,
+
+            genre:
+                genre,
+
+            sort:
+                sort,
+        });
+
+    const response =
+        await fetch(
+            `/api/items?${params}`
+        );
+
+    if (!response.ok) {
+        status.textContent =
+            "שגיאה בטעינת הסרטים";
+
+        return;
+    }
+
+    const result =
+        await response.json();
+
+    currentPagination =
+        result.pagination;
+
+    currentPage =
+        result.pagination.page;
+
+    renderGrid(
+        result.items
+    );
+
+    renderPagination();
+
+    updateStatus();
+
+    await refreshDownloadStatuses();
+
+    if (updateUrl) {
+        writeStateToUrl({
+            replace:
+                replaceUrl,
+        });
+    }
+
+    updateIndexPolling();
+}
+
+
+function updateStatus() {
+
+    const status =
+        document.getElementById(
+            "status"
+        );
+
+    if (!currentPagination) {
+        return;
+    }
+
+    if (
+        currentPagination
+        .history_complete
+    ) {
+
+        status.textContent =
+            `${currentPagination.total} סרטים`;
+
+        return;
+    }
+
+    status.textContent =
+        `${currentPagination.total} סרטים באינדקס`
+        +
+        " · הספרייה עדיין מתעדכנת…";
+}
+
+
+function renderGenres(
+    genres
+) {
+
+    const visible =
+        (genres || [])
+        .slice(
+            0,
+            3
+        );
+
+    const remaining =
+        Math.max(
+            0,
+            (genres || []).length
+            - visible.length
+        );
+
+    let html =
+        visible
+        .map(
+            genre => `
+                <span>
+                    ${escapeHtml(genre)}
+                </span>
+            `
+        )
+        .join("");
+
+    if (remaining > 0) {
+
+        html += `
+            <span
+                class="more-genres"
+            >
+                +${remaining}
+            </span>
+        `;
+    }
+
+    return html;
+}
+
+
+function renderGrid(
+    items
+) {
+
+    visibleMessageIds = [];
+
+    const grid =
+        document.getElementById(
+            "grid"
+        );
+
+    grid.innerHTML =
+        "";
+
+    if (!items.length) {
+
+        grid.innerHTML = `
+            <div class="empty">
+                לא נמצאו סרטים
+            </div>
+        `;
+
+        return;
+    }
+
+    for (
+        const item
+        of items
+    ) {
+
+        const card =
+            document.createElement(
+                "article"
+            );
+
+        card.className =
+            "movie-card";
+
+        const poster =
+            item.poster_message_id
+                ? `/poster/${item.poster_message_id}`
+                : "";
+
+        const rating =
+            (
+                item.imdb_rating
+                !== null
+                &&
+                item.imdb_rating
+                !== undefined
+            )
+                ? `⭐ ${item.imdb_rating}`
+                : "";
+
+        const variants =
+            [
+                ...(
+                    item.variants
+                    || []
+                )
+            ]
+            .sort(
+                (
+                    a,
+                    b
+                ) =>
+                    qualityRank(
+                        b.quality
+                    )
+                    -
+                    qualityRank(
+                        a.quality
+                    )
+            );
+
+        for (
+            const variant
+            of variants
+        ) {
+            visibleMessageIds.push(
+                variant.message_id
+            );
+        }
+
+        const variantButtons =
+            variants
+            .map(
+                variant => `
+                    <button
+                        class="quality-button"
+                        data-message-id="${variant.message_id}"
+                        data-quality="${escapeHtml(
+                            variant.quality
+                            || "וידאו"
+                        )}"
+                        data-size="${escapeHtml(
+                            formatSize(
+                                variant.size
+                            )
+                        )}"
+                    >
+
+                        <span class="quality-label">
+                            ${escapeHtml(
+                                variant.quality
+                                || "וידאו"
+                            )}
+                        </span>
+
+                        <small>
+                            ${formatSize(
+                                variant.size
+                            )}
+                        </small>
+
+                    </button>
+                `
+            )
+            .join("");
+
+        card.innerHTML = `
+
+            <div class="poster-wrapper">
+
+                ${
+                    poster
+                        ? `
+                            <img
+                                class="poster"
+                                src="${poster}"
+                                loading="lazy"
+                                alt="${escapeHtml(item.title)}"
+                            >
+                        `
+                        : `
+                            <div
+                                class="poster poster-placeholder"
+                            >
+                                אין תמונה
+                            </div>
+                        `
+                }
+
+            </div>
+
+            <div class="card-body">
+
+                <div class="title-area">
+
+                    <h2>
+                        ${escapeHtml(
+                            item.title
+                        )}
+                    </h2>
+
+                    <div class="english-title">
+
+                        ${
+                            item.english_title
+                                ? escapeHtml(
+                                    item.english_title
+                                )
+                                : "&nbsp;"
+                        }
+
+                    </div>
+
+                </div>
+
+                <div class="metadata">
+
+                    <span>
+                        ${item.year}
+                    </span>
+
+                    ${
+                        rating
+                            ? `
+                                <span>
+                                    ${rating}
+                                </span>
+                            `
+                            : `
+                                <span>
+                                    &nbsp;
+                                </span>
+                            `
+                    }
+
+                </div>
+
+                <div class="genres card-genres">
+
+                    ${renderGenres(
+                        item.genres
+                    )}
+
+                </div>
+
+                <div class="variant-buttons">
+
+                    ${
+                        variantButtons
+                        || `
+                            <span class="no-variants">
+                                אין קבצי וידאו
+                            </span>
+                        `
+                    }
+
+                </div>
+
+                <button
+                    class="details-button"
+                >
+                    פרטים
+                </button>
+
+            </div>
+        `;
+
+        card.querySelector(
+            ".details-button"
+        ).addEventListener(
+            "click",
+            () => {
+                showDetails(
+                    item
+                );
+            }
+        );
+
+        card.querySelectorAll(
+            ".quality-button"
+        ).forEach(
+            button => {
+
+                button.addEventListener(
+                    "click",
+                    async event => {
+
+                        event.stopPropagation();
+
+                        await selectDownload(
+                            Number(
+                                button.dataset
+                                .messageId
+                            ),
+                            button
+                        );
+
+                    }
+                );
+
+            }
+        );
+
+        grid.appendChild(
+            card
+        );
+    }
+
+    visibleMessageIds = [
+        ...new Set(
+            visibleMessageIds
+        )
+    ];
+}
+
+
+function resetButtonDisplay(
+    button
+) {
+
+    button.classList.remove(
+        "download-queued",
+        "download-active",
+        "download-available",
+        "download-failed"
+    );
+
+    button.disabled =
+        false;
+
+    button.innerHTML = `
+
+        <span class="quality-label">
+            ${escapeHtml(
+                button.dataset.quality
+            )}
+        </span>
+
+        <small>
+            ${escapeHtml(
+                button.dataset.size
+            )}
+        </small>
+    `;
+}
+
+
+function applyJobState(
+    button,
+    job
+) {
+
+    resetButtonDisplay(
+        button
+    );
+
+    if (!job) {
+        return;
+    }
+
+    const state =
+        job.status;
+
+    if (state === "QUEUED") {
+
+        button.classList.add(
+            "download-queued"
+        );
+
+        button.disabled = true;
+
+    } else if (
+        state === "DOWNLOADING"
+        ||
+        state === "PROCESSING"
+        ||
+        state === "RETRY_WAIT"
+    ) {
+
+        button.classList.add(
+            "download-active"
+        );
+
+        button.disabled = true;
+
+    } else if (
+        state === "AVAILABLE"
+    ) {
+
+        button.classList.add(
+            "download-available"
+        );
+
+        button.disabled = true;
+
+    } else if (
+        state === "FAILED"
+    ) {
+
+        button.classList.add(
+            "download-failed"
+        );
+
+        button.disabled = true;
+
+        button.title =
+            job.last_error
+            || "Download failed";
+    }
+
+    button.innerHTML = `
+
+        <span>
+            ${escapeHtml(
+                statusText(state)
+            )}
+        </span>
+
+        <small>
+            ${escapeHtml(
+                button.dataset.quality
+            )}
+        </small>
+    `;
+}
+
+
+async function refreshDownloadStatuses() {
+
+    if (!visibleMessageIds.length) {
+        stopDownloadPolling();
+
+        return;
+    }
+
+    try {
+
+        const response =
+            await fetch(
+                "/api/download-status",
+                {
+                    method:
+                        "POST",
+
+                    headers: {
+                        "Content-Type":
+                            "application/json",
+                    },
+
+                    body:
+                        JSON.stringify({
+                            message_ids:
+                                visibleMessageIds,
+                        }),
+                }
+            );
+
+        if (!response.ok) {
+            return;
+        }
+
+        const result =
+            await response.json();
+
+        const jobs =
+            result.jobs
+            || {};
+
+        let hasActive =
+            false;
+
+        document.querySelectorAll(
+            ".quality-button"
+        ).forEach(
+            button => {
+
+                const messageId =
+                    button.dataset
+                    .messageId;
+
+                const job =
+                    jobs[
+                        messageId
+                    ]
+                    || null;
+
+                applyJobState(
+                    button,
+                    job
+                );
+
+                if (
+                    job
+                    &&
+                    ACTIVE_DOWNLOAD_STATES
+                    .has(
+                        job.status
+                    )
+                ) {
+                    hasActive =
+                        true;
+                }
+            }
+        );
+
+        if (hasActive) {
+            startDownloadPolling();
+
+        } else {
+            stopDownloadPolling();
+        }
+
+    } catch (
+        error
+    ) {
+
+        console.error(
+            "Download status check failed:",
+            error
+        );
+    }
+}
+
+
+function startDownloadPolling() {
+
+    if (downloadPollTimer) {
+        return;
+    }
+
+    downloadPollTimer =
+        setInterval(
+            refreshDownloadStatuses,
+            3000
+        );
+}
+
+
+function stopDownloadPolling() {
+
+    if (!downloadPollTimer) {
+        return;
+    }
+
+    clearInterval(
+        downloadPollTimer
+    );
+
+    downloadPollTimer =
+        null;
+}
+
+
+async function selectDownload(
+    messageId,
+    button
+) {
+
+    button.disabled =
+        true;
+
+    button.classList.add(
+        "download-active"
+    );
+
+    button.innerHTML = `
+        <span>
+            שולח…
+        </span>
+
+        <small>
+            ${escapeHtml(
+                button.dataset.quality
+            )}
+        </small>
+    `;
+
+    try {
+
+        const response =
+            await fetch(
+                `/api/download/${messageId}`,
+                {
+                    method:
+                        "POST"
+                }
+            );
+
+        const data =
+            await response.json();
+
+        if (!response.ok) {
+            throw new Error(
+                data.detail
+                || "Download error"
+            );
+        }
+
+        await refreshDownloadStatuses();
+
+        startDownloadPolling();
+
+    } catch (
+        error
+    ) {
+
+        console.error(
+            error
+        );
+
+        resetButtonDisplay(
+            button
+        );
+
+        alert(
+            "שגיאה בשליחת הסרט להורדה"
+        );
+    }
+}
+
+
+function makePaginationButton(
+    label,
+    page
+) {
+
+    const button =
+        document.createElement(
+            "button"
+        );
+
+    button.textContent =
+        label;
+
+    button.addEventListener(
+        "click",
+        async () => {
+
+            currentPage =
+                page;
+
+            await loadItems();
+
+            window.scrollTo({
+                top: 0,
+                behavior:
+                    "smooth",
+            });
+        }
+    );
+
+    return button;
+}
+
+
+function pageNumbers(
+    current,
+    total
+) {
+
+    if (total <= 9) {
+
+        return Array.from(
+            {
+                length:
+                    total
+            },
+            (
+                _,
+                index
+            ) =>
+                index + 1
+        );
+    }
+
+    const result = [
+        1
+    ];
+
+    const start =
+        Math.max(
+            2,
+            current - 3
+        );
+
+    const end =
+        Math.min(
+            total - 1,
+            current + 3
+        );
+
+    if (start > 2) {
+        result.push(
+            "..."
+        );
+    }
+
+    for (
+        let page = start;
+        page <= end;
+        page++
+    ) {
+        result.push(
+            page
+        );
+    }
+
+    if (
+        end
+        < total - 1
+    ) {
+        result.push(
+            "..."
+        );
+    }
+
+    result.push(
+        total
+    );
+
+    return result;
+}
+
+
+function renderPagination() {
+
+    const pagination =
+        document.getElementById(
+            "pagination"
+        );
+
+    pagination.innerHTML =
+        "";
+
+    if (!currentPagination) {
+        return;
+    }
+
+    const knownPages =
+        currentPagination
+        .total_pages;
+
+    if (currentPage > 1) {
+
+        pagination.appendChild(
+            makePaginationButton(
+                "« הקודם",
+                currentPage - 1
+            )
+        );
+    }
+
+    const pages =
+        pageNumbers(
+            currentPage,
+            knownPages
+        );
+
+    for (
+        const page
+        of pages
+    ) {
+
+        if (
+            page
+            === "..."
+        ) {
+
+            const dots =
+                document.createElement(
+                    "span"
+                );
+
+            dots.className =
+                "pagination-dots";
+
+            dots.textContent =
+                "...";
+
+            pagination.appendChild(
+                dots
+            );
+
+            continue;
+        }
+
+        const button =
+            makePaginationButton(
+                String(page),
+                page
+            );
+
+        if (
+            page
+            === currentPage
+        ) {
+
+            button.classList.add(
+                "active"
+            );
+
+            button.disabled =
+                true;
+        }
+
+        pagination.appendChild(
+            button
+        );
+    }
+
+    if (
+        currentPage
+        < knownPages
+    ) {
+
+        pagination.appendChild(
+            makePaginationButton(
+                "הבא »",
+                currentPage + 1
+            )
+        );
+    }
+
+    const pageStatus =
+        document.createElement(
+            "div"
+        );
+
+    pageStatus.className =
+        "page-status";
+
+    pageStatus.textContent =
+        `עמוד ${currentPage} מתוך ${knownPages}`;
+
+    pagination.appendChild(
+        pageStatus
+    );
+}
+
+
+function showDetails(
+    item
+) {
+
+    const dialog =
+        document.getElementById(
+            "detailsDialog"
+        );
+
+    const content =
+        document.getElementById(
+            "dialogContent"
+        );
+
+    content.innerHTML = `
+
+        <h2>
+            ${escapeHtml(
+                item.title
+            )}
+        </h2>
+
+        ${
+            item.english_title
+                ? `
+                    <h3>
+                        ${escapeHtml(
+                            item.english_title
+                        )}
+                    </h3>
+                `
+                : ""
+        }
+
+        <div class="dialog-metadata">
+
+            <span>
+                ${item.year}
+            </span>
+
+            ${
+                item.imdb_rating
+                !== null
+                ? `
+                    <span>
+                        ⭐ ${item.imdb_rating}
+                    </span>
+                `
+                : ""
+            }
+
+        </div>
+
+        <div class="genres">
+
+            ${(item.genres || [])
+                .map(
+                    genre => `
+                        <span>
+                            ${escapeHtml(
+                                genre
+                            )}
+                        </span>
+                    `
+                )
+                .join("")
+            }
+
+        </div>
+
+        <p class="description">
+            ${escapeHtml(
+                item.description
+                || ""
+            )}
+        </p>
+    `;
+
+    dialog.showModal();
+}
+
+
+async function pollIndexStatus() {
+
+    if (
+        !currentPagination
+        ||
+        currentPagination
+        .history_complete
+    ) {
+
+        stopIndexPolling();
+
+        return;
+    }
+
+    try {
+
+        const response =
+            await fetch(
+                "/api/index-status"
+            );
+
+        if (!response.ok) {
+            return;
+        }
+
+        const result =
+            await response.json();
+
+        if (
+            result.history_complete
+        ) {
+
+            stopIndexPolling();
+
+            await loadGenres();
+
+            await loadItems({
+                updateUrl:
+                    false,
+
+                showSkeleton:
+                    false,
+            });
+
+            return;
+        }
+
+        const status =
+            document.getElementById(
+                "status"
+            );
+
+        status.textContent =
+            `${result.movies} סרטים באינדקס`
+            +
+            " · הספרייה עדיין מתעדכנת…";
+
+    } catch (
+        error
+    ) {
+
+        console.error(
+            "Index polling failed:",
+            error
+        );
+    }
+}
+
+
+function startIndexPolling() {
+
+    if (indexPollTimer) {
+        return;
+    }
+
+    indexPollTimer =
+        setInterval(
+            pollIndexStatus,
+            4000
+        );
+}
+
+
+function stopIndexPolling() {
+
+    if (!indexPollTimer) {
+        return;
+    }
+
+    clearInterval(
+        indexPollTimer
+    );
+
+    indexPollTimer =
+        null;
+}
+
+
+function updateIndexPolling() {
+
+    if (
+        currentPagination
+        &&
+        !currentPagination
+        .history_complete
+    ) {
+
+        startIndexPolling();
+
+    } else {
+
+        stopIndexPolling();
+    }
+}
+
+
+function resetAndLoad() {
+
+    currentPage =
+        1;
+
+    loadItems();
+}
+
+
+document.getElementById(
+    "closeDialog"
+).addEventListener(
+    "click",
+    () => {
+
+        document.getElementById(
+            "detailsDialog"
+        ).close();
+
+    }
+);
+
+
+document.getElementById(
+    "searchInput"
+).addEventListener(
+    "input",
+    () => {
+
+        clearTimeout(
+            searchTimer
+        );
+
+        searchTimer =
+            setTimeout(
+                resetAndLoad,
+                250
+            );
+
+    }
+);
+
+
+document.getElementById(
+    "genreFilter"
+).addEventListener(
+    "change",
+    resetAndLoad
+);
+
+
+document.getElementById(
+    "sortSelect"
+).addEventListener(
+    "change",
+    resetAndLoad
+);
+
+
+document.getElementById(
+    "refreshButton"
+).addEventListener(
+    "click",
+    async () => {
+
+        const button =
+            document.getElementById(
+                "refreshButton"
+            );
+
+        button.disabled =
+            true;
+
+        button.textContent =
+            "מרענן...";
+
+        try {
+
+            await fetch(
+                "/api/refresh",
+                {
+                    method:
+                        "POST"
+                }
+            );
+
+            await loadGenres();
+
+            await loadItems({
+                replaceUrl:
+                    true,
+            });
+
+        } finally {
+
+            button.disabled =
+                false;
+
+            button.textContent =
+                "רענון";
+        }
+    }
+);
+
+
+window.addEventListener(
+    "popstate",
+    async () => {
+
+        readStateFromUrl();
+
+        await loadGenres();
+
+        await loadItems({
+            updateUrl:
+                false,
+        });
+    }
+);
+
+
+async function startup() {
+
+    readStateFromUrl();
+
+    renderSkeletons();
+
+    await loadGenres();
+
+    await loadItems({
+        replaceUrl:
+            true,
+    });
+}
+
+
+startup();
+
+</script>
+
+</body>
+
+</html>

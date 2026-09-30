@@ -13,14 +13,18 @@ from app.classifier import (
 )
 from app.config import Config
 from app.database import Database
-from app.fast_download import FastTelegramDownloader
+from app.fast_download import (
+    FastTelegramDownloader,
+)
 from app.jellyfin import JellyfinClient
 from app.media_paths import build_media_path
 from app.models import JobRecord
-from app.notifications import (
-    available_message,
-    failed_message,
+from app.reactions import (
+    REACTION_AVAILABLE,
+    REACTION_FAILED,
+    set_status_reaction,
 )
+
 
 
 def safe_filename(
@@ -30,7 +34,9 @@ def safe_filename(
     if not filename:
         return f"telegram-{job_id}.bin"
 
-    filename = Path(filename).name
+    filename = Path(
+        filename
+    ).name
 
     return re.sub(
         r"[\x00-\x1f/\\\\]",
@@ -47,10 +53,10 @@ class ProgressReporter:
     ):
         self.job = job
         self.interval = interval
-
-        self.started = time.monotonic()
+        self.started = (
+            time.monotonic()
+        )
         self.last_print = 0.0
-
         self.downloaded_this_run = 0
 
     def add(
@@ -58,13 +64,17 @@ class ProgressReporter:
         chunk_size: int,
         total: int,
     ) -> None:
-        self.downloaded_this_run += chunk_size
+        self.downloaded_this_run += (
+            chunk_size
+        )
 
         now = time.monotonic()
 
         if (
-            now - self.last_print < self.interval
-            and self.downloaded_this_run < total
+            now - self.last_print
+            < self.interval
+            and self.downloaded_this_run
+            < total
         ):
             return
 
@@ -123,15 +133,18 @@ class Downloader:
         self.database = database
         self.client = client
 
-        self.jellyfin = JellyfinClient(
-            config
+        self.jellyfin = (
+            JellyfinClient(
+                config
+            )
         )
 
         self.fast_downloader = (
             FastTelegramDownloader(
                 client=client,
                 connections=(
-                    config.telegram_download_connections
+                    config
+                    .telegram_download_connections
                 ),
             )
         )
@@ -171,7 +184,50 @@ class Downloader:
                 exist_ok=True,
             )
 
-    def get_free_disk_gb(self) -> float:
+    def is_interactive_job(
+        self,
+        job: JobRecord,
+    ) -> bool:
+        return (
+            job.telegram_chat_id
+            == self.config.telegram_chat_id
+        )
+
+    async def _notify_available(
+        self,
+        job: JobRecord,
+    ) -> None:
+        if not self.is_interactive_job(
+            job
+        ):
+            return
+
+        await set_status_reaction(
+            self.client,
+            job.telegram_chat_id,
+            job.telegram_message_id,
+            REACTION_AVAILABLE,
+        )
+
+    async def _notify_failed(
+        self,
+        job: JobRecord,
+    ) -> None:
+        if not self.is_interactive_job(
+            job
+        ):
+            return
+
+        await set_status_reaction(
+            self.client,
+            job.telegram_chat_id,
+            job.telegram_message_id,
+            REACTION_FAILED,
+        )
+
+    def get_free_disk_gb(
+        self,
+    ) -> float:
         usage = shutil.disk_usage(
             self.media_root
         )
@@ -196,31 +252,44 @@ class Downloader:
         job: JobRecord,
         filename: str,
     ) -> Path:
-        classification = classify_media(
-            filename=job.original_filename,
-            caption=job.caption,
+        classification = (
+            classify_media(
+                filename=(
+                    job.original_filename
+                ),
+                caption=job.caption,
+            )
         )
 
         if (
             classification.media_type
             == MediaType.TV
         ):
-            episode = classification.episode
+            episode = (
+                classification.episode
+            )
 
             if (
                 classification.title
                 and episode
             ):
-                final_path = build_media_path(
-                    media_root=str(
-                        self.media_root
-                    ),
-                    classification=classification,
-                    original_filename=filename,
+                final_path = (
+                    build_media_path(
+                        media_root=str(
+                            self.media_root
+                        ),
+                        classification=(
+                            classification
+                        ),
+                        original_filename=(
+                            filename
+                        ),
+                    )
                 )
 
                 season = (
-                    episode.season or 0
+                    episode.season
+                    or 0
                 )
 
                 if (
@@ -232,6 +301,7 @@ class Downloader:
                         f"E{episode.episode_start:02d}"
                         f"-E{episode.episode_end:02d}"
                     )
+
                 else:
                     episode_text = (
                         f"S{season:02d}"
@@ -240,7 +310,7 @@ class Downloader:
 
                 print(
                     f"[job {job.id}] "
-                    f"classified as TV: "
+                    "classified as TV: "
                     f"{classification.title} "
                     f"{episode_text}",
                     flush=True,
@@ -253,12 +323,18 @@ class Downloader:
             == MediaType.MOVIE
         ):
             if classification.title:
-                final_path = build_media_path(
-                    media_root=str(
-                        self.media_root
-                    ),
-                    classification=classification,
-                    original_filename=filename,
+                final_path = (
+                    build_media_path(
+                        media_root=str(
+                            self.media_root
+                        ),
+                        classification=(
+                            classification
+                        ),
+                        original_filename=(
+                            filename
+                        ),
+                    )
                 )
 
                 year_text = (
@@ -269,7 +345,7 @@ class Downloader:
 
                 print(
                     f"[job {job.id}] "
-                    f"classified as MOVIE: "
+                    "classified as MOVIE: "
                     f"{classification.title}"
                     f"{year_text}",
                     flush=True,
@@ -314,23 +390,17 @@ class Downloader:
         job: JobRecord,
         filename: str,
     ) -> None:
-        free_gb = (
-            self.get_free_disk_gb()
-        )
+        """
+        Low disk is a final failure.
 
-        await self.client.send_message(
-            job.telegram_chat_id,
-            (
-                "⚠️ Download rejected\n\n"
-                f"{filename}\n\n"
-                "Server storage is too low.\n"
-                f"Free: {free_gb:.1f} GB\n"
-                f"Minimum required: "
-                f"{self.config.min_free_disk_gb} GB"
-            ),
-            reply_to=(
-                job.telegram_message_id
-            ),
+        For the interactive downloader chat we represent
+        that as the failed reaction.
+
+        Browser-source jobs remain DB-only.
+        """
+
+        await self._notify_failed(
+            job
         )
 
     async def _download_resumable(
@@ -355,8 +425,10 @@ class Downloader:
                 "Unable to determine file size"
             )
 
-        reporter = ProgressReporter(
-            job=job
+        reporter = (
+            ProgressReporter(
+                job=job
+            )
         )
 
         work_prefix = (
@@ -377,17 +449,20 @@ class Downloader:
 
         print(
             f"[job {job.id}] "
-            f"using "
+            "using "
             f"{self.config.telegram_download_connections} "
-            f"MTProto sender(s)",
+            "MTProto sender(s)",
             flush=True,
         )
 
-        await self.fast_downloader.download(
-            message=message,
-            destination=part_path,
-            work_prefix=work_prefix,
-            progress=progress,
+        await (
+            self.fast_downloader
+            .download(
+                message=message,
+                destination=part_path,
+                work_prefix=work_prefix,
+                progress=progress,
+            )
         )
 
         if (
@@ -400,6 +475,64 @@ class Downloader:
                 "an invalid output file"
             )
 
+    async def _refresh_jellyfin(
+        self,
+        job: JobRecord,
+    ) -> None:
+        """
+        Jellyfin refresh is also best-effort.
+
+        A successfully stored media file remains
+        AVAILABLE even if Jellyfin is temporarily down.
+        """
+
+        try:
+            await (
+                self.jellyfin
+                .refresh_library()
+            )
+
+        except Exception as exc:
+            print(
+                f"[job {job.id}] "
+                "Jellyfin refresh error: "
+                f"{type(exc).__name__}: "
+                f"{exc}",
+                flush=True,
+            )
+
+    async def _complete_success(
+        self,
+        job: JobRecord,
+        final_path: Path,
+    ) -> None:
+        """
+        This is the important lifecycle boundary:
+
+        1. Media exists at final_path.
+        2. Persist AVAILABLE.
+        3. Jellyfin refresh is best-effort.
+        4. Telegram reaction is best-effort.
+
+        Neither step 3 nor 4 can cause a download retry.
+        """
+
+        await (
+            self.database
+            .mark_available(
+                job.id,
+                str(final_path),
+            )
+        )
+
+        await self._refresh_jellyfin(
+            job
+        )
+
+        await self._notify_available(
+            job
+        )
+
     async def _mark_existing_available(
         self,
         job: JobRecord,
@@ -407,14 +540,14 @@ class Downloader:
     ) -> None:
         print(
             f"[job {job.id}] "
-            f"final file already exists: "
+            "final file already exists: "
             f"{final_path}",
             flush=True,
         )
 
-        await self.database.mark_available(
-            job.id,
-            str(final_path),
+        await self._complete_success(
+            job,
+            final_path,
         )
 
     async def process(
@@ -428,9 +561,11 @@ class Downloader:
             job.id,
         )
 
-        final_path = self.get_final_path(
-            job,
-            filename,
+        final_path = (
+            self.get_final_path(
+                job,
+                filename,
+            )
         )
 
         final_path.parent.mkdir(
@@ -438,16 +573,26 @@ class Downloader:
             exist_ok=True,
         )
 
-        part_path = self.get_part_path(
-            job,
-            filename,
-        )
-
-        if final_path.exists():
-            await self._mark_existing_available(
+        part_path = (
+            self.get_part_path(
                 job,
-                final_path,
+                filename,
             )
+        )
+        # This check is deliberately before the retry loop.
+        #
+        # If an earlier attempt successfully moved the file
+        # but failed during notification, we immediately
+        # recover it as AVAILABLE rather than downloading
+        # hundreds of MB again.
+        if final_path.exists():
+            await (
+                self._mark_existing_available(
+                    job,
+                    final_path,
+                )
+            )
+
             return
 
         if not self.has_enough_disk_space():
@@ -458,7 +603,7 @@ class Downloader:
             error = (
                 "Insufficient free disk space: "
                 f"{free_gb:.1f} GB free, "
-                f"minimum "
+                "minimum "
                 f"{self.config.min_free_disk_gb} GB"
             )
 
@@ -468,14 +613,16 @@ class Downloader:
                 flush=True,
             )
 
-            await self.database.mark_failed(
-                job.id,
-                error,
+            await (
+                self.database
+                .mark_failed(
+                    job.id,
+                    error,
+                )
             )
 
-            await self._notify_low_disk(
-                job,
-                filename,
+            await self._notify_failed(
+                job
             )
 
             return
@@ -484,19 +631,25 @@ class Downloader:
             1,
             self.config.max_retries + 1,
         ):
-            await self.database.increment_attempt(
-                job.id
+            await (
+                self.database
+                .increment_attempt(
+                    job.id
+                )
             )
 
             if attempt > 1:
-                await self.database.mark_downloading(
-                    job.id
+                await (
+                    self.database
+                    .mark_downloading(
+                        job.id
+                    )
                 )
 
             try:
                 print(
                     f"[job {job.id}] "
-                    f"download attempt "
+                    "download attempt "
                     f"{attempt}/"
                     f"{self.config.max_retries}: "
                     f"{filename}",
@@ -504,7 +657,8 @@ class Downloader:
                 )
 
                 message = (
-                    await self.client.get_messages(
+                    await self.client
+                    .get_messages(
                         job.telegram_chat_id,
                         ids=(
                             job.telegram_message_id
@@ -522,25 +676,25 @@ class Downloader:
                         "Telegram message has no media"
                     )
 
-                await self._download_resumable(
-                    message=message,
-                    job=job,
-                    part_path=part_path,
-                    filename=filename,
+                await (
+                    self._download_resumable(
+                        message=message,
+                        job=job,
+                        part_path=part_path,
+                        filename=filename,
+                    )
                 )
 
-                await self.database.mark_processing(
-                    job.id
+                await (
+                    self.database
+                    .mark_processing(
+                        job.id
+                    )
                 )
 
                 os.replace(
                     part_path,
                     final_path,
-                )
-
-                await self.database.mark_available(
-                    job.id,
-                    str(final_path),
                 )
 
                 duration = (
@@ -549,7 +703,9 @@ class Downloader:
                 )
 
                 size = (
-                    final_path.stat().st_size
+                    final_path
+                    .stat()
+                    .st_size
                 )
 
                 avg_speed = (
@@ -563,39 +719,27 @@ class Downloader:
 
                 print(
                     f"[job {job.id}] "
-                    f"available: "
+                    "available: "
                     f"{final_path} "
                     f"| {duration:.1f}s "
-                    f"| avg "
+                    "| avg "
                     f"{avg_speed:.2f} MB/s",
                     flush=True,
                 )
 
-                # Do not fail the download just because
-                # Jellyfin refresh fails.
-                try:
-                    await (
-                        self.jellyfin
-                        .refresh_library()
+                # CRITICAL:
+                #
+                # From this point onward the download is
+                # successful. DB availability is committed
+                # before any optional integration.
+                #
+                # _complete_success() internally isolates
+                # Jellyfin and Telegram reaction failures.
+                await (
+                    self._complete_success(
+                        job,
+                        final_path,
                     )
-                except Exception as exc:
-                    print(
-                        f"[job {job.id}] "
-                        "Jellyfin refresh error: "
-                        f"{type(exc).__name__}: "
-                        f"{exc}",
-                        flush=True,
-                    )
-
-                await self.client.send_message(
-                    job.telegram_chat_id,
-                    available_message(
-                        final_path.name,
-                        duration,
-                    ),
-                    reply_to=(
-                        job.telegram_message_id
-                    ),
                 )
 
                 return
@@ -632,31 +776,33 @@ class Downloader:
                     attempt
                     >= self.config.max_retries
                 ):
-                    await self.database.mark_failed(
-                        job.id,
-                        error,
+                    await (
+                        self.database
+                        .mark_failed(
+                            job.id,
+                            error,
+                        )
                     )
 
-                    await self.client.send_message(
-                        job.telegram_chat_id,
-                        failed_message(
-                            filename,
-                            attempt,
-                        ),
-                        reply_to=(
-                            job.telegram_message_id
-                        ),
+                    # Best-effort only.
+                    # _notify_failed() never raises.
+                    await self._notify_failed(
+                        job
                     )
 
                     return
 
-                await self.database.mark_retry(
-                    job.id,
-                    error,
+                await (
+                    self.database
+                    .mark_retry(
+                        job.id,
+                        error,
+                    )
                 )
 
                 delay = (
-                    self.config.retry_base_seconds
+                    self.config
+                    .retry_base_seconds
                     * attempt
                 )
 

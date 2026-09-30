@@ -1,0 +1,7 @@
+telethon
+python-dotenv
+cryptg
+fastapi
+uvicorn[standard]
+jinja2
+aiofiles

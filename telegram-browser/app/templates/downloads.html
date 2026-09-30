@@ -1,0 +1,960 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+
+<head>
+    <meta charset="UTF-8">
+
+    <meta
+        name="viewport"
+        content="width=device-width, initial-scale=1"
+    >
+
+    <title>הורדות · Zikri Media</title>
+
+    <link
+        rel="stylesheet"
+        href="/static/styles.css"
+    >
+</head>
+
+<body>
+
+<header class="topbar">
+
+    <div>
+
+        <h1>
+            הורדות
+        </h1>
+
+        <div class="subtitle">
+            הורדות שהופעלו דרך הספרייה
+        </div>
+
+    </div>
+
+    <div class="topbar-actions">
+
+        <a
+            class="nav-button"
+            href="/"
+        >
+            חזרה לספרייה
+        </a>
+
+    </div>
+
+</header>
+
+
+<section class="download-summary">
+
+    <button
+        class="summary-card"
+        data-status=""
+    >
+        <strong id="countAll">
+            -
+        </strong>
+
+        <span>
+            הכל
+        </span>
+    </button>
+
+    <button
+        class="summary-card summary-orange"
+        data-status="active"
+    >
+        <strong id="countActive">
+            -
+        </strong>
+
+        <span>
+            בתהליך
+        </span>
+    </button>
+
+    <button
+        class="summary-card summary-green"
+        data-status="AVAILABLE"
+    >
+        <strong id="countAvailable">
+            -
+        </strong>
+
+        <span>
+            זמינים
+        </span>
+    </button>
+
+    <button
+        class="summary-card summary-red"
+        data-status="FAILED"
+    >
+        <strong id="countFailed">
+            -
+        </strong>
+
+        <span>
+            נכשלו
+        </span>
+    </button>
+
+</section>
+
+
+<section class="download-controls">
+
+    <select id="statusFilter">
+
+        <option value="">
+            כל הסטטוסים
+        </option>
+
+        <option value="QUEUED">
+            בתור
+        </option>
+
+        <option value="DOWNLOADING">
+            מוריד
+        </option>
+
+        <option value="PROCESSING">
+            מעבד
+        </option>
+
+        <option value="RETRY_WAIT">
+            ממתין לניסיון נוסף
+        </option>
+
+        <option value="AVAILABLE">
+            זמין
+        </option>
+
+        <option value="FAILED">
+            נכשל
+        </option>
+
+    </select>
+
+    <button
+        id="refreshDownloads"
+        class="refresh-button"
+    >
+        רענון
+    </button>
+
+</section>
+
+
+<div
+    id="downloadStatus"
+    class="status"
+>
+    טוען הורדות...
+</div>
+
+
+<main
+    id="downloadsList"
+    class="downloads-list"
+>
+</main>
+
+
+<nav
+    id="downloadsPagination"
+    class="pagination"
+>
+</nav>
+
+
+<script>
+
+const PAGE_SIZE = 30;
+
+const ACTIVE_STATES =
+    new Set([
+        "QUEUED",
+        "DOWNLOADING",
+        "PROCESSING",
+        "RETRY_WAIT",
+    ]);
+
+let currentPage = 1;
+
+let currentPagination = null;
+
+let pollTimer = null;
+
+
+function escapeHtml(
+    value
+) {
+
+    if (
+        value === null
+        || value === undefined
+    ) {
+        return "";
+    }
+
+    return String(value)
+        .replaceAll(
+            "&",
+            "&amp;"
+        )
+        .replaceAll(
+            "<",
+            "&lt;"
+        )
+        .replaceAll(
+            ">",
+            "&gt;"
+        )
+        .replaceAll(
+            '"',
+            "&quot;"
+        )
+        .replaceAll(
+            "'",
+            "&#039;"
+        );
+}
+
+
+function formatSize(
+    bytes
+) {
+
+    if (!bytes) {
+        return "—";
+    }
+
+    const gb =
+        bytes
+        / 1024
+        / 1024
+        / 1024;
+
+    if (gb >= 1) {
+        return (
+            `${gb.toFixed(2)} GB`
+        );
+    }
+
+    const mb =
+        bytes
+        / 1024
+        / 1024;
+
+    return (
+        `${mb.toFixed(0)} MB`
+    );
+}
+
+
+function cleanTitle(
+    item
+) {
+
+    const caption =
+        item.caption
+        || "";
+
+    const firstLine =
+        caption
+        .split("\n")[0]
+        .trim();
+
+    if (firstLine) {
+        return firstLine;
+    }
+
+    return (
+        item.filename
+        || `Job ${item.id}`
+    );
+}
+
+
+function statusLabel(
+    status
+) {
+
+    const labels = {
+        "QUEUED":
+            "בתור",
+
+        "DOWNLOADING":
+            "מוריד",
+
+        "PROCESSING":
+            "מעבד",
+
+        "RETRY_WAIT":
+            "ממתין לניסיון נוסף",
+
+        "AVAILABLE":
+            "זמין",
+
+        "FAILED":
+            "נכשל",
+    };
+
+    return (
+        labels[status]
+        || status
+    );
+}
+
+
+function statusClass(
+    status
+) {
+
+    if (
+        status === "AVAILABLE"
+    ) {
+        return "status-available";
+    }
+
+    if (
+        status === "FAILED"
+    ) {
+        return "status-failed";
+    }
+
+    return "status-active";
+}
+
+
+function renderSkeletons() {
+
+    const list =
+        document.getElementById(
+            "downloadsList"
+        );
+
+    list.innerHTML = "";
+
+    for (
+        let i = 0;
+        i < 8;
+        i++
+    ) {
+
+        const item =
+            document.createElement(
+                "div"
+            );
+
+        item.className =
+            "download-row download-skeleton";
+
+        item.innerHTML = `
+
+            <div
+                class="skeleton-line skeleton-title"
+            ></div>
+
+            <div
+                class="skeleton-line skeleton-subtitle"
+            ></div>
+
+            <div
+                class="skeleton-line skeleton-small"
+            ></div>
+        `;
+
+        list.appendChild(
+            item
+        );
+    }
+}
+
+
+function updateSummary(
+    result
+) {
+
+    const counts =
+        result.counts
+        || {};
+
+    const active =
+        (
+            counts.QUEUED
+            || 0
+        )
+        +
+        (
+            counts.DOWNLOADING
+            || 0
+        )
+        +
+        (
+            counts.PROCESSING
+            || 0
+        )
+        +
+        (
+            counts.RETRY_WAIT
+            || 0
+        );
+
+    const available =
+        counts.AVAILABLE
+        || 0;
+
+    const failed =
+        counts.FAILED
+        || 0;
+
+    const total =
+        active
+        + available
+        + failed;
+
+    document.getElementById(
+        "countAll"
+    ).textContent =
+        total;
+
+    document.getElementById(
+        "countActive"
+    ).textContent =
+        active;
+
+    document.getElementById(
+        "countAvailable"
+    ).textContent =
+        available;
+
+    document.getElementById(
+        "countFailed"
+    ).textContent =
+        failed;
+}
+
+
+function renderDownloads(
+    items
+) {
+
+    const list =
+        document.getElementById(
+            "downloadsList"
+        );
+
+    list.innerHTML = "";
+
+    if (!items.length) {
+
+        list.innerHTML = `
+            <div class="empty">
+                אין הורדות להצגה
+            </div>
+        `;
+
+        return;
+    }
+
+    for (
+        const item
+        of items
+    ) {
+
+        const row =
+            document.createElement(
+                "article"
+            );
+
+        row.className =
+            "download-row";
+
+        row.innerHTML = `
+
+            <div class="download-main">
+
+                <div class="download-title">
+
+                    ${escapeHtml(
+                        cleanTitle(
+                            item
+                        )
+                    )}
+
+                </div>
+
+                <div class="download-filename">
+
+                    ${escapeHtml(
+                        item.filename
+                        || ""
+                    )}
+
+                </div>
+
+            </div>
+
+            <div class="download-meta">
+
+                <span>
+                    ${formatSize(
+                        item.file_size
+                    )}
+                </span>
+
+                <span>
+                    נסיונות:
+                    ${item.attempt_count}
+                </span>
+
+                <span>
+                    ${escapeHtml(
+                        item.created_at
+                        || ""
+                    )}
+                </span>
+
+            </div>
+
+            <div
+                class="
+                    download-state
+                    ${statusClass(
+                        item.status
+                    )}
+                "
+            >
+
+                ${escapeHtml(
+                    statusLabel(
+                        item.status
+                    )
+                )}
+
+            </div>
+
+            ${
+                item.local_path
+                    ? `
+                        <div class="download-path">
+                            ${escapeHtml(
+                                item.local_path
+                            )}
+                        </div>
+                    `
+                    : ""
+            }
+
+            ${
+                item.last_error
+                    ? `
+                        <div class="download-error">
+                            ${escapeHtml(
+                                item.last_error
+                            )}
+                        </div>
+                    `
+                    : ""
+            }
+        `;
+
+        list.appendChild(
+            row
+        );
+    }
+}
+
+
+function makePageButton(
+    label,
+    page
+) {
+
+    const button =
+        document.createElement(
+            "button"
+        );
+
+    button.textContent =
+        label;
+
+    button.addEventListener(
+        "click",
+        async () => {
+
+            currentPage =
+                page;
+
+            await loadDownloads();
+
+            window.scrollTo({
+                top: 0,
+                behavior:
+                    "smooth",
+            });
+        }
+    );
+
+    return button;
+}
+
+
+function renderPagination() {
+
+    const container =
+        document.getElementById(
+            "downloadsPagination"
+        );
+
+    container.innerHTML = "";
+
+    if (!currentPagination) {
+        return;
+    }
+
+    const total =
+        currentPagination
+        .total_pages;
+
+    if (currentPage > 1) {
+
+        container.appendChild(
+            makePageButton(
+                "« הקודם",
+                currentPage - 1
+            )
+        );
+    }
+
+    const start =
+        Math.max(
+            1,
+            currentPage - 3
+        );
+
+    const end =
+        Math.min(
+            total,
+            currentPage + 3
+        );
+
+    if (start > 1) {
+
+        container.appendChild(
+            makePageButton(
+                "1",
+                1
+            )
+        );
+
+        if (start > 2) {
+
+            const dots =
+                document.createElement(
+                    "span"
+                );
+
+            dots.className =
+                "pagination-dots";
+
+            dots.textContent =
+                "...";
+
+            container.appendChild(
+                dots
+            );
+        }
+    }
+
+    for (
+        let page = start;
+        page <= end;
+        page++
+    ) {
+
+        const button =
+            makePageButton(
+                String(page),
+                page
+            );
+
+        if (
+            page
+            === currentPage
+        ) {
+
+            button.classList.add(
+                "active"
+            );
+
+            button.disabled =
+                true;
+        }
+
+        container.appendChild(
+            button
+        );
+    }
+
+    if (end < total) {
+
+        if (
+            end
+            < total - 1
+        ) {
+
+            const dots =
+                document.createElement(
+                    "span"
+                );
+
+            dots.className =
+                "pagination-dots";
+
+            dots.textContent =
+                "...";
+
+            container.appendChild(
+                dots
+            );
+        }
+
+        container.appendChild(
+            makePageButton(
+                String(total),
+                total
+            )
+        );
+    }
+
+    if (
+        currentPage
+        < total
+    ) {
+
+        container.appendChild(
+            makePageButton(
+                "הבא »",
+                currentPage + 1
+            )
+        );
+    }
+
+    const text =
+        document.createElement(
+            "div"
+        );
+
+    text.className =
+        "page-status";
+
+    text.textContent =
+        `עמוד ${currentPage} מתוך ${total}`;
+
+    container.appendChild(
+        text
+    );
+}
+
+
+async function loadDownloads(
+    {
+        skeleton = true
+    } = {}
+) {
+
+    if (skeleton) {
+        renderSkeletons();
+    }
+
+    const statusFilter =
+        document.getElementById(
+            "statusFilter"
+        ).value;
+
+    const params =
+        new URLSearchParams({
+            page:
+                currentPage,
+
+            page_size:
+                PAGE_SIZE,
+        });
+
+    if (statusFilter) {
+        params.set(
+            "status",
+            statusFilter
+        );
+    }
+
+    const response =
+        await fetch(
+            `/api/downloads?${params}`
+        );
+
+    const statusElement =
+        document.getElementById(
+            "downloadStatus"
+        );
+
+    if (!response.ok) {
+
+        statusElement.textContent =
+            "שגיאה בטעינת ההורדות";
+
+        return;
+    }
+
+    const result =
+        await response.json();
+
+    currentPagination =
+        result.pagination;
+
+    currentPage =
+        result.pagination.page;
+
+    renderDownloads(
+        result.items
+    );
+
+    renderPagination();
+
+    updateSummary(
+        result
+    );
+
+    statusElement.textContent =
+        `${result.pagination.total} הורדות`;
+
+    const hasActive =
+        result.items.some(
+            item =>
+                ACTIVE_STATES
+                .has(
+                    item.status
+                )
+        );
+
+    if (hasActive) {
+        startPolling();
+
+    } else {
+        stopPolling();
+    }
+}
+
+
+function startPolling() {
+
+    if (pollTimer) {
+        return;
+    }
+
+    pollTimer =
+        setInterval(
+            () => {
+                loadDownloads({
+                    skeleton:
+                        false,
+                });
+            },
+            3000
+        );
+}
+
+
+function stopPolling() {
+
+    if (!pollTimer) {
+        return;
+    }
+
+    clearInterval(
+        pollTimer
+    );
+
+    pollTimer =
+        null;
+}
+
+
+document.getElementById(
+    "statusFilter"
+).addEventListener(
+    "change",
+    () => {
+
+        currentPage =
+            1;
+
+        loadDownloads();
+    }
+);
+
+
+document.getElementById(
+    "refreshDownloads"
+).addEventListener(
+    "click",
+    () => {
+
+        loadDownloads();
+    }
+);
+
+
+document.querySelectorAll(
+    ".summary-card"
+).forEach(
+    button => {
+
+        button.addEventListener(
+            "click",
+            () => {
+
+                const value =
+                    button.dataset.status;
+
+                const select =
+                    document.getElementById(
+                        "statusFilter"
+                    );
+
+                if (
+                    value === "active"
+                ) {
+
+                    select.value =
+                        "DOWNLOADING";
+
+                } else {
+
+                    select.value =
+                        value;
+                }
+
+                currentPage =
+                    1;
+
+                loadDownloads();
+            }
+        );
+
+    }
+);
+
+
+loadDownloads();
+
+</script>
+
+</body>
+
+</html>
