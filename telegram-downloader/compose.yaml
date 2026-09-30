@@ -13,5 +13,6 @@ services:
     volumes:
       - ./data:/data
       - /home/ben/media:/media
+      - ../shared:/shared:ro
     ports:
       - "8787:8787"

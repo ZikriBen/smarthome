@@ -13,6 +13,7 @@ from app.classifier import (
 )
 from app.config import Config
 from app.database import Database
+from app.fast_download import FastTelegramDownloader
 from app.jellyfin import JellyfinClient
 from app.media_paths import build_media_path
 from app.models import JobRecord
@@ -20,9 +21,6 @@ from app.notifications import (
     available_message,
     failed_message,
 )
-
-
-REQUEST_SIZE = 512 * 1024
 
 
 def safe_filename(
@@ -45,26 +43,28 @@ class ProgressReporter:
     def __init__(
         self,
         job: JobRecord,
-        initial_bytes: int = 0,
         interval: float = 60.0,
     ):
         self.job = job
-        self.initial_bytes = initial_bytes
         self.interval = interval
+
         self.started = time.monotonic()
         self.last_print = 0.0
 
-    def report(
+        self.downloaded_this_run = 0
+
+    def add(
         self,
-        current: int,
+        chunk_size: int,
         total: int,
     ) -> None:
+        self.downloaded_this_run += chunk_size
+
         now = time.monotonic()
 
         if (
-            now - self.last_print
-            < self.interval
-            and current != total
+            now - self.last_print < self.interval
+            and self.downloaded_this_run < total
         ):
             return
 
@@ -75,35 +75,36 @@ class ProgressReporter:
             0.001,
         )
 
-        transferred = max(
-            current - self.initial_bytes,
-            0,
-        )
-
         speed_mb_s = (
-            transferred
+            self.downloaded_this_run
             / 1024
             / 1024
             / elapsed
         )
 
-        current_mb = (
-            current / 1024 / 1024
+        downloaded_mb = (
+            self.downloaded_this_run
+            / 1024
+            / 1024
         )
 
         total_mb = (
-            total / 1024 / 1024
+            total
+            / 1024
+            / 1024
         )
 
         percent = (
-            current / total * 100
+            self.downloaded_this_run
+            / total
+            * 100
             if total
             else 0
         )
 
         print(
             f"[job {self.job.id}] "
-            f"{current_mb:.1f}/"
+            f"{downloaded_mb:.1f}/"
             f"{total_mb:.1f} MB "
             f"({percent:.1f}%) "
             f"{speed_mb_s:.1f} MB/s",
@@ -126,6 +127,15 @@ class Downloader:
             config
         )
 
+        self.fast_downloader = (
+            FastTelegramDownloader(
+                client=client,
+                connections=(
+                    config.telegram_download_connections
+                ),
+            )
+        )
+
         self.media_root = Path(
             config.media_root
         )
@@ -135,14 +145,14 @@ class Downloader:
             / "incoming"
         )
 
-        self.tv_dir = (
-            self.media_root
-            / "tv"
-        )
-
         self.movies_dir = (
             self.media_root
             / "movies"
+        )
+
+        self.tv_dir = (
+            self.media_root
+            / "tv"
         )
 
         self.part_dir = (
@@ -152,8 +162,8 @@ class Downloader:
 
         for directory in (
             self.incoming_dir,
-            self.tv_dir,
             self.movies_dir,
+            self.tv_dir,
             self.part_dir,
         ):
             directory.mkdir(
@@ -163,7 +173,7 @@ class Downloader:
 
     def get_free_disk_gb(self) -> float:
         usage = shutil.disk_usage(
-            self.config.media_root
+            self.media_root
         )
 
         return (
@@ -173,7 +183,9 @@ class Downloader:
             / 1024
         )
 
-    def has_enough_disk_space(self) -> bool:
+    def has_enough_disk_space(
+        self,
+    ) -> bool:
         return (
             self.get_free_disk_gb()
             >= self.config.min_free_disk_gb
@@ -191,73 +203,83 @@ class Downloader:
 
         if (
             classification.media_type
-            in (
-                MediaType.TV,
-                MediaType.MOVIE,
-            )
+            == MediaType.TV
         ):
-            final_path = build_media_path(
-                media_root=str(
-                    self.media_root
-                ),
-                classification=classification,
-                original_filename=filename,
-            )
+            episode = classification.episode
 
             if (
-                classification.media_type
-                == MediaType.TV
+                classification.title
+                and episode
             ):
-                episode = (
-                    classification.episode
+                final_path = build_media_path(
+                    media_root=str(
+                        self.media_root
+                    ),
+                    classification=classification,
+                    original_filename=filename,
                 )
 
-                if episode is not None:
-                    if (
-                        episode.episode_end
-                        is not None
-                    ):
-                        episode_text = (
-                            f"S"
-                            f"{(episode.season or 0):02d}"
-                            f"E"
-                            f"{episode.episode_start:02d}"
-                            f"-E"
-                            f"{episode.episode_end:02d}"
-                        )
-                    else:
-                        episode_text = (
-                            f"S"
-                            f"{(episode.season or 0):02d}"
-                            f"E"
-                            f"{episode.episode_start:02d}"
-                        )
+                season = (
+                    episode.season or 0
+                )
 
-                    print(
-                        f"[job {job.id}] "
-                        f"classified as TV: "
-                        f"{classification.title} "
-                        f"{episode_text}",
-                        flush=True,
+                if (
+                    episode.episode_end
+                    is not None
+                ):
+                    episode_text = (
+                        f"S{season:02d}"
+                        f"E{episode.episode_start:02d}"
+                        f"-E{episode.episode_end:02d}"
+                    )
+                else:
+                    episode_text = (
+                        f"S{season:02d}"
+                        f"E{episode.episode_start:02d}"
                     )
 
-            elif (
-                classification.media_type
-                == MediaType.MOVIE
-            ):
                 print(
                     f"[job {job.id}] "
-                    f"classified as MOVIE: "
+                    f"classified as TV: "
                     f"{classification.title} "
-                    f"({classification.year})",
+                    f"{episode_text}",
                     flush=True,
                 )
 
-            return final_path
+                return final_path
+
+        if (
+            classification.media_type
+            == MediaType.MOVIE
+        ):
+            if classification.title:
+                final_path = build_media_path(
+                    media_root=str(
+                        self.media_root
+                    ),
+                    classification=classification,
+                    original_filename=filename,
+                )
+
+                year_text = (
+                    f" ({classification.year})"
+                    if classification.year
+                    else ""
+                )
+
+                print(
+                    f"[job {job.id}] "
+                    f"classified as MOVIE: "
+                    f"{classification.title}"
+                    f"{year_text}",
+                    flush=True,
+                )
+
+                return final_path
 
         print(
             f"[job {job.id}] "
-            "classification unknown; "
+            "classification UNKNOWN; "
             "keeping in incoming",
             flush=True,
         )
@@ -267,16 +289,65 @@ class Downloader:
             / filename
         )
 
+    def get_part_path(
+        self,
+        job: JobRecord,
+        filename: str,
+    ) -> Path:
+        return (
+            self.part_dir
+            / f"{job.id}-{filename}.part"
+        )
+
+    def get_work_prefix(
+        self,
+        job: JobRecord,
+        filename: str,
+    ) -> Path:
+        return (
+            self.part_dir
+            / f"{job.id}-{filename}"
+        )
+
+    async def _notify_low_disk(
+        self,
+        job: JobRecord,
+        filename: str,
+    ) -> None:
+        free_gb = (
+            self.get_free_disk_gb()
+        )
+
+        await self.client.send_message(
+            job.telegram_chat_id,
+            (
+                "⚠️ Download rejected\n\n"
+                f"{filename}\n\n"
+                "Server storage is too low.\n"
+                f"Free: {free_gb:.1f} GB\n"
+                f"Minimum required: "
+                f"{self.config.min_free_disk_gb} GB"
+            ),
+            reply_to=(
+                job.telegram_message_id
+            ),
+        )
+
     async def _download_resumable(
         self,
+        *,
         message,
         job: JobRecord,
         part_path: Path,
+        filename: str,
     ) -> None:
+        if not message.file:
+            raise RuntimeError(
+                "Telegram file metadata missing"
+            )
+
         total_size = (
             message.file.size
-            if message.file
-            else job.file_size
         )
 
         if not total_size:
@@ -284,94 +355,67 @@ class Downloader:
                 "Unable to determine file size"
             )
 
-        existing_size = (
-            part_path.stat().st_size
-            if part_path.exists()
-            else 0
-        )
-
-        if existing_size > total_size:
-            print(
-                f"[job {job.id}] "
-                "partial file larger "
-                "than source; restarting",
-                flush=True,
-            )
-
-            part_path.unlink()
-            existing_size = 0
-
-        if existing_size == total_size:
-            print(
-                f"[job {job.id}] "
-                "partial file already complete",
-                flush=True,
-            )
-            return
-
-        if existing_size:
-            print(
-                f"[job {job.id}] "
-                f"resuming from "
-                f"{existing_size / 1024 / 1024:.1f} MB",
-                flush=True,
-            )
-
         reporter = ProgressReporter(
-            job=job,
-            initial_bytes=existing_size,
+            job=job
         )
 
-        mode = (
-            "ab"
-            if existing_size
-            else "wb"
+        work_prefix = (
+            self.get_work_prefix(
+                job,
+                filename,
+            )
         )
 
-        with part_path.open(
-            mode
-        ) as output:
-            async for chunk in (
-                self.client.iter_download(
-                    message.media,
-                    offset=existing_size,
-                    request_size=REQUEST_SIZE,
-                    chunk_size=REQUEST_SIZE,
-                    file_size=total_size,
-                )
-            ):
-                output.write(chunk)
-
-                current_size = (
-                    output.tell()
-                )
-
-                reporter.report(
-                    current=current_size,
-                    total=total_size,
-                )
-
-                if (
-                    current_size
-                    >= total_size
-                ):
-                    break
-
-            output.flush()
-            os.fsync(
-                output.fileno()
+        def progress(
+            chunk_size: int,
+            total: int,
+        ) -> None:
+            reporter.add(
+                chunk_size,
+                total,
             )
 
-        final_size = (
-            part_path.stat().st_size
+        print(
+            f"[job {job.id}] "
+            f"using "
+            f"{self.config.telegram_download_connections} "
+            f"MTProto sender(s)",
+            flush=True,
         )
 
-        if final_size != total_size:
+        await self.fast_downloader.download(
+            message=message,
+            destination=part_path,
+            work_prefix=work_prefix,
+            progress=progress,
+        )
+
+        if (
+            not part_path.exists()
+            or part_path.stat().st_size
+            != total_size
+        ):
             raise RuntimeError(
-                "Incomplete download: "
-                f"{final_size} of "
-                f"{total_size} bytes"
+                "Parallel download produced "
+                "an invalid output file"
             )
+
+    async def _mark_existing_available(
+        self,
+        job: JobRecord,
+        final_path: Path,
+    ) -> None:
+        print(
+            f"[job {job.id}] "
+            f"final file already exists: "
+            f"{final_path}",
+            flush=True,
+        )
+
+        await self.database.mark_available(
+            job.id,
+            str(final_path),
+        )
 
     async def process(
         self,
@@ -394,15 +438,15 @@ class Downloader:
             exist_ok=True,
         )
 
-        part_path = (
-            self.part_dir
-            / f"{job.id}-{filename}.part"
+        part_path = self.get_part_path(
+            job,
+            filename,
         )
 
         if final_path.exists():
-            await self.database.mark_available(
-                job.id,
-                str(final_path),
+            await self._mark_existing_available(
+                job,
+                final_path,
             )
             return
 
@@ -412,13 +456,26 @@ class Downloader:
             )
 
             error = (
-                "Insufficient free disk "
-                f"space: {free_gb:.1f} GB"
+                "Insufficient free disk space: "
+                f"{free_gb:.1f} GB free, "
+                f"minimum "
+                f"{self.config.min_free_disk_gb} GB"
+            )
+
+            print(
+                f"[job {job.id}] "
+                f"{error}",
+                flush=True,
             )
 
             await self.database.mark_failed(
                 job.id,
                 error,
+            )
+
+            await self._notify_low_disk(
+                job,
+                filename,
             )
 
             return
@@ -449,7 +506,9 @@ class Downloader:
                 message = (
                     await self.client.get_messages(
                         job.telegram_chat_id,
-                        ids=job.telegram_message_id,
+                        ids=(
+                            job.telegram_message_id
+                        ),
                     )
                 )
 
@@ -467,6 +526,7 @@ class Downloader:
                     message=message,
                     job=job,
                     part_path=part_path,
+                    filename=filename,
                 )
 
                 await self.database.mark_processing(
@@ -488,15 +548,44 @@ class Downloader:
                     - started
                 )
 
+                size = (
+                    final_path.stat().st_size
+                )
+
+                avg_speed = (
+                    size
+                    / 1024
+                    / 1024
+                    / duration
+                    if duration > 0
+                    else 0
+                )
+
                 print(
                     f"[job {job.id}] "
                     f"available: "
-                    f"{final_path}",
+                    f"{final_path} "
+                    f"| {duration:.1f}s "
+                    f"| avg "
+                    f"{avg_speed:.2f} MB/s",
                     flush=True,
                 )
 
-                # Ask Jellyfin to scan the libraries.
-                await self.jellyfin.refresh_library()
+                # Do not fail the download just because
+                # Jellyfin refresh fails.
+                try:
+                    await (
+                        self.jellyfin
+                        .refresh_library()
+                    )
+                except Exception as exc:
+                    print(
+                        f"[job {job.id}] "
+                        "Jellyfin refresh error: "
+                        f"{type(exc).__name__}: "
+                        f"{exc}",
+                        flush=True,
+                    )
 
                 await self.client.send_message(
                     job.telegram_chat_id,
@@ -515,9 +604,10 @@ class Downloader:
                 print(
                     f"[job {job.id}] "
                     "download interrupted; "
-                    "partial file preserved",
+                    "parallel lane files preserved",
                     flush=True,
                 )
+
                 raise
 
             except Exception as exc:
@@ -532,6 +622,11 @@ class Downloader:
                     f"{error}",
                     flush=True,
                 )
+
+                # IMPORTANT:
+                # Do not delete .lane-* files.
+                # They are the resume state for the
+                # parallel downloader.
 
                 if (
                     attempt
@@ -563,6 +658,12 @@ class Downloader:
                 delay = (
                     self.config.retry_base_seconds
                     * attempt
+                )
+
+                print(
+                    f"[job {job.id}] "
+                    f"retrying in {delay}s",
+                    flush=True,
                 )
 
                 await asyncio.sleep(
