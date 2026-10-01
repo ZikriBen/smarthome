@@ -6,8 +6,21 @@
 	handle_path /beszel* {
 		reverse_proxy host.docker.internal:8090
 	}
+	handle_path /kuma* {
+		reverse_proxy host.docker.internal:3001 {
+			header_down Location ^/(.*)$ /kuma/$1
+		}
+	}
 
 	handle {
 		reverse_proxy host.docker.internal:7575
 	}
+}
+
+:8091 {
+	basicauth {
+		ben $2a$14$mbkljLOzCElBHnt4qA3GMeED7pgWGXNO/b4tSZ94OkewFwCEMJYs6
+	}
+
+	reverse_proxy host.docker.internal:8788
 }
