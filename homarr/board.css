@@ -1,63 +1,167 @@
+/* ================================
+   PAGE BACKGROUND
+   ================================ */
+
 body {
   background:
     linear-gradient(
       rgba(6, 10, 14, 0.48),
       rgba(6, 10, 14, 0.62)
     ),
-    url("YOUR_BACKGROUND_IMAGE_URL")
+    url("https://images.unsplash.com/photo-1519681393784-d120267933ba?auto=format&fit=crop&w=2000&q=80")
     center center / cover fixed no-repeat !important;
 
   color: rgba(245, 245, 248, 0.96);
 }
 
+
+/* ================================
+   HEADER
+   ================================ */
+
 header {
   background: rgba(16, 18, 24, 0.92) !important;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.07) !important;
-  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.24) !important;
+
+  border-bottom:
+    1px solid rgba(255, 255, 255, 0.07) !important;
+
+  box-shadow:
+    0 4px 18px rgba(0, 0, 0, 0.24) !important;
 }
+
+
+/* ================================
+   SEARCH
+   ================================ */
 
 header input {
   background: rgba(45, 48, 56, 0.88) !important;
-  border: 1px solid rgba(255, 255, 255, 0.10) !important;
+
+  border:
+    1px solid rgba(255, 255, 255, 0.10) !important;
+
   border-radius: 12px !important;
+
   color: rgba(245, 245, 248, 0.96) !important;
 }
 
+
+/* ================================
+   STANDARD GLASS WIDGET
+   ================================ */
+
 .glass-widget {
   background: rgba(24, 27, 34, 0.78) !important;
-  border: 1px solid rgba(255, 255, 255, 0.11) !important;
+
+  border:
+    1px solid rgba(255, 255, 255, 0.11) !important;
+
   border-radius: 18px !important;
-  box-shadow: 0 6px 22px rgba(0, 0, 0, 0.20) !important;
+
+  box-shadow:
+    0 6px 22px rgba(0, 0, 0, 0.20) !important;
+
   overflow: hidden;
+
+  transition:
+    background 0.18s ease,
+    border-color 0.18s ease,
+    box-shadow 0.18s ease,
+    transform 0.18s ease;
 }
+
 
 .glass-widget:hover {
   background: rgba(28, 31, 38, 0.84) !important;
-  border-color: rgba(255, 255, 255, 0.16) !important;
+
+  border-color:
+    rgba(255, 255, 255, 0.16) !important;
+
+  box-shadow:
+    0 8px 26px rgba(0, 0, 0, 0.26) !important;
+
+  transform: translateY(-1px);
 }
+
+
+/* ================================
+   LIGHTER GLASS WIDGET
+   Good for groups of app tiles
+   ================================ */
 
 .glass-light {
   background: rgba(20, 23, 29, 0.48) !important;
-  border: 1px solid rgba(255, 255, 255, 0.09) !important;
+
+  border:
+    1px solid rgba(255, 255, 255, 0.09) !important;
+
   border-radius: 18px !important;
-  box-shadow: 0 5px 18px rgba(0, 0, 0, 0.16) !important;
+
+  box-shadow:
+    0 5px 18px rgba(0, 0, 0, 0.16) !important;
+
   overflow: hidden;
+
+  transition:
+    background 0.18s ease,
+    border-color 0.18s ease,
+    box-shadow 0.18s ease,
+    transform 0.18s ease;
 }
+
+
+.glass-light:hover {
+  background: rgba(23, 26, 32, 0.56) !important;
+
+  border-color:
+    rgba(255, 255, 255, 0.14) !important;
+
+  box-shadow:
+    0 7px 22px rgba(0, 0, 0, 0.22) !important;
+
+  transform: translateY(-1px);
+}
+
+
+/* ================================
+   STRONGER GLASS WIDGET
+   Useful for text-heavy widgets
+   such as RSS
+   ================================ */
 
 .glass-strong {
   background: rgba(24, 27, 34, 0.90) !important;
-  border: 1px solid rgba(255, 255, 255, 0.10) !important;
+
+  border:
+    1px solid rgba(255, 255, 255, 0.10) !important;
+
   border-radius: 18px !important;
-  box-shadow: 0 6px 22px rgba(0, 0, 0, 0.22) !important;
+
+  box-shadow:
+    0 6px 22px rgba(0, 0, 0, 0.22) !important;
+
   overflow: hidden;
 }
 
-.theme-inner [class*="Paper-root"],
-.theme-inner [class*="Card-root"] {
-  background: rgba(24, 27, 34, 0.82) !important;
-  border: 1px solid rgba(255, 255, 255, 0.07) !important;
+
+/* ================================
+   REMOVE NESTED VISUAL NOISE
+   ONLY INSIDE OUR EXPLICIT CLASSES
+   ================================ */
+
+.glass-widget [class*="Paper-root"],
+.glass-widget [class*="Card-root"],
+.glass-light [class*="Paper-root"],
+.glass-light [class*="Card-root"],
+.glass-strong [class*="Paper-root"],
+.glass-strong [class*="Card-root"] {
   box-shadow: none !important;
 }
+
+
+/* ================================
+   TEXT CLEANUP
+   ================================ */
 
 main p,
 main span,
@@ -69,9 +173,39 @@ main h4 {
   text-shadow: none !important;
 }
 
+
+/* ================================
+   FORM / LABEL CLEANUP
+   ================================ */
+
+label,
+[class*="InputWrapper-label"],
+[class*="InputWrapper-description"],
+[class*="Input-label"] {
+  background: transparent !important;
+  box-shadow: none !important;
+}
+
+
+input,
+textarea,
+select {
+  color: rgba(245, 245, 248, 0.96) !important;
+}
+
+
+/* ================================
+   BUTTONS
+   ================================ */
+
 button {
   border-radius: 10px !important;
 }
+
+
+/* ================================
+   SCROLLBAR
+   ================================ */
 
 ::-webkit-scrollbar {
   width: 8px;
@@ -87,30 +221,136 @@ button {
   border-radius: 10px;
 }
 
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.28);
+}
+
+
+/* ================================
+   MOBILE
+   ================================ */
+
 @media (max-width: 700px) {
+
   body {
     background-attachment: scroll !important;
   }
+
 
   header {
     background: rgba(16, 18, 24, 0.97) !important;
   }
 
+
   .glass-widget {
     background: rgba(24, 27, 34, 0.88) !important;
+
+    border-color:
+      rgba(255, 255, 255, 0.12) !important;
+
     border-radius: 15px !important;
   }
+
 
   .glass-light {
     background: rgba(20, 23, 29, 0.72) !important;
+
+    border-color:
+      rgba(255, 255, 255, 0.11) !important;
+
     border-radius: 15px !important;
   }
+
 
   .glass-strong {
     background: rgba(24, 27, 34, 0.94) !important;
+
     border-radius: 15px !important;
   }
+}
 
+/* ================================
+   NORMALIZE INNER CARD COLORS
+   ================================ */
+
+.theme-inner [class*="Paper-root"],
+.theme-inner [class*="Card-root"] {
+  background: rgba(24, 27, 34, 0.82) !important;
+
+  border:
+    1px solid rgba(255, 255, 255, 0.07) !important;
+
+  box-shadow: none !important;
+}
+
+
+/* RSS has its own internal surfaces */
+.glass-strong .rssFeed-wrapper,
+.glass-strong [class*="Paper-root"],
+.glass-strong [class*="Card-root"] {
+  background: rgba(24, 27, 34, 0.86) !important;
+
+  border-color:
+    rgba(255, 255, 255, 0.07) !important;
+}
+/* ================================
+   EXPANDABLE WIDGET
+   ================================ */
+
+.expandable-widget {
+  max-height: 110px;
+  overflow: hidden;
+
+  transition:
+    max-height 0.35s ease,
+    box-shadow 0.25s ease,
+    border-color 0.25s ease;
+}
+
+/* Fade at bottom to indicate more content */
+.expandable-widget::after {
+  content: "";
+
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+
+  height: 45px;
+
+  pointer-events: none;
+
+  background:
+    linear-gradient(
+      transparent,
+      rgba(24, 27, 34, 0.95)
+    );
+
+  transition: opacity 0.2s ease;
+}
+
+/* Expand */
+.expandable-widget:hover {
+  max-height: 700px;
+  overflow: auto;
+
+  z-index: 50;
+
+  border-color:
+    rgba(255, 255, 255, 0.18) !important;
+
+  box-shadow:
+    0 12px 35px rgba(0, 0, 0, 0.35) !important;
+}
+
+.expandable-widget:hover::after {
+  opacity: 0;
+}
+/* ================================
+   HIDE ON MOBILE
+   ================================ */
+
+@media (max-width: 700px) {
   .hide-mobile {
     display: none !important;
   }
