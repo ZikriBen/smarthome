@@ -2,10 +2,31 @@ services:
   uptime-kuma:
     image: louislam/uptime-kuma:2
     restart: unless-stopped
+
     ports:
       - "3001:3001"
+
     volumes:
       - kuma-data:/app/data
+
+  tailscale-kuma:
+    image: tailscale/tailscale:latest
+    container_name: tailscale-kuma
+    restart: unless-stopped
+
+    environment:
+      - TS_STATE_DIR=/var/lib/tailscale
+      - TS_USERSPACE=true
+      - TS_AUTH_ONCE=true
+      - TS_EXTRA_ARGS=--accept-dns=false --hostname=kuma-public
+
+    volumes:
+      - ./tailscale-state:/var/lib/tailscale
+
+    network_mode: "service:uptime-kuma"
+
+    depends_on:
+      - uptime-kuma
 
 volumes:
   kuma-data:
