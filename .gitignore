@@ -49,3 +49,17 @@ telegram-fast-download-poc/
 
 # Runtime state
 uptime-kuma/tailscale-state/
+
+# Homarr runtime / secrets
+homarr/.env
+homarr/appdata/
+homarr/backups/
+homarr/.env.new-backup
+homarr/appdata.new-backup/
+
+# Homarr runtime / secrets
+homarr/.env
+homarr/appdata/
+homarr/backups/
+homarr/.env.new-backup
+homarr/appdata.new-backup/

@@ -8,3 +8,4 @@ services:
       SECRET_ENCRYPTION_KEY: ${SECRET_ENCRYPTION_KEY}
     volumes:
       - ./appdata:/appdata
+      - /var/run/docker.sock:/var/run/docker.sock
