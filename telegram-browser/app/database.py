@@ -1,4 +1,6 @@
 import json
+
+from app.genres import normalize_genre, normalize_genres
 import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
@@ -196,7 +198,9 @@ class CatalogDatabase:
                         item.year,
                         item.imdb_rating,
                         json.dumps(
-                            item.genres,
+                            normalize_genres(
+                                item.genres
+                            ),
                             ensure_ascii=False,
                         ),
                         item.description,
@@ -391,11 +395,16 @@ class CatalogDatabase:
             ):
                 continue
 
-            for genre in values:
-                if genre:
-                    genres.add(
-                        str(genre)
-                    )
+            for genre in normalize_genres(
+                [
+                    str(value)
+                    for value in values
+                    if value
+                ]
+            ):
+                genres.add(
+                    genre
+                )
 
         return sorted(
             genres
@@ -444,6 +453,10 @@ class CatalogDatabase:
             )
 
         if genre:
+            genre = normalize_genre(
+                genre
+            )
+
             conditions.append(
                 """
                 genres_json LIKE ?
@@ -641,10 +654,12 @@ class CatalogDatabase:
                 ]
 
                 try:
-                    genres = json.loads(
-                        row[
-                            "genres_json"
-                        ]
+                    genres = normalize_genres(
+                        json.loads(
+                            row[
+                                "genres_json"
+                            ]
+                        )
                     )
                 except (
                     json.JSONDecodeError,

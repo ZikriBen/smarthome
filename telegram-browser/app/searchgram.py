@@ -4,6 +4,7 @@ from dataclasses import asdict, dataclass
 from urllib.parse import parse_qs, urlparse
 
 from telethon import TelegramClient
+from telethon.errors import BotResponseTimeoutError
 from telethon.tl.functions.messages import (
     GetBotCallbackAnswerRequest,
 )
@@ -449,12 +450,20 @@ class SearchGram:
                 )
             )
 
-            await self._send_callback(
-                message_id=message_id,
-                callback_data=(
-                    callback_data
-                ),
-            )
+            try:
+                await self._send_callback(
+                    message_id=message_id,
+                    callback_data=(
+                        callback_data
+                    ),
+                )
+
+            except BotResponseTimeoutError:
+                print(
+                    "SearchGram navigation callback "
+                    "timed out; waiting for page update anyway",
+                    flush=True,
+                )
 
             loop = (
                 asyncio.get_running_loop()

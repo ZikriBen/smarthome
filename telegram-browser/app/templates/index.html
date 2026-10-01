@@ -29,30 +29,28 @@
         </div>
     </div>
 
-    <div class="topbar-actions">
+        <nav class="topbar-actions app-tabs">
+        <a
+            class="app-tab active"
+            href="/"
+        >
+            ספרייה
+        </a>
 
         <a
-            class="nav-button"
+            class="app-tab"
             href="/search"
         >
             חיפוש בטלגרם
         </a>
 
         <a
-            class="nav-button"
+            class="app-tab"
             href="/downloads"
         >
             הורדות
         </a>
-
-        <button
-            id="refreshButton"
-            class="refresh-button"
-        >
-            רענון
-        </button>
-
-    </div>
+    </nav>
 
 </header>
 
@@ -139,7 +137,7 @@
 
 <script>
 
-const PAGE_SIZE = 24;
+const PAGE_SIZE = 25;
 
 const ACTIVE_DOWNLOAD_STATES =
     new Set([
@@ -1795,7 +1793,7 @@ document.getElementById(
 
 document.getElementById(
     "refreshButton"
-).addEventListener(
+)?.addEventListener(
     "click",
     async () => {
 
@@ -1872,6 +1870,57 @@ async function startup() {
 
 startup();
 
+</script>
+
+
+<script>
+/* ZIKRI_DETAILS_DIALOG_UX */
+
+(() => {
+    const dialog =
+        document.getElementById("detailsDialog");
+
+    if (!dialog) {
+        return;
+    }
+
+    /*
+     * Native <dialog> covers the viewport, so a normal
+     * click listener fires even when clicking its backdrop.
+     *
+     * Close only when the click coordinates are outside
+     * the actual dialog box.
+     */
+    dialog.addEventListener(
+        "click",
+        event => {
+            const rect =
+                dialog.getBoundingClientRect();
+
+            const inside =
+                event.clientX >= rect.left
+                && event.clientX <= rect.right
+                && event.clientY >= rect.top
+                && event.clientY <= rect.bottom;
+
+            if (!inside) {
+                dialog.close();
+            }
+        }
+    );
+
+    /*
+     * Escape already works natively for <dialog>,
+     * but keeping this explicit makes the behavior clear.
+     */
+    dialog.addEventListener(
+        "cancel",
+        event => {
+            event.preventDefault();
+            dialog.close();
+        }
+    );
+})();
 </script>
 
 </body>

@@ -46,3 +46,6 @@ jellyfin/config/
 
 # Local development / PoCs
 telegram-fast-download-poc/
+
+# Runtime state
+uptime-kuma/tailscale-state/
