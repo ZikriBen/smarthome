@@ -34,23 +34,28 @@
         </div>
     </div>
 
-    <div class="topbar-actions">
-
+        <nav class="topbar-actions app-tabs">
         <a
-            class="nav-button"
+            class="app-tab"
             href="/"
         >
             ספרייה
         </a>
 
         <a
-            class="nav-button"
+            class="app-tab active"
+            href="/search"
+        >
+            חיפוש בטלגרם
+        </a>
+
+        <a
+            class="app-tab"
             href="/downloads"
         >
             הורדות
         </a>
-
-    </div>
+    </nav>
 
 </header>
 
@@ -124,9 +129,7 @@ const activeJobs =
 let statusTimer = null;
 
 
-function escapeHtml(
-    value
-) {
+function escapeHtml(value) {
 
     if (
         value === null
@@ -136,32 +139,15 @@ function escapeHtml(
     }
 
     return String(value)
-        .replaceAll(
-            "&",
-            "&amp;"
-        )
-        .replaceAll(
-            "<",
-            "&lt;"
-        )
-        .replaceAll(
-            ">",
-            "&gt;"
-        )
-        .replaceAll(
-            '"',
-            "&quot;"
-        )
-        .replaceAll(
-            "'",
-            "&#039;"
-        );
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#039;");
 }
 
 
-function statusText(
-    status
-) {
+function statusText(status) {
 
     const labels = {
         "QUEUED":
@@ -190,9 +176,7 @@ function statusText(
 }
 
 
-function setStatus(
-    text
-) {
+function setStatus(text) {
 
     document.getElementById(
         "searchStatus"
@@ -200,7 +184,9 @@ function setStatus(
 }
 
 
-function renderLoading() {
+function renderLoading(
+    count = 7
+) {
 
     const results =
         document.getElementById(
@@ -211,7 +197,7 @@ function renderLoading() {
 
     for (
         let i = 0;
-        i < 7;
+        i < count;
         i++
     ) {
 
@@ -224,7 +210,8 @@ function renderLoading() {
             "search-result-row search-result-skeleton";
 
         row.innerHTML = `
-            <div>
+            <div class="search-result-main">
+
                 <div
                     class="skeleton-line skeleton-title"
                 ></div>
@@ -232,6 +219,7 @@ function renderLoading() {
                 <div
                     class="skeleton-line skeleton-subtitle"
                 ></div>
+
             </div>
 
             <div
@@ -246,9 +234,30 @@ function renderLoading() {
 }
 
 
-function renderSearch(
-    data
-) {
+function setPaginationLoading() {
+
+    const container =
+        document.getElementById(
+            "searchPagination"
+        );
+
+    container.innerHTML = `
+        <div class="pagination-loading">
+
+            <span
+                class="pagination-loading-dot"
+            ></span>
+
+            <span>
+                טוען עמוד…
+            </span>
+
+        </div>
+    `;
+}
+
+
+function renderSearch(data) {
 
     currentSearch = data;
 
@@ -336,9 +345,7 @@ function renderSearch(
         );
     }
 
-    renderNavigation(
-        data
-    );
+    renderNavigation(data);
 
     let text = "";
 
@@ -371,15 +378,51 @@ function renderSearch(
             ` מתוך ${data.total_pages}`;
     }
 
-    setStatus(
-        text
-    );
+    setStatus(text);
 }
 
 
-function renderNavigation(
-    data
+function getNavigationTarget(
+    callbackData
 ) {
+
+    if (
+        !callbackData
+        ||
+        !callbackData.startsWith(
+            "search#"
+        )
+    ) {
+        return null;
+    }
+
+    const parts =
+        callbackData.split("#");
+
+    if (parts.length < 3) {
+        return null;
+    }
+
+    const target =
+        Number(
+            parts[
+                parts.length - 1
+            ]
+        );
+
+    if (
+        !Number.isFinite(
+            target
+        )
+    ) {
+        return null;
+    }
+
+    return target;
+}
+
+
+function renderNavigation(data) {
 
     const container =
         document.getElementById(
@@ -388,39 +431,177 @@ function renderNavigation(
 
     container.innerHTML = "";
 
+    if (
+        !data.page
+        ||
+        !data.total_pages
+        ||
+        data.total_pages <= 1
+    ) {
+        return;
+    }
+
+
+    let previousNavigation =
+        null;
+
+    let nextNavigation =
+        null;
+
+
     for (
         const nav
         of data.navigation
     ) {
 
-        const button =
-            document.createElement(
-                "button"
+        const targetPage =
+            getNavigationTarget(
+                nav.callback_data
             );
 
-        button.textContent =
-            nav.text;
+        if (targetPage === null) {
+            continue;
+        }
 
-        button.addEventListener(
+        if (
+            targetPage
+            < data.page
+        ) {
+
+            previousNavigation =
+                nav;
+
+        } else if (
+            targetPage
+            > data.page
+        ) {
+
+            nextNavigation =
+                nav;
+        }
+    }
+
+
+    const previousButton =
+        document.createElement(
+            "button"
+        );
+
+    previousButton.className =
+        "pagination-button";
+
+    previousButton.innerHTML = `
+        <span class="pagination-arrow">
+            ‹
+        </span>
+
+        <span>
+            הקודם
+        </span>
+    `;
+
+    if (previousNavigation) {
+
+        previousButton.addEventListener(
             "click",
             () => {
                 navigateSearch(
-                    nav.callback_data,
-                    button
+                    previousNavigation
+                        .callback_data
                 );
             }
         );
 
-        container.appendChild(
-            button
-        );
+    } else {
+
+        previousButton.disabled =
+            true;
     }
+
+
+    const indicator =
+        document.createElement(
+            "div"
+        );
+
+    indicator.className =
+        "pagination-indicator";
+
+    indicator.innerHTML = `
+        <strong>
+            ${data.page}
+        </strong>
+
+        <span>
+            מתוך
+        </span>
+
+        <strong>
+            ${data.total_pages}
+        </strong>
+    `;
+
+
+    const nextButton =
+        document.createElement(
+            "button"
+        );
+
+    nextButton.className =
+        "pagination-button";
+
+    nextButton.innerHTML = `
+        <span>
+            הבא
+        </span>
+
+        <span class="pagination-arrow">
+            ›
+        </span>
+    `;
+
+    if (nextNavigation) {
+
+        nextButton.addEventListener(
+            "click",
+            () => {
+                navigateSearch(
+                    nextNavigation
+                        .callback_data
+                );
+            }
+        );
+
+    } else {
+
+        nextButton.disabled =
+            true;
+    }
+
+
+    /*
+     * DOM order is intentional.
+     * The page itself is RTL but we want
+     * predictable previous/current/next
+     * placement.
+     */
+    container.dir = "ltr";
+
+    container.appendChild(
+        previousButton
+    );
+
+    container.appendChild(
+        indicator
+    );
+
+    container.appendChild(
+        nextButton
+    );
 }
 
 
-async function runSearch(
-    query
-) {
+async function runSearch(query) {
 
     renderLoading();
 
@@ -472,17 +653,11 @@ async function runSearch(
             );
         }
 
-        renderSearch(
-            data
-        );
+        renderSearch(data);
 
-    } catch (
-        error
-    ) {
+    } catch (error) {
 
-        console.error(
-            error
-        );
+        console.error(error);
 
         document.getElementById(
             "results"
@@ -505,20 +680,32 @@ async function runSearch(
 
 
 async function navigateSearch(
-    callbackData,
-    button
+    callbackData
 ) {
 
     if (!currentSearch) {
         return;
     }
 
-    button.disabled =
-        true;
+
+    /*
+     * Show immediate feedback.
+     * No more "frozen" old page while
+     * Telegram/SearchGram is responding.
+     */
+    renderLoading(
+        Math.max(
+            currentSearch.items.length,
+            5
+        )
+    );
+
+    setPaginationLoading();
 
     setStatus(
         "טוען עמוד…"
     );
+
 
     try {
 
@@ -560,24 +747,39 @@ async function navigateSearch(
             );
         }
 
-        renderSearch(
-            data
-        );
+        renderSearch(data);
 
-    } catch (
-        error
-    ) {
+        window.scrollTo({
+            top:
+                document
+                .querySelector(
+                    ".search-panel"
+                )
+                .offsetTop,
 
-        console.error(
-            error
-        );
+            behavior:
+                "smooth",
+        });
+
+    } catch (error) {
+
+        console.error(error);
+
+        document.getElementById(
+            "results"
+        ).innerHTML = `
+            <div class="search-error">
+                טעינת העמוד נכשלה
+            </div>
+        `;
+
+        document.getElementById(
+            "searchPagination"
+        ).innerHTML = "";
 
         setStatus(
             "טעינת העמוד נכשלה"
         );
-
-        button.disabled =
-            false;
     }
 }
 
@@ -663,13 +865,9 @@ async function startDownload(
 
         await refreshJobStatuses();
 
-    } catch (
-        error
-    ) {
+    } catch (error) {
 
-        console.error(
-            error
-        );
+        console.error(error);
 
         button.className =
             "search-download-button failed";
@@ -699,9 +897,7 @@ function applyJobState(
         job.status;
 
     button.textContent =
-        statusText(
-            status
-        );
+        statusText(status);
 
     if (
         ACTIVE_STATES.has(
@@ -800,9 +996,7 @@ async function refreshJobStatuses() {
                 data.job
             );
 
-        } catch (
-            error
-        ) {
+        } catch (error) {
 
             console.error(
                 "Status polling failed:",
@@ -863,9 +1057,7 @@ document.getElementById(
             return;
         }
 
-        runSearch(
-            query
-        );
+        runSearch(query);
     }
 );
 

@@ -898,7 +898,7 @@ async def api_items(
         ge=1,
     ),
     page_size: int = Query(
-        24,
+        25,
         ge=1,
         le=100,
     ),
