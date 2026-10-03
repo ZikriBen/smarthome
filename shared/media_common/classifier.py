@@ -1,7 +1,6 @@
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import StrEnum
-from pathlib import Path
 
 
 class MediaType(StrEnum):
@@ -46,6 +45,13 @@ class EpisodePattern:
 
 
 SEPARATOR = r"[\s._-]*"
+ASSUMED_SEASON_CONFIDENCE = 0.85
+
+# Downloadable content is assumed to be a movie unless it carries explicit
+# season/episode evidence. This mirrors ASSUMED_SEASON_CONFIDENCE's
+# convention: equal to the default auto_movie_threshold so it auto-classifies
+# unless a caller passes a stricter threshold.
+ASSUMED_MOVIE_CONFIDENCE = 0.90
 
 
 PATTERNS: tuple[EpisodePattern, ...] = (
@@ -60,7 +66,7 @@ PATTERNS: tuple[EpisodePattern, ...] = (
             (?:
                 [\s._-]*E(?P<episode_end_e>\d{1,3})
                 |
-                \s*-\s*(?:E)?(?P<episode_end_dash>\d{1,3})
+                \s*[-+]\s*(?:E)?(?P<episode_end_dash>\d{1,3})
             )
             (?!\d)
             """,
@@ -165,6 +171,14 @@ PATTERNS: tuple[EpisodePattern, ...] = (
         confidence=0.90,
     ),
     EpisodePattern(
+        name="hebrew_short_episode_only",
+        regex=re.compile(
+            rf"(?<![^\W_])פ['׳\"]?{SEPARATOR}"
+            r"(?P<episode_start>\d{1,3})(?![^\W_])",
+        ),
+        confidence=ASSUMED_SEASON_CONFIDENCE,
+    ),
+    EpisodePattern(
         name="english_episode_only",
         regex=re.compile(
             rf"""
@@ -175,7 +189,7 @@ PATTERNS: tuple[EpisodePattern, ...] = (
             """,
             re.IGNORECASE | re.VERBOSE,
         ),
-        confidence=0.60,
+        confidence=ASSUMED_SEASON_CONFIDENCE,
     ),
     EpisodePattern(
         name="hebrew_episode_only",
@@ -187,7 +201,7 @@ PATTERNS: tuple[EpisodePattern, ...] = (
             """,
             re.VERBOSE,
         ),
-        confidence=0.60,
+        confidence=ASSUMED_SEASON_CONFIDENCE,
     ),
 )
 
@@ -240,16 +254,44 @@ HEBREW_RELEASE_TOKENS = (
 
 SOURCE_PREFIXES = (
     r"לולו[ _.-]*סרטים",
+    r"זירה[ _.-]+מדיה",
+    r"נריה[ _.-]+סרטים",
+    r"(?:NF[ _.-]+)?נתי[ _.-]+מדיה",
+    r"קינג[ _.-]+סרט",
+    r"יוסי[ _.-]+סרטים",
+    r"כל[ _.-]+הסדרות",
+    r"מדיה[ _.-]+VOD",
+    r"נ[ _.-]+מדיה",
+    r"שלום[ _.-]+מדיה",
+)
+
+
+# Multi-part markers ("חלק 1", "ח1", "CD2") deliberately do not imply a TV
+# season/episode (agreed policy), but they also should not be silently
+# classified as a single standalone movie: tying multiple parts together
+# is unsolved deferred work. Exclude them from the yearless movie fallback
+# below rather than guess.
+MULTIPART_MARKER_RE = re.compile(
+    r"""
+    חלק[\s._-]*\d
+    |
+    (?<![א-ת])ח\d
+    |
+    (?<![A-Za-z])CD\d
+    """,
+    re.IGNORECASE | re.VERBOSE,
 )
 
 
 RELEASE_NOISE_RE = re.compile(
     rf"""
+    (?<![^\W_])
     (?:
         {'|'.join(RELEASE_TOKENS)}
         |
         {'|'.join(HEBREW_RELEASE_TOKENS)}
     )
+    (?![^\W_])
     """,
     re.IGNORECASE | re.VERBOSE,
 )
@@ -261,6 +303,7 @@ SOURCE_PREFIX_RE = re.compile(
     (?:
         {'|'.join(SOURCE_PREFIXES)}
     )
+    (?![^\W_])
     [\s._:-]*
     """,
     re.IGNORECASE | re.VERBOSE,
@@ -288,6 +331,88 @@ URL_RE = re.compile(
 MARKDOWN_DECORATION_RE = re.compile(
     r"[*`~]+"
 )
+
+
+
+MEDIA_EXTENSIONS = {
+    ".mkv",
+    ".mp4",
+    ".avi",
+    ".mov",
+    ".m4v",
+    ".wmv",
+    ".ts",
+    ".webm",
+}
+
+
+def strip_media_extension(
+    value: str,
+) -> str:
+    """
+    Remove only a known media extension.
+
+    Do not use Path(value).suffix/.with_suffix() on arbitrary title
+    fragments: besides misreading internal punctuation such as "ז.מ"
+    as a filename extension, pathlib normalizes path separators (e.g.
+    collapsing "https://" to "https:/"), which would corrupt the
+    URL/invite-link signature that is_suspicious_title relies on.
+    """
+    dot_index = value.rfind(".")
+
+    if dot_index == -1:
+        return value
+
+    if (
+        value[dot_index:].lower()
+        in MEDIA_EXTENSIONS
+    ):
+        return value[:dot_index]
+
+    return value
+
+
+def trim_leading_metadata_fragments(
+    value: str,
+) -> str:
+    """
+    Remove leading groups of isolated one-character metadata
+    fragments.
+
+    Example:
+
+        "ז מ כנופיית ברמינגהם"
+            ->
+        "כנופיית ברמינגהם"
+
+    We require at least TWO consecutive one-character tokens.
+    This prevents legitimate titles such as "V Something"
+    from losing their first word.
+    """
+    parts = value.split()
+
+    fragment_count = 0
+
+    for part in parts:
+        if (
+            len(part) == 1
+            and part.isalnum()
+        ):
+            fragment_count += 1
+            continue
+
+        break
+
+    if (
+        fragment_count >= 2
+        and fragment_count < len(parts)
+    ):
+        parts = parts[
+            fragment_count:
+        ]
+
+    return " ".join(parts)
+
 
 
 def normalize_text(value: str) -> str:
@@ -325,8 +450,13 @@ def clean_markdown(value: str) -> str:
 
 
 def clean_title_text(value: str) -> str:
-    value = Path(value).stem
     value = normalize_text(value)
+
+    # Strip markdown/URLs BEFORE converting separators: URL_RE relies on
+    # intact dots (e.g. "t\.me/"), and converting "." to " " first would
+    # truncate the match, leaving a corrupted URL fragment that no longer
+    # looks suspicious but also isn't a real title.
+    value = clean_markdown(value)
 
     # Convert filename separators BEFORE doing any other cleanup.
     value = re.sub(
@@ -334,8 +464,6 @@ def clean_title_text(value: str) -> str:
         " ",
         value,
     )
-
-    value = clean_markdown(value)
 
     value = SOURCE_PREFIX_RE.sub(
         "",
@@ -346,6 +474,7 @@ def clean_title_text(value: str) -> str:
         " ",
         value,
     )
+    value = SOURCE_PREFIX_RE.sub("", value)
 
     value = re.sub(
         r"[\[\](){}]",
@@ -380,7 +509,7 @@ def is_suspicious_title(value: str) -> bool:
         for char in value
     )
 
-    if letters < 3:
+    if letters < 2:
         return True
 
     # Telegram invite/base64-like garbage:
@@ -482,7 +611,15 @@ def extract_title_from_source(
     may contain "ע3 פ21" while the caption contains
     "עונה 3 פרק 21".
     """
-    prepared = normalize_text(value)
+    prepared_value = (
+        strip_media_extension(value)
+        if source == "filename"
+        else value
+    )
+
+    prepared = normalize_text(
+        prepared_value
+    )
 
     if source == "caption":
         prepared = clean_markdown(
@@ -510,6 +647,10 @@ def extract_title_from_source(
 
     title = clean_title_text(
         prefix
+    )
+
+    title = trim_leading_metadata_fragments(
+        title
     )
 
     if not title:
@@ -549,6 +690,34 @@ def extract_show_title(
     return None
 
 
+def clean_candidate_title(
+    *,
+    source: str,
+    value: str,
+) -> str | None:
+    """
+    Run the shared extension-strip -> normalize -> clean -> trim pipeline
+    on a single (source, value) candidate. Returns None for an empty
+    result; does not apply is_suspicious_title or multipart filtering,
+    since callers use this for different purposes (auto-classification
+    vs. an external-lookup query).
+    """
+    prepared_value = (
+        strip_media_extension(value)
+        if source == "filename"
+        else value
+    )
+
+    prepared = normalize_text(
+        prepared_value
+    )
+
+    title = clean_title_text(prepared)
+    title = trim_leading_metadata_fragments(title)
+
+    return title or None
+
+
 def extract_movie_match(
     *,
     filename: str | None,
@@ -569,8 +738,14 @@ def extract_movie_match(
         )
 
     for source, value in candidates:
+        prepared_value = (
+            strip_media_extension(value)
+            if source == "filename"
+            else value
+        )
+
         prepared = normalize_text(
-            Path(value).stem
+            prepared_value
         )
 
         if source == "caption":
@@ -601,12 +776,17 @@ def extract_movie_match(
             year_match.group("year")
         )
 
-        title_part = prepared[
-            :year_match.start()
-        ]
+        title_part = prepared[:year_match.start()]
+        # Support release metadata + year + title, as well as title + year.
+        if not clean_title_text(title_part):
+            title_part = prepared[year_match.end():]
 
         title = clean_title_text(
             title_part
+        )
+
+        title = trim_leading_metadata_fragments(
+            title
         )
 
         if not title:
@@ -622,7 +802,84 @@ def extract_movie_match(
             source=source,
         )
 
+    # No year anchor in any source. Downloadable content is assumed to be
+    # a movie unless it carries season/episode evidence (classify_media
+    # only reaches this function when no episode pattern matched at all),
+    # so fall back to a bare cleaned title rather than giving up.
+    for source, value in candidates:
+        title = clean_candidate_title(
+            source=source,
+            value=value,
+        )
+
+        if not title:
+            continue
+
+        if is_suspicious_title(title):
+            continue
+
+        if MULTIPART_MARKER_RE.search(title):
+            continue
+
+        return MovieMatch(
+            title=title,
+            year=None,
+            confidence=ASSUMED_MOVIE_CONFIDENCE,
+            source=source,
+        )
+
     return None
+
+
+def best_effort_title(
+    *,
+    filename: str | None,
+    caption: str | None,
+) -> str | None:
+    """
+    A cleaned title candidate for sources that classify_media() could not
+    confidently classify (UNKNOWN). Unlike the movie/TV extraction paths,
+    this applies no suspicion or multipart filtering: it is meant only as
+    a query for an external lookup (e.g. TMDb) to confirm or resolve,
+    never as a basis for auto-classification by itself.
+    """
+    for source, value in (
+        ("filename", filename),
+        ("caption", caption),
+    ):
+        if not value:
+            continue
+
+        title = clean_candidate_title(
+            source=source,
+            value=value,
+        )
+
+        if title:
+            return title
+
+    return None
+
+
+def _unsupported_episode_sequence(value: str) -> bool:
+    """Reject episode lists our start/end model cannot represent faithfully."""
+    sequence_re = re.compile(
+        r"(?<![A-Za-z0-9])S\d{1,2}[\s._-]*E(?P<first>\d{1,3})"
+        r"(?P<tail>(?:(?:[\s._]*E|[\s._]*[-+][\s._]*E?)\d{1,3})+)",
+        re.IGNORECASE,
+    )
+    for match in sequence_re.finditer(value):
+        tail = match.group("tail")
+        numbers = re.findall(r"\d+", tail)
+        if len(numbers) != 1:
+            return True
+        first, last = int(match.group("first")), int(numbers[0])
+        if last < first:
+            return True
+        # A dash denotes a range; '+' and repeated E denote individual episodes.
+        if "-" not in tail and last != first + 1:
+            return True
+    return False
 
 
 def classify_media(
@@ -632,86 +889,66 @@ def classify_media(
     auto_tv_threshold: float = 0.85,
     auto_movie_threshold: float = 0.90,
 ) -> ClassificationResult:
-    episode_matches: list[
-        EpisodeMatch
-    ] = []
-
+    sources = []
     if filename:
-        match = _find_best_episode_match(
-            filename,
-            source="filename",
-        )
-
-        if match:
-            episode_matches.append(
-                match
-            )
-
+        sources.append(("filename", filename))
     if caption:
-        match = _find_best_episode_match(
-            clean_markdown(caption),
-            source="caption",
-        )
+        sources.append(("caption", clean_markdown(caption)))
 
+    if any(_unsupported_episode_sequence(value) for _, value in sources):
+        return ClassificationResult(media_type=MediaType.UNKNOWN)
+
+    matches = []
+    for source, value in sources:
+        match = _find_best_episode_match(value, source=source)
         if match:
-            episode_matches.append(
-                match
+            matches.append(match)
+
+    if matches:
+        best = max(matches, key=lambda item: (
+            item.confidence, item.source == "filename",
+        ))
+        # Conflicting explicit information must not silently move the wrong file.
+        if len(matches) == 2:
+            left, right = matches
+            season_conflict = (
+                left.season is not None and right.season is not None
+                and left.season != right.season
             )
-
-    if episode_matches:
-        best_episode = max(
-            episode_matches,
-            key=lambda item: (
-                item.confidence,
-                item.source
-                == "filename",
-            ),
-        )
-
-        if (
-            best_episode.confidence
-            >= auto_tv_threshold
-        ):
-            title = extract_show_title(
-                filename=filename,
-                caption=caption,
+            episode_conflict = (
+                (left.episode_start, left.episode_end)
+                != (right.episode_start, right.episode_end)
             )
-
-            if title:
+            if season_conflict or episode_conflict:
                 return ClassificationResult(
-                    media_type=MediaType.TV,
-                    episode=best_episode,
-                    movie=None,
-                    title=title,
-                    year=None,
+                    media_type=MediaType.UNKNOWN, episode=best,
                 )
 
-    movie = extract_movie_match(
-        filename=filename,
-        caption=caption,
-    )
+        if best.confidence >= auto_tv_threshold:
+            # Keep title and episode evidence from the same source when possible.
+            ordered = sorted(sources, key=lambda item: item[0] != best.source)
+            title = None
+            for source, value in ordered:
+                title = extract_title_from_source(value=value, source=source)
+                if title:
+                    break
+            if title:
+                if best.season is None:
+                    best = replace(
+                        best, season=1,
+                        pattern=best.pattern + "_assumed_season_1",
+                    )
+                return ClassificationResult(
+                    media_type=MediaType.TV, episode=best, title=title,
+                )
+        # A year in a rejected episode must not turn it into a movie.
+        return ClassificationResult(media_type=MediaType.UNKNOWN, episode=best)
 
-    if (
-        movie is not None
-        and movie.confidence
-        >= auto_movie_threshold
-    ):
+    movie = extract_movie_match(filename=filename, caption=caption)
+    if movie is not None and movie.confidence >= auto_movie_threshold:
         return ClassificationResult(
-            media_type=MediaType.MOVIE,
-            episode=None,
-            movie=movie,
-            title=movie.title,
-            year=movie.year,
+            media_type=MediaType.MOVIE, movie=movie,
+            title=movie.title, year=movie.year,
         )
+    return ClassificationResult(media_type=MediaType.UNKNOWN)
 
-    return ClassificationResult(
-        media_type=MediaType.UNKNOWN,
-        episode=(
-            episode_matches[0]
-            if episode_matches
-            else None
-        ),
-        movie=None,
-        title=None,
-        year=None,
-    )

@@ -146,9 +146,13 @@ class ClassifierTests(unittest.TestCase):
         )
 
     def test_filename_preferred_over_caption(self):
+        # Caption carries no competing explicit season/episode here, so
+        # filename evidence wins outright. A caption with its OWN
+        # conflicting season/episode must instead yield UNKNOWN; see
+        # test_conflicting_season_and_episode_is_unknown below.
         result = classify_media(
             filename="Breaking.Bad.S04E08.mkv",
-            caption="עונה 2 פרק 3",
+            caption="Best episode of the season!",
         )
 
         self.assertEqual(
@@ -173,6 +177,22 @@ class ClassifierTests(unittest.TestCase):
             "filename",
         )
 
+    def test_conflicting_season_and_episode_is_unknown(self):
+        # Agreed policy: when filename and caption both carry explicit,
+        # disagreeing season/episode information, the result must stay
+        # UNKNOWN rather than silently preferring one source. This is
+        # the exact case test_filename_preferred_over_caption used to
+        # (incorrectly) resolve by picking the filename.
+        result = classify_media(
+            filename="Breaking.Bad.S04E08.mkv",
+            caption="עונה 2 פרק 3",
+        )
+
+        self.assertEqual(
+            result.media_type,
+            MediaType.UNKNOWN,
+        )
+
     def test_episode_only_not_auto_classified(self):
         result = classify_media(
             filename="Episode 5.mkv",
@@ -194,7 +214,7 @@ class ClassifierTests(unittest.TestCase):
 
         self.assertEqual(
             result.episode.confidence,
-            0.60,
+            0.85,
         )
 
     def test_hebrew_episode_only_not_auto_classified(self):
@@ -458,7 +478,12 @@ class ClassifierTests(unittest.TestCase):
             2022,
         )
 
-    def test_unknown_without_year_or_episode(self):
+    def test_movie_assumed_without_year_or_episode(self):
+        # Agreed policy (round 3): downloadable content is assumed to be a
+        # movie unless it carries season/episode evidence, so a plain
+        # filename with neither a year nor an episode pattern is now a
+        # low-confidence movie guess instead of UNKNOWN. This replaces the
+        # old test_unknown_without_year_or_episode expectation.
         result = classify_media(
             filename="random_video_file.mkv",
             caption=None,
@@ -466,16 +491,36 @@ class ClassifierTests(unittest.TestCase):
 
         self.assertEqual(
             result.media_type,
-            MediaType.UNKNOWN,
+            MediaType.MOVIE,
         )
 
-        self.assertIsNone(
+        self.assertEqual(
             result.title,
+            "random video file",
         )
 
         self.assertIsNone(
             result.year,
         )
+
+    def test_garbage_input_remains_unknown(self):
+        # The assumed-movie fallback must still respect is_suspicious_title:
+        # invite-link-like and too-short input stays UNKNOWN rather than
+        # becoming a movie.
+        for filename in (
+            "+YSofgZNVx71hNTY0.mkv",
+            "a.mkv",
+            "https://t.me/somechannel.mkv",
+        ):
+            with self.subTest(filename=filename):
+                result = classify_media(
+                    filename=filename,
+                    caption=None,
+                )
+                self.assertEqual(
+                    result.media_type,
+                    MediaType.UNKNOWN,
+                )
 
 
 if __name__ == "__main__":
