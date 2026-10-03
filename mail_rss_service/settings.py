@@ -24,7 +24,7 @@ class Settings(BaseSettings):
     POLL_INTERVAL: int = 3600
 
     # State file
-    STATE_FILE: str = "data/state.json"
+    STATE_FILE: str = "/data/state.json"
     LOG_LEVEL : str = "INFO"
 
     class Config:
