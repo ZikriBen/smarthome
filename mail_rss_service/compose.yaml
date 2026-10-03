@@ -1,0 +1,14 @@
+services:
+  mail-rss-service:
+    build: .
+    container_name: mail-rss-service
+    restart: unless-stopped
+
+    env_file:
+      - .env
+
+    volumes:
+      - ./data:/data
+
+    ports:
+      - "8000:8000"
