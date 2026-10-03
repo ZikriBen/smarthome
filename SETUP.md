@@ -17,6 +17,7 @@ The goal is that this document plus the Git repository and application backups a
 - Tailscale — private remote access and selected public endpoints
 - Jellyfin — LAN media server
 - Telegram Downloader — Telegram → media → Jellyfin ingestion
+- Mail RSS Service — email newsletter → RSS feed for Homarr/Home Assistant
 
 ---
 
@@ -119,6 +120,7 @@ Speedtest Tracker  http://10.0.0.13:8765
 Portainer          https://10.0.0.13:9443
 Jellyfin           http://10.0.0.13:8096
 Telegram health    http://10.0.0.13:8787/health
+Mail RSS feed      http://10.0.0.13:8000/rss
 ```
 
 ---
@@ -897,6 +899,36 @@ It will NOT automatically download everything from watched channels.
 
 ---
 
+# Mail RSS Service
+
+Polls a mailbox via IMAP for the latest email from a configured sender, extracts the halachot text with a deterministic regex parser (`mail_rss_service/src/determinstic_parser.py`), and exposes it as an RSS feed. No external API key is required.
+
+```text
+IMAP mailbox
+      │
+      ▼
+deterministic parser
+      │
+      ▼
+state.json (persisted via ./data bind mount)
+      │
+      ▼
+/rss  ──consumed by──>  Homarr RSS widget
+```
+
+Runs via `docker compose` like the other services:
+
+```bash
+cd ~/smarthome/mail_rss_service
+docker compose up -d --build
+```
+
+Feed URL: `http://10.0.0.13:8000/rss`
+
+`./data` is owned by `root` on the host (container runs as root), so edit `state.json` via `docker compose exec` rather than directly from the host shell. See `mail_rss_service/README.md` for manual testing instructions.
+
+---
+
 # Secrets
 
 Never commit secrets.
@@ -973,6 +1005,9 @@ cd ~/smarthome/jellyfin
 docker compose up -d
 
 cd ~/smarthome/telegram-downloader
+docker compose up -d --build
+
+cd ~/smarthome/mail_rss_service
 docker compose up -d --build
 ```
 
