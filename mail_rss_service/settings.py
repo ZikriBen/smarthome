@@ -12,9 +12,6 @@ class Settings(BaseSettings):
     EMAIL_SENDER: str = ""
     EXACT_MATCH: bool = True
 
-    # OpenAI
-    OPENAI_API_KEY: str = ""
-
     # RSS settings
     RSS_TITLE: str = "Email RSS Feed"
     RSS_LINK: str = "http://localhost:8000/rss"
