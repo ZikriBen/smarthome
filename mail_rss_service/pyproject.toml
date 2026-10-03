@@ -10,7 +10,6 @@ dependencies = [
     "feedgen>=1.0.0",
     "imap-tools>=1.11.0",
     "lxml>=6.0.2",
-    "openai>=2.6.0",
     "pydantic>=2.12.3",
     "pydantic-settings>=2.11.0",
     "tinytuya>=1.17.4",

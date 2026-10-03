@@ -2,7 +2,7 @@ import logging
 
 from settings import settings
 from src.email_fetcher import fetch_latest_by_sender_scan
-from src.openai_parser import extract_data_with_openai
+from src.determinstic_parser import extract_halachot, ExtractionError
 from src.rss_manager import load_state, add_item
 
 logger = logging.getLogger(__name__)
@@ -33,8 +33,12 @@ def poll_once():
 
     logger.info(f"Processing new email from {from_addr}: {subject}")
 
-    # Extract/parse data with OpenAI
-    parsed_summary = extract_data_with_openai(body)
+    # Extract the halachot deterministically
+    try:
+        parsed_summary = extract_halachot(body)
+    except ExtractionError as e:
+        logger.warning(f"Email {uid} did not match expected format: {e}")
+        return None
 
     # Add to RSS feed
     added = add_item(uid, from_addr, subject, parsed_summary, iso_dt)
