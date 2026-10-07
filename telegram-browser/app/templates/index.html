@@ -96,6 +96,14 @@
 
     </select>
 
+    <label class="saved-filter">
+        <input
+            type="checkbox"
+            id="savedFilter"
+        >
+        שמורים בלבד ⭐
+    </label>
+
 </section>
 
 
@@ -186,6 +194,9 @@ function readStateFromUrl() {
     const sort =
         params.get("sort");
 
+    const saved =
+        params.get("saved");
+
     if (search !== null) {
         document.getElementById(
             "searchInput"
@@ -204,6 +215,11 @@ function readStateFromUrl() {
             "sortSelect"
         ).value = sort;
     }
+
+    document.getElementById(
+        "savedFilter"
+    ).checked =
+        saved === "1";
 }
 
 
@@ -256,6 +272,17 @@ function writeStateToUrl(
         params.set(
             "sort",
             sort
+        );
+    }
+
+    if (
+        document.getElementById(
+            "savedFilter"
+        ).checked
+    ) {
+        params.set(
+            "saved",
+            "1"
         );
     }
 
@@ -607,6 +634,11 @@ async function loadItems(
             "sortSelect"
         ).value;
 
+    const savedOnly =
+        document.getElementById(
+            "savedFilter"
+        ).checked;
+
     const params =
         new URLSearchParams({
             page:
@@ -623,6 +655,9 @@ async function loadItems(
 
             sort:
                 sort,
+
+            saved_only:
+                savedOnly,
         });
 
     const response =
@@ -737,6 +772,84 @@ function renderGenres(
     }
 
     return html;
+}
+
+
+async function toggleSaved(
+    item,
+    button
+) {
+
+    const newSaved =
+        !item.saved;
+
+    button.disabled =
+        true;
+
+    try {
+
+        const response =
+            await fetch(
+                `/api/items/${item.details_message_id}/save`,
+                {
+                    method:
+                        "POST",
+
+                    headers: {
+                        "Content-Type":
+                            "application/json",
+                    },
+
+                    body:
+                        JSON.stringify({
+                            saved:
+                                newSaved,
+                        }),
+                }
+            );
+
+        if (!response.ok) {
+            return;
+        }
+
+        item.saved =
+            newSaved;
+
+        button.classList.toggle(
+            "saved",
+            newSaved
+        );
+
+        button.textContent =
+            newSaved
+                ? "★"
+                : "☆";
+
+        button.title =
+            newSaved
+                ? "הסר משמורים"
+                : "שמור לצפייה מאוחר יותר";
+
+        if (
+            !newSaved
+            &&
+            document.getElementById(
+                "savedFilter"
+            ).checked
+        ) {
+            await loadItems({
+                updateUrl:
+                    false,
+                showSkeleton:
+                    false,
+            });
+        }
+
+    } finally {
+
+        button.disabled =
+            false;
+    }
 }
 
 
@@ -883,6 +996,25 @@ function renderGrid(
                         `
                 }
 
+                <button
+                    class="save-button${
+                        item.saved
+                            ? " saved"
+                            : ""
+                    }"
+                    title="${
+                        item.saved
+                            ? "הסר משמורים"
+                            : "שמור לצפייה מאוחר יותר"
+                    }"
+                >
+                    ${
+                        item.saved
+                            ? "★"
+                            : "☆"
+                    }
+                </button>
+
             </div>
 
             <div class="card-body">
@@ -969,6 +1101,22 @@ function renderGrid(
                 showDetails(
                     item
                 );
+            }
+        );
+
+        card.querySelector(
+            ".save-button"
+        ).addEventListener(
+            "click",
+            async event => {
+
+                event.stopPropagation();
+
+                await toggleSaved(
+                    item,
+                    event.currentTarget
+                );
+
             }
         );
 
@@ -1785,6 +1933,14 @@ document.getElementById(
 
 document.getElementById(
     "sortSelect"
+).addEventListener(
+    "change",
+    resetAndLoad
+);
+
+
+document.getElementById(
+    "savedFilter"
 ).addEventListener(
     "change",
     resetAndLoad

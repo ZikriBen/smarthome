@@ -905,6 +905,7 @@ async def api_items(
     search: str = "",
     genre: str = "",
     sort: str = "newest",
+    saved_only: bool = False,
 ):
     result = (
         database.query_movies(
@@ -913,6 +914,7 @@ async def api_items(
             search=search,
             genre=genre,
             sort=sort,
+            saved_only=saved_only,
         )
     )
 
@@ -956,6 +958,40 @@ async def api_items(
 )
 async def api_genres():
     return database.get_genres()
+
+
+@app.post(
+    "/api/items/{message_id}/save",
+)
+async def api_save_item(
+    message_id: int,
+    request: Request,
+):
+    try:
+        payload = await request.json()
+
+    except Exception:
+        payload = {}
+
+    saved = bool(
+        payload.get(
+            "saved",
+            True,
+        )
+    )
+
+    database.set_saved(
+        message_id,
+        saved,
+    )
+
+    return {
+        "details_message_id":
+            message_id,
+
+        "saved":
+            saved,
+    }
 
 
 @app.post(

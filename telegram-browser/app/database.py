@@ -111,6 +111,22 @@ class CatalogDatabase:
                     value TEXT NOT NULL
                 );
 
+                CREATE TABLE IF NOT EXISTS saved_items (
+                    details_message_id INTEGER PRIMARY KEY,
+
+                    saved_at TEXT
+                        NOT NULL
+                        DEFAULT CURRENT_TIMESTAMP,
+
+                    FOREIGN KEY (
+                        details_message_id
+                    )
+                    REFERENCES movies (
+                        details_message_id
+                    )
+                    ON DELETE CASCADE
+                );
+
                 CREATE INDEX IF NOT EXISTS
                     idx_movies_year
                 ON movies(year);
@@ -356,6 +372,38 @@ class CatalogDatabase:
             "True",
         )
 
+    def set_saved(
+        self,
+        details_message_id: int,
+        saved: bool,
+    ) -> None:
+        with self.connect() as db:
+            if saved:
+                db.execute(
+                    """
+                    INSERT OR IGNORE
+                    INTO saved_items (
+                        details_message_id
+                    )
+                    VALUES (?)
+                    """,
+                    (
+                        details_message_id,
+                    ),
+                )
+            else:
+                db.execute(
+                    """
+                    DELETE FROM saved_items
+                    WHERE details_message_id = ?
+                    """,
+                    (
+                        details_message_id,
+                    ),
+                )
+
+            db.commit()
+
     def count_movies(
         self,
     ) -> int:
@@ -418,6 +466,7 @@ class CatalogDatabase:
         search: str,
         genre: str,
         sort: str,
+        saved_only: bool = False,
     ) -> CatalogResult:
         conditions: list[str] = []
 
@@ -467,6 +516,14 @@ class CatalogDatabase:
                 f'%"{genre}"%'
             )
 
+        if saved_only:
+            conditions.append(
+                """
+                saved_items.details_message_id
+                IS NOT NULL
+                """
+            )
+
         where_sql = ""
 
         if conditions:
@@ -480,38 +537,38 @@ class CatalogDatabase:
         order_sql = {
             "newest":
                 """
-                details_message_id DESC
+                movies.details_message_id DESC
                 """,
 
             "year_desc":
                 """
                 year DESC,
-                details_message_id DESC
+                movies.details_message_id DESC
                 """,
 
             "year_asc":
                 """
                 year ASC,
-                details_message_id DESC
+                movies.details_message_id DESC
                 """,
 
             "rating_desc":
                 """
                 imdb_rating IS NULL,
                 imdb_rating DESC,
-                details_message_id DESC
+                movies.details_message_id DESC
                 """,
 
             "rating_asc":
                 """
                 imdb_rating IS NULL,
                 imdb_rating ASC,
-                details_message_id DESC
+                movies.details_message_id DESC
                 """,
         }.get(
             sort,
             """
-            details_message_id DESC
+            movies.details_message_id DESC
             """,
         )
 
@@ -520,6 +577,9 @@ class CatalogDatabase:
                 f"""
                 SELECT COUNT(*) AS count
                 FROM movies
+                LEFT JOIN saved_items
+                    ON saved_items.details_message_id
+                        = movies.details_message_id
                 {where_sql}
                 """,
                 params,
@@ -552,16 +612,27 @@ class CatalogDatabase:
             movie_rows = db.execute(
                 f"""
                 SELECT
-                    details_message_id,
+                    movies.details_message_id
+                        AS details_message_id,
                     title,
                     english_title,
                     year,
                     imdb_rating,
                     genres_json,
                     description,
-                    poster_message_id
+                    poster_message_id,
+                    CASE
+                        WHEN saved_items.details_message_id
+                            IS NULL
+                        THEN 0
+                        ELSE 1
+                    END AS saved
 
                 FROM movies
+
+                LEFT JOIN saved_items
+                    ON saved_items.details_message_id
+                        = movies.details_message_id
 
                 {where_sql}
 
@@ -702,6 +773,9 @@ class CatalogDatabase:
                             ]
                         ),
                         variants=variants,
+                        saved=bool(
+                            row["saved"]
+                        ),
                     )
                 )
 
