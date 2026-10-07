@@ -55,3 +55,15 @@ services:
       - ./searxng/settings.yml:/etc/searxng/settings.yml:ro
 
     # Internal only, reachable by hermes on the compose network.
+
+  command-center:
+    build: ./command-center
+    container_name: command-center
+    restart: unless-stopped
+    environment:
+      COMMAND_CENTER_TOKEN: ${COMMAND_CENTER_TOKEN:?set COMMAND_CENTER_TOKEN in .env}
+    volumes:
+      - ./command-center/data:/data
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /proc:/host/proc:ro
+    # Internal only. Hermes will use a constrained MCP adapter in the next step.
