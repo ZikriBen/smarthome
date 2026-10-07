@@ -35,13 +35,15 @@ def poll_once():
 
     # Extract the halachot deterministically
     try:
-        parsed_summary = extract_halachot(body)
+        halachot = extract_halachot(body)
     except ExtractionError as e:
         logger.warning(f"Email {uid} did not match expected format: {e}")
         return None
 
-    # Add to RSS feed
-    added = add_item(uid, from_addr, subject, parsed_summary, iso_dt)
+    # Add to RSS feed: keep the date subject and append the halachot
+    # heading, so the title still shows which day this is for.
+    title = f"{subject} - {halachot.heading}"
+    added = add_item(uid, from_addr, title, halachot.body, iso_dt)
 
     if added:
         logger.info(f"Added new feed item: {subject}")

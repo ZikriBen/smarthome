@@ -1,8 +1,15 @@
 import re
+from dataclasses import dataclass
 
 
 class ExtractionError(ValueError):
     """The email does not match the expected newsletter format."""
+
+
+@dataclass(frozen=True)
+class Halachot:
+    heading: str
+    body: str
 
 
 _HEADING = re.compile(
@@ -19,7 +26,7 @@ _SECOND_HALACHA = re.compile(r"(?<!\w)ב\.\s")
 _SOURCE_AT_END = re.compile(r"\([^()]+\)\.?\s*$")
 
 
-def extract_halachot(text: str) -> str:
+def extract_halachot(text: str) -> Halachot:
     """
     Extract the heading and two halachot from plain email text.
 
@@ -65,6 +72,12 @@ def extract_halachot(text: str) -> str:
                 "Halacha does not end with the expected source reference"
             )
 
-    return "\n\n".join(
-        (heading.group().strip(), first, second)
+    return Halachot(
+        heading=heading.group().strip(),
+        # A plain visible separator, not an HTML tag or a newline:
+        # consumers like Homarr strip HTML tags and collapse newlines
+        # before displaying the description, so neither "<br>" nor
+        # "\n\n" produce any visible break there. A literal character
+        # survives that processing in any consumer.
+        body=" • ".join((first, second)),
     )
