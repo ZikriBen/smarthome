@@ -23,10 +23,13 @@ services:
     depends_on:
       - searxng
 
+    # Chromium needs a larger /dev/shm than Docker's 64MB default.
+    shm_size: 1gb
+
     deploy:
       resources:
         limits:
-          memory: 2G
+          memory: 3G
           cpus: "2.0"
 
   searxng:

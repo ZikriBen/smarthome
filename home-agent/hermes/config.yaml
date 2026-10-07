@@ -8,10 +8,19 @@ model:
 web:
   search_backend: "searxng"
 
-# MVP: chatbot with web search only. No terminal, file, browser or docker access.
+# Web assistant: search, headless browser (local Chromium) and task planning.
+# No terminal, file or docker access.
 platform_toolsets:
-  cli: [search]
-  telegram: [search]
+  cli: [search, browser, todo]
+  telegram: [search, browser, todo]
+
+browser:
+  inactivity_timeout: 120
+  restrict_evaluate: true
+
+# Block browser/web access to LAN, Tailscale and loopback addresses (default, pinned explicitly).
+security:
+  allow_private_urls: false
 
 platforms:
   telegram:

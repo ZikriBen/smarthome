@@ -2,7 +2,7 @@
 
 Self-hosted personal assistant built on [Hermes Agent](https://github.com/NousResearch/hermes-agent).
 
-Current scope (MVP): Telegram chatbot backed by OpenAI, with web search only.
+Current scope (MVP): Telegram web assistant backed by OpenAI: search, browse pages, multi-step tasks.
 
     Telegram (allowlisted users)
         |
@@ -12,7 +12,8 @@ Current scope (MVP): Telegram chatbot backed by OpenAI, with web search only.
         v
     searxng (internal, no published port)
 
-- No terminal, file, browser or Docker access (`platform_toolsets` in `hermes/config.yaml`).
+- Tools: web search, headless browser, task planning. No terminal, file or Docker access (`platform_toolsets` in `hermes/config.yaml`).
+- Browser cannot reach LAN, Tailscale or loopback addresses (`security.allow_private_urls: false`).
 - No published ports; Telegram uses outbound long polling.
 - Docker and other server capabilities will be added later through the Command Center, not via `docker.sock`.
 
