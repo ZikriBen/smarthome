@@ -16,9 +16,10 @@ install_ipv4_guard() {
     iptables -D OUTPUT -j HERMES_EGRESS_GUARD 2>/dev/null || true
 
     # SearXNG is internal; Docker's embedded DNS is needed to resolve public sites.
+    # Docker DNATs its DNS port 53 to a per-container high port before the
+    # filter chain runs, so this must allow its dedicated 127.0.0.11 address.
     iptables -A HERMES_EGRESS_GUARD -d "$searxng_ip" -j ACCEPT
-    iptables -A HERMES_EGRESS_GUARD -d 127.0.0.11 -p udp --dport 53 -j ACCEPT
-    iptables -A HERMES_EGRESS_GUARD -d 127.0.0.11 -p tcp --dport 53 -j ACCEPT
+    iptables -A HERMES_EGRESS_GUARD -d 127.0.0.11 -j ACCEPT
 
     # RFC 1918, loopback, link-local, and Tailscale CGNAT ranges.
     iptables -A HERMES_EGRESS_GUARD -d 10.0.0.0/8 -j REJECT
