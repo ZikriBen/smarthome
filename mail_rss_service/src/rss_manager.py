@@ -19,7 +19,7 @@ def save_state(state):
 
 
 def add_item(uid: str, from_addr: str, subject: str, summary: str, published: str):
-    """Add a new item to the RSS feed."""
+    """Add a new item to the RSS feed, newest first."""
     state = load_state()
 
     # Check if already processed
@@ -35,8 +35,14 @@ def add_item(uid: str, from_addr: str, subject: str, summary: str, published: st
         "from": from_addr,
     }
 
-    # Add new item and keep only MAX_ITEMS
-    state["items"] = [item]
+    # Prepend (newest first) and keep only MAX_ITEMS.
+    items = [
+        existing
+        for existing in state.get("items", [])
+        if existing.get("guid") != uid
+    ]
+    items.insert(0, item)
+    state["items"] = items[:settings.MAX_ITEMS]
     state["last_uid"] = uid
     save_state(state)
     return True
