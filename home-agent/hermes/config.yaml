@@ -1,0 +1,20 @@
+# Hermes overrides. Defaults: /opt/hermes/cli-config.yaml.example inside the image.
+
+model:
+  provider: "custom"
+  base_url: "https://api.openai.com/v1"
+  default: "gpt-5.5"
+
+web:
+  search_backend: "searxng"
+
+# MVP: chatbot with web search only. No terminal, file, browser or docker access.
+platform_toolsets:
+  cli: [search]
+  telegram: [search]
+
+platforms:
+  telegram:
+    guest_mode: false
+
+_config_version: 46
