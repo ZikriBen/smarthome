@@ -145,6 +145,30 @@ class TelegramService:
             events.NewMessage(),
         )
 
+    async def health_check(
+        self,
+    ) -> tuple[bool, str]:
+        """
+        Verify that Telegram is actually responsive.
+
+        is_connected() alone only checks the transport.
+        A lightweight API request also verifies that
+        the Telegram session can communicate with Telegram.
+        """
+
+        if not self.client.is_connected():
+            return False, "disconnected"
+
+        try:
+            await self.client.get_me()
+        except Exception as exc:
+            return (
+                False,
+                f"{type(exc).__name__}: {exc}",
+            )
+
+        return True, "ok"
+
     async def run(
         self,
     ) -> None:
