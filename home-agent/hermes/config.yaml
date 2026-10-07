@@ -15,8 +15,18 @@ platform_toolsets:
   telegram: [search, browser, todo]
 
 browser:
+  # "off" = built-in browser_* tools on local Chromium (default auto-picks the Browser Use CLI,
+  # which hides those tools and left the agent with no browser).
+  backend: "off"
   inactivity_timeout: 120
   restrict_evaluate: true
+
+# Browser vault: no external password managers. The local vault stays empty unless we add logins.
+vault:
+  onepassword:
+    enabled: false
+  bitwarden:
+    enabled: false
 
 # Block browser/web access to LAN, Tailscale and loopback addresses (default, pinned explicitly).
 security:
