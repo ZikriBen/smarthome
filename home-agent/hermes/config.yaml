@@ -26,4 +26,9 @@ platforms:
   telegram:
     guest_mode: false
 
+# Hermes latches first-touch hints here; keep the profile-building offer suppressed.
+onboarding:
+  seen:
+    profile_build_offered: true
+
 _config_version: 46
