@@ -8,12 +8,12 @@ model:
 web:
   search_backend: "searxng"
 
-# Web assistant: search and task planning. Browser disabled until egress to LAN is blocked at the network level
-# (Hermes allow_private_urls does not stop Chromium navigation).
+# Web assistant: public-web search, browsing, and task planning. Chromium is
+# prevented from reaching LAN/Tailscale/loopback targets by the container guard.
 # No terminal, file or docker access.
 platform_toolsets:
-  cli: [search, todo]
-  telegram: [search, todo]
+  cli: [search, browser, todo]
+  telegram: [search, browser, todo]
 
 browser:
   # "off" = built-in browser_* tools on local Chromium (default auto-picks the Browser Use CLI,

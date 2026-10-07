@@ -2,3 +2,5 @@
 hermes/*
 !hermes/config.yaml
 !hermes/SOUL.md
+!hermes/Dockerfile
+!hermes/entrypoint-network-guard.sh

@@ -1,6 +1,11 @@
 services:
   hermes:
-    image: nousresearch/hermes-agent:latest@sha256:d4da4a40cd7a28aba983775d9fd31d94cbf153eeb0cb9e844d6d0f612b7c24db
+    # Adds an in-container egress firewall before Hermes starts. This keeps a
+    # headless browser useful for public sites while preventing LAN access.
+    image: smarthome-hermes-agent:2026-10-07
+    build:
+      context: ./hermes
+      dockerfile: Dockerfile
     container_name: hermes
     restart: unless-stopped
     command: ["gateway", "run"]
@@ -25,6 +30,12 @@ services:
 
     # Chromium needs a larger /dev/shm than Docker's 64MB default.
     shm_size: 1gb
+
+    # Required only to install the OUTPUT-chain guard in this container's own
+    # network namespace. Hermes itself has no shell, file, Docker, or command
+    # tool exposed to Telegram users.
+    cap_add:
+      - NET_ADMIN
 
     deploy:
       resources:
