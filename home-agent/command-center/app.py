@@ -23,7 +23,10 @@ def public_url(value):
     return value
 def docker(method, path):
     s=socket.socket(socket.AF_UNIX); s.connect("/var/run/docker.sock")
-    s.sendall(f"{method} {path} HTTP/1.1\r\nHost: docker\r\nConnection: close\r\n\r\n".encode())
+    # HTTP/1.0 requests make Docker return a length-delimited response rather
+    # than a chunked stream, keeping this deliberately tiny Unix-socket client
+    # deterministic.
+    s.sendall(f"{method} {path} HTTP/1.0\r\nHost: docker\r\n\r\n".encode())
     b=b""
     while True:
         x=s.recv(65536)
