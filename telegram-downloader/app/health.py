@@ -51,13 +51,21 @@ class HealthServer:
         self,
         request: web.Request,
     ) -> web.Response:
-        free_gb = (
-            self._free_disk_gb()
-        )
+        free_gb = self._free_disk_gb()
 
-        healthy = (
+        disk_healthy = (
             free_gb
             >= self.config.min_free_disk_gb
+        )
+
+        (
+            telegram_healthy,
+            telegram_status,
+        ) = await self.telegram.health_check()
+
+        healthy = (
+            disk_healthy
+            and telegram_healthy
         )
 
         return web.json_response(
@@ -67,14 +75,24 @@ class HealthServer:
                     if healthy
                     else "degraded"
                 ),
-                "free_disk_gb": round(
-                    free_gb,
-                    1,
-                ),
-                "min_free_disk_gb": (
-                    self.config
-                    .min_free_disk_gb
-                ),
+                "telegram": {
+                    "healthy":
+                        telegram_healthy,
+                    "status":
+                        telegram_status,
+                },
+                "disk": {
+                    "healthy":
+                        disk_healthy,
+                    "free_gb":
+                        round(
+                            free_gb,
+                            1,
+                        ),
+                    "min_free_gb":
+                        self.config
+                        .min_free_disk_gb,
+                },
             },
             status=(
                 200
