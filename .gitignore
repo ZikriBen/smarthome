@@ -63,3 +63,4 @@ homarr/appdata/
 homarr/backups/
 homarr/.env.new-backup
 homarr/appdata.new-backup/
+beszel/.env
