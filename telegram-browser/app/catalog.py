@@ -119,6 +119,8 @@ class MediaItem:
 
     variants: list[MediaVariant]
 
+    saved: bool = False
+
 
 @dataclass
 class CatalogPage:

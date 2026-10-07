@@ -251,6 +251,73 @@ a {
 }
 
 
+.controls {
+    grid-template-columns:
+        minmax(
+            220px,
+            1fr
+        )
+        220px
+        220px
+        180px;
+}
+
+
+.saved-filter {
+    display:
+        flex;
+
+    align-items:
+        center;
+
+    justify-content:
+        center;
+
+    gap:
+        8px;
+
+    height:
+        44px;
+
+    padding:
+        0 13px;
+
+    border:
+        1px solid
+        var(--border);
+
+    border-radius:
+        10px;
+
+    background:
+        var(--surface);
+
+    color:
+        var(--text);
+
+    cursor:
+        pointer;
+
+    white-space:
+        nowrap;
+
+    user-select:
+        none;
+}
+
+
+.saved-filter input {
+    width:
+        16px;
+
+    height:
+        16px;
+
+    cursor:
+        pointer;
+}
+
+
 .controls input,
 .controls select,
 .download-controls select {
@@ -367,6 +434,9 @@ a {
 
 
 .poster-wrapper {
+    position:
+        relative;
+
     width:
         100%;
 
@@ -378,6 +448,94 @@ a {
 
     background:
         var(--surface-2);
+}
+
+
+.save-button {
+    position:
+        absolute;
+
+    top:
+        8px;
+
+    right:
+        8px;
+
+    z-index:
+        2;
+
+    width:
+        36px;
+
+    height:
+        36px;
+
+    border:
+        none;
+
+    border-radius:
+        50%;
+
+    background:
+        rgba(0, 0, 0, 0.55);
+
+    color:
+        #fff;
+
+    font-size:
+        18px;
+
+    line-height:
+        1;
+
+    cursor:
+        pointer;
+
+    display:
+        flex;
+
+    align-items:
+        center;
+
+    justify-content:
+        center;
+
+    transition:
+        background 0.15s ease,
+        transform 0.15s ease;
+}
+
+
+.save-button:hover:not(:disabled) {
+    background:
+        rgba(0, 0, 0, 0.75);
+
+    transform:
+        scale(1.08);
+}
+
+
+.save-button.saved {
+    background:
+        var(--orange);
+
+    color:
+        #fff;
+}
+
+
+.save-button.saved:hover:not(:disabled) {
+    background:
+        var(--orange-hover);
+}
+
+
+.save-button:disabled {
+    opacity:
+        0.6;
+
+    cursor:
+        default;
 }
 
 
