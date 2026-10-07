@@ -355,3 +355,28 @@ button {
     display: none !important;
   }
 }
+
+
+/* ================================
+   NO-CLAMP
+   Standalone class, independent of
+   glass-strong/glass-widget/etc, so
+   it works no matter which other
+   classes a widget already has.
+
+   Add "no-clamp" to a widget's own
+   Advanced options -> Custom CSS
+   classes field to show its full
+   text instead of Homarr's line
+   clamp (which, for the RSS widget,
+   was not persisting correctly).
+   ================================ */
+
+.no-clamp [data-line-clamp],
+.no-clamp[data-line-clamp] {
+  -webkit-line-clamp: unset !important;
+  display: block !important;
+  overflow: visible !important;
+  text-overflow: clip !important;
+  max-height: none !important;
+}
