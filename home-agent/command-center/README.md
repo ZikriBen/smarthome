@@ -6,7 +6,10 @@ integrations; Hermes never receives the Docker socket, host mounts, or a shell.
 ## Current capability catalog
 
 - Read immediately: host health, Docker container state, Uptime Kuma monitor
-  health, map lookup, price-watch status and alerts.
+  health, media-download status, map lookup, price-watch status and alerts.
+- SearchGram: search and paginate results. A selected result is handed to the
+  existing Telegram Downloader only after the user explicitly confirms its
+  number on the displayed page; that action is auditable.
 - Approval required: Docker restart and creation of a price watch.
 - Price checks run on their configured interval (minimum 60 minutes), retain the
   last known good price, and record a deduplicated alert when the target is met.

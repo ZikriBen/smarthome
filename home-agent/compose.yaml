@@ -65,6 +65,8 @@ services:
       COMMAND_CENTER_TOKEN: ${COMMAND_CENTER_TOKEN:?set COMMAND_CENTER_TOKEN in .env}
       UPTIME_KUMA_URL: http://host.docker.internal:3001
       UPTIME_KUMA_API_KEY: ${UPTIME_KUMA_API_KEY:?set UPTIME_KUMA_API_KEY in .env}
+      TELEGRAM_BROWSER_URL: http://host.docker.internal:8788
+      TELEGRAM_DOWNLOADER_URL: http://host.docker.internal:8787
     # Uptime Kuma publishes its read-only metrics endpoint on the host. This
     # hostname is available only to the Command Center, never to Hermes.
     extra_hosts:

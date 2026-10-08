@@ -27,6 +27,11 @@ mcp_servers:
         - system_health
         - docker_containers
         - uptime_kuma_status
+        - media_download_status
+        - searchgram_search
+        - searchgram_next_page
+        - searchgram_previous_page
+        - queue_searchgram_result
         - map_search
         - price_watch_status
         - price_quote

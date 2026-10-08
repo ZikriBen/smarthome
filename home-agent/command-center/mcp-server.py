@@ -36,6 +36,31 @@ def uptime_kuma_status() -> dict:
     return request("GET", "/uptime-kuma/monitors")
 
 @mcp.tool()
+def media_download_status() -> dict:
+    """Read Telegram Downloader queue counts and available media disk space. This is read-only."""
+    return request("GET", "/media/download-status")
+
+@mcp.tool()
+def searchgram_search(query: str) -> dict:
+    """Search SearchGram and return the first page of numbered media results. Use next or previous page tools to browse."""
+    return request("POST", "/searchgram/search", {"query": query})
+
+@mcp.tool()
+def searchgram_next_page(search_id: str) -> dict:
+    """Show the next page for a prior SearchGram search."""
+    return request("POST", "/searchgram/next-page", {"search_id": search_id})
+
+@mcp.tool()
+def searchgram_previous_page(search_id: str) -> dict:
+    """Show the previous page for a prior SearchGram search."""
+    return request("POST", "/searchgram/previous-page", {"search_id": search_id})
+
+@mcp.tool()
+def queue_searchgram_result(search_id: str, result_number: int) -> dict:
+    """Queue one numbered SearchGram result through the Telegram Downloader. Call only after the user explicitly confirms that exact title and size in the current conversation."""
+    return request("POST", "/searchgram/queue", {"search_id": search_id, "result_number": result_number})
+
+@mcp.tool()
 def map_search(query: str) -> list[dict]:
     """Find a place using OpenStreetMap. This is read-only."""
     return request("POST", "/maps/search", {"query": query})
