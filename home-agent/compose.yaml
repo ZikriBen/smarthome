@@ -63,6 +63,12 @@ services:
     restart: unless-stopped
     environment:
       COMMAND_CENTER_TOKEN: ${COMMAND_CENTER_TOKEN:?set COMMAND_CENTER_TOKEN in .env}
+      UPTIME_KUMA_URL: http://host.docker.internal:3001
+      UPTIME_KUMA_API_KEY: ${UPTIME_KUMA_API_KEY:?set UPTIME_KUMA_API_KEY in .env}
+    # Uptime Kuma publishes its read-only metrics endpoint on the host. This
+    # hostname is available only to the Command Center, never to Hermes.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - ./command-center/data:/data
       - /var/run/docker.sock:/var/run/docker.sock:ro

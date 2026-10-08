@@ -1,9 +1,11 @@
 """Small, allowlisted Command Center. It intentionally has no shell endpoint."""
-import json, os, re, socket, sqlite3, threading, time, urllib.parse, urllib.request
+import base64, json, os, re, socket, sqlite3, threading, time, urllib.parse, urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 TOKEN = os.environ["COMMAND_CENTER_TOKEN"]
+KUMA_URL = os.environ.get("UPTIME_KUMA_URL", "").rstrip("/")
+KUMA_API_KEY = os.environ.get("UPTIME_KUMA_API_KEY", "")
 DB = Path("/data/command-center.sqlite3")
 DB.parent.mkdir(parents=True, exist_ok=True)
 db = sqlite3.connect(DB, check_same_thread=False)
@@ -43,6 +45,41 @@ def price(url):
     values=[float((a or b).replace(",","")) for a,b in matches if a or b]
     if not values: raise ValueError("no machine-readable public price found")
     return min(values)
+def kuma_status():
+    """Return a safe monitor summary from Uptime Kuma's read-only metrics API."""
+    if not KUMA_URL or not KUMA_API_KEY:
+        raise ValueError("Uptime Kuma monitoring is not configured")
+    credentials = base64.b64encode((":" + KUMA_API_KEY).encode()).decode()
+    req = urllib.request.Request(
+        KUMA_URL + "/metrics",
+        headers={"Authorization": "Basic " + credentials},
+    )
+    metrics = urllib.request.urlopen(req, timeout=15).read(1_000_000).decode("utf-8", "replace")
+    # Values are Uptime Kuma's documented monitor states: 0=down, 1=up,
+    # 2=pending, 3=maintenance. Deliberately omit monitor URLs from the result.
+    states = {0: "down", 1: "up", 2: "pending", 3: "maintenance"}
+    monitors, response_times = [], {}
+    for line in metrics.splitlines():
+        match = re.match(r"^(monitor_status|monitor_response_time)\{(.*)\} ([0-9.eE+-]+)$", line)
+        if not match:
+            continue
+        labels = {key: bytes(value, "utf-8").decode("unicode_escape")
+                  for key, value in re.findall(r'([A-Za-z_][A-Za-z0-9_]*)="((?:\\.|[^"])*)"', match.group(2))}
+        name = labels.get("monitor_name")
+        if not name:
+            continue
+        value = float(match.group(3))
+        if match.group(1) == "monitor_response_time":
+            response_times[name] = round(value)
+        else:
+            monitors.append({"name": name, "type": labels.get("monitor_type", "unknown"),
+                             "status": states.get(int(value), "unknown")})
+    for monitor in monitors:
+        if monitor["name"] in response_times:
+            monitor["response_time_ms"] = response_times[monitor["name"]]
+    monitors.sort(key=lambda monitor: monitor["name"].lower())
+    summary = {state: sum(monitor["status"] == state for monitor in monitors) for state in states.values()}
+    return {"summary": summary, "monitors": monitors}
 def audit(action, payload):
     ident=os.urandom(9).hex(); db.execute("INSERT INTO approvals VALUES (?,?,?,?,?)",(ident,action,json.dumps(payload),"pending",int(time.time()))); db.commit(); return ident
 def execute(action, p):
@@ -80,6 +117,7 @@ class API(BaseHTTPRequestHandler):
                 return self.send(200,{"uptime_seconds":int(float(Path("/host/proc/uptime").read_text().split()[0])),"loadavg":Path("/host/proc/loadavg").read_text().split()[:3],"memory_available_kib":int(m["MemAvailable"].split()[0])})
             if self.path=="/v1/docker/containers":
                 return self.send(200,[{"id":x["Id"][:12],"name":x["Names"][0].lstrip("/"),"image":x["Image"],"state":x["State"],"status":x["Status"]} for x in docker("GET","/containers/json?all=1")])
+            if self.path=="/v1/uptime-kuma/monitors": return self.send(200,kuma_status())
             if self.path=="/v1/price-watches": return self.send(200,[dict(zip(["id","url","target","currency","every_minutes","enabled","last_price","last_checked"],r)) for r in db.execute("SELECT * FROM watches")])
             if self.path=="/v1/price-alerts": return self.send(200,[dict(zip(["watch_id","price","created"],r)) for r in db.execute("SELECT watch_id,price,created FROM alerts ORDER BY id DESC LIMIT 100")])
             return self.send(404,{"error":"not found"})

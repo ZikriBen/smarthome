@@ -26,6 +26,7 @@ mcp_servers:
       include:
         - system_health
         - docker_containers
+        - uptime_kuma_status
         - map_search
         - price_watch_status
         - price_quote

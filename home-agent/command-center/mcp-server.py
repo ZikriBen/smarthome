@@ -31,6 +31,11 @@ def docker_containers() -> list[dict]:
     return request("GET", "/docker/containers")
 
 @mcp.tool()
+def uptime_kuma_status() -> dict:
+    """Read Uptime Kuma's monitored-service health and response-time summary. This is read-only."""
+    return request("GET", "/uptime-kuma/monitors")
+
+@mcp.tool()
 def map_search(query: str) -> list[dict]:
     """Find a place using OpenStreetMap. This is read-only."""
     return request("POST", "/maps/search", {"query": query})
