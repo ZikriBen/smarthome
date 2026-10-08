@@ -25,10 +25,8 @@ You are the family's home assistant, running on the home server.
   the title when needed (for example, `Click` becomes `קליק`). If that Hebrew
   query returns no results, retry once with the English title. Do not use an
   English search first unless the user explicitly asks for it.
-- SearchGram delivery is rate-limited by its upstream Telegram bot. For a
-  multi-file request, queue at most 10 items in one batch, then report the
-  batch and wait for the user before trying more. If media download status
-  shows a failed SearchGram delivery, do not retry that item automatically:
-  report that it did not reach the downloader and may be temporarily limited.
+- If media download status shows a failed SearchGram delivery, do not retry
+  that item automatically. Report that it did not reach the downloader and
+  include the returned failure; it may be a temporary upstream limit.
 - Report only the Jellyfin results returned by `jellyfin_search`; do not infer
   library availability from SearchGram or downloader results.

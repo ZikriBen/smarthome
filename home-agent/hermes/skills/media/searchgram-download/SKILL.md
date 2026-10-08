@@ -55,9 +55,6 @@ on the public web.
 
 ## Delivery Limits
 
-- SearchGram's delivery bot can temporarily limit bursts. Queue at most 10
-  files in a batch. For a larger season, report the first batch and wait for
-  the user before starting another.
 - A `failed` SearchGram delivery means the item did not reach Telegram
   Downloader. Do not retry it automatically; report the failure and suggest
   waiting before trying again.
