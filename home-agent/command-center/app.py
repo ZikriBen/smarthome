@@ -8,6 +8,8 @@ KUMA_URL = os.environ.get("UPTIME_KUMA_URL", "").rstrip("/")
 KUMA_API_KEY = os.environ.get("UPTIME_KUMA_API_KEY", "")
 BROWSER_URL = os.environ.get("TELEGRAM_BROWSER_URL", "").rstrip("/")
 DOWNLOADER_URL = os.environ.get("TELEGRAM_DOWNLOADER_URL", "").rstrip("/")
+JELLYFIN_URL = os.environ.get("JELLYFIN_URL", "").rstrip("/")
+JELLYFIN_API_KEY = os.environ.get("JELLYFIN_API_KEY", "")
 DB = Path("/data/command-center.sqlite3")
 DB.parent.mkdir(parents=True, exist_ok=True)
 db = sqlite3.connect(DB, check_same_thread=False)
@@ -160,6 +162,33 @@ def queue_searchgram_result(session_id, result_number):
             "downloader": result}
 def media_download_status():
     return internal_json("GET", DOWNLOADER_URL, "/status")
+def jellyfin_search(query):
+    """Search Jellyfin's library through its read-only item lookup endpoint."""
+    query = str(query).strip()
+    if not query:
+        raise ValueError("Jellyfin search query is empty")
+    if not JELLYFIN_URL or not JELLYFIN_API_KEY:
+        raise ValueError("Jellyfin library search is not configured")
+    params = urllib.parse.urlencode({
+        "SearchTerm": query, "Recursive": "true", "Limit": 20,
+        "IncludeItemTypes": "Movie,Series,Episode",
+        "Fields": "ProductionYear,UserData,SeriesName",
+    })
+    req = urllib.request.Request(
+        JELLYFIN_URL + "/Items?" + params,
+        headers={"Authorization": f'MediaBrowser Token="{JELLYFIN_API_KEY}"'},
+    )
+    with urllib.request.urlopen(req, timeout=20) as response:
+        data = json.load(response)
+    items = data.get("Items", [])
+    if not isinstance(items, list):
+        raise ValueError("Jellyfin returned an invalid search response")
+    return {"query": query, "total": int(data.get("TotalRecordCount", len(items))),
+            "results": [{
+                "title": item.get("Name"), "type": item.get("Type"),
+                "year": item.get("ProductionYear"), "series": item.get("SeriesName"),
+                "watched": bool(item.get("UserData", {}).get("Played", False)),
+            } for item in items]}
 def audit(action, payload):
     ident=os.urandom(9).hex(); db.execute("INSERT INTO approvals VALUES (?,?,?,?,?)",(ident,action,json.dumps(payload),"pending",int(time.time()))); db.commit(); return ident
 def execute(action, p):
@@ -199,6 +228,8 @@ class API(BaseHTTPRequestHandler):
                 return self.send(200,[{"id":x["Id"][:12],"name":x["Names"][0].lstrip("/"),"image":x["Image"],"state":x["State"],"status":x["Status"]} for x in docker("GET","/containers/json?all=1")])
             if self.path=="/v1/uptime-kuma/monitors": return self.send(200,kuma_status())
             if self.path=="/v1/media/download-status": return self.send(200,media_download_status())
+            if self.path.startswith("/v1/jellyfin/search?"):
+                return self.send(200,jellyfin_search(urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query).get("query", [""])[0]))
             if self.path=="/v1/price-watches": return self.send(200,[dict(zip(["id","url","target","currency","every_minutes","enabled","last_price","last_checked"],r)) for r in db.execute("SELECT * FROM watches")])
             if self.path=="/v1/price-alerts": return self.send(200,[dict(zip(["watch_id","price","created"],r)) for r in db.execute("SELECT watch_id,price,created FROM alerts ORDER BY id DESC LIMIT 100")])
             return self.send(404,{"error":"not found"})

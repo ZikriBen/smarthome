@@ -10,6 +10,8 @@ integrations; Hermes never receives the Docker socket, host mounts, or a shell.
 - SearchGram: search and paginate results. A selected result is handed to the
   existing Telegram Downloader only after the user explicitly confirms its
   number on the displayed page; that action is auditable.
+- Jellyfin: read-only library search returns matching media metadata and
+  watched state. The Jellyfin credential is held only by the Command Center.
 - Approval required: Docker restart and creation of a price watch.
 - Price checks run on their configured interval (minimum 60 minutes), retain the
   last known good price, and record a deduplicated alert when the target is met.

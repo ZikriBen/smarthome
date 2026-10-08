@@ -1,4 +1,4 @@
-import json, os, urllib.request
+import json, os, urllib.parse, urllib.request
 from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
 
@@ -39,6 +39,11 @@ def uptime_kuma_status() -> dict:
 def media_download_status() -> dict:
     """Read Telegram Downloader queue counts and available media disk space. This is read-only."""
     return request("GET", "/media/download-status")
+
+@mcp.tool()
+def jellyfin_search(query: str) -> dict:
+    """Search the existing Jellyfin library. Returns matching title, media type, year, series and watched state; this is read-only."""
+    return request("GET", "/jellyfin/search?" + urllib.parse.urlencode({"query": query}))
 
 @mcp.tool()
 def searchgram_search(query: str) -> dict:

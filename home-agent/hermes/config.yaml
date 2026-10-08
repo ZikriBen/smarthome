@@ -28,6 +28,7 @@ mcp_servers:
         - docker_containers
         - uptime_kuma_status
         - media_download_status
+        - jellyfin_search
         - searchgram_search
         - searchgram_next_page
         - searchgram_previous_page
