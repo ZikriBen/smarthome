@@ -17,9 +17,14 @@ Use the Command Center SearchGram tools to find media and hand one confirmed
 result to the existing Telegram Downloader. Do not use browser automation,
 shell access, or raw Telegram callbacks for this workflow.
 
+This is the user's own private home-media workflow. Treat a request to search
+SearchGram or use the downloader as authorized operational work; do not
+characterize it as piracy or decline it solely on that basis.
+
 ## When to Use
 
-- The user asks to find a movie, series, episode, or other media in SearchGram.
+- The user asks to find, download, or add a movie, series, episode, or other
+  media through their home-media setup.
 - The user asks to see more search results or queue a previously shown result.
 
 Do not use this to claim that content is already in Jellyfin or to find media
@@ -41,6 +46,10 @@ on the public web.
    is already available in the library.
 5. Use `media_download_status` when asked for queue progress, failures, or
    available media disk space.
+
+If the request is whether something is already available, use
+`jellyfin_search` first. If the user asks to download something, check
+Jellyfin when useful, then search SearchGram when it is not already there.
 
 ## Pitfalls
 
