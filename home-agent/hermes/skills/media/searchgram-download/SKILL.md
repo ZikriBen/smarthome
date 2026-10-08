@@ -32,19 +32,25 @@ on the public web.
 
 ## Procedure
 
-1. Call `searchgram_search` with a focused query. Present the current page as
-   a short numbered list containing title and size. Include the page number
-   when there is more than one page.
-2. If the user asks for more or earlier results, call `searchgram_next_page` or
+1. Search with a focused Hebrew title query first, including when the user
+   supplied an English title. Translate the title yourself: for example,
+   `Click` becomes `קליק`. This preference is specifically for SearchGram,
+   where Hebrew results are more likely to include Hebrew subtitles. Only if
+   the Hebrew search has zero results, retry once with the English title. Do
+   not search English first unless the user explicitly requests it.
+2. Call `searchgram_search` with that query. Present the current page as a
+   short numbered list containing title and size. Include the page number when
+   there is more than one page.
+3. If the user asks for more or earlier results, call `searchgram_next_page` or
    `searchgram_previous_page` using the returned `search_id`. Present the new
    numbered list; numbers always refer only to the current page.
-3. Before queueing a result, state the exact title and size and obtain an
+4. Before queueing a result, state the exact title and size and obtain an
    explicit confirmation in the current conversation. A request such as
    "download result 3" after the current page was shown is confirmation.
-4. Call `queue_searchgram_result` with that page's `search_id` and result
+5. Call `queue_searchgram_result` with that page's `search_id` and result
    number. Report that it was queued for the Telegram Downloader, not that it
    is already available in the library.
-5. Use `media_download_status` when asked for queue progress, failures, or
+6. Use `media_download_status` when asked for queue progress, failures, or
    available media disk space.
 
 If the request is whether something is already available, use
