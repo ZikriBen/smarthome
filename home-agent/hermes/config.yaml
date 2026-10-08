@@ -15,6 +15,23 @@ platform_toolsets:
   cli: [search, browser, todo]
   telegram: [search, browser, todo]
 
+mcp_servers:
+  command_center:
+    url: http://command-center-mcp:8000/mcp
+    # This server has no legitimate reason to ask Hermes to invoke a model.
+    sampling:
+      enabled: false
+    # Keep the initial surface deliberately small and stable.
+    tools:
+      include:
+        - system_health
+        - docker_containers
+        - map_search
+        - price_watch_status
+        - price_quote
+        - propose_docker_restart
+        - propose_price_watch
+
 browser:
   # "off" = built-in browser_* tools on local Chromium (default auto-picks the Browser Use CLI,
   # which hides those tools and left the agent with no browser).
@@ -41,5 +58,6 @@ platforms:
 onboarding:
   seen:
     profile_build_offered: true
+    busy_input_prompt: true
 
 _config_version: 46

@@ -1,12 +1,14 @@
 #!/bin/sh
 # Block requests from Hermes/Chromium to private and link-local networks.
 # This is network-level enforcement: unlike Hermes's URL check it also applies
-# after redirects and DNS resolution. SearXNG is the single private exception.
+# after redirects and DNS resolution. SearXNG and the constrained Command
+# Center MCP adapter are the only private exceptions.
 set -eu
 
 searxng_ip="$(getent ahostsv4 searxng | awk 'NR == 1 { print $1 }')"
-if [ -z "$searxng_ip" ]; then
-    echo "[network-guard] Cannot resolve the internal SearXNG service" >&2
+command_center_mcp_ip="$(getent ahostsv4 command-center-mcp | awk 'NR == 1 { print $1 }')"
+if [ -z "$searxng_ip" ] || [ -z "$command_center_mcp_ip" ]; then
+    echo "[network-guard] Cannot resolve an internal required service" >&2
     exit 1
 fi
 
@@ -18,6 +20,7 @@ install_ipv4_guard() {
     # SearXNG is internal. Loopback stays inside this bridge-network container
     # (not on the NUC) and is required by Docker DNS and Chromium's local CDP.
     iptables -A HERMES_EGRESS_GUARD -d "$searxng_ip" -j ACCEPT
+    iptables -A HERMES_EGRESS_GUARD -d "$command_center_mcp_ip" -j ACCEPT
     iptables -A HERMES_EGRESS_GUARD -d 127.0.0.0/8 -j ACCEPT
 
     # RFC 1918, link-local, and Tailscale CGNAT ranges.
@@ -42,6 +45,6 @@ install_ipv6_guard() {
 
 install_ipv4_guard
 install_ipv6_guard
-echo "[network-guard] Private-network egress blocked; SearXNG allowed at $searxng_ip"
+echo "[network-guard] Private-network egress blocked; internal services allowed"
 
 exec /opt/hermes/docker/entrypoint-dispatch.sh "$@"

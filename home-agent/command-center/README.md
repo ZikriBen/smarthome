@@ -14,11 +14,11 @@ integrations; Hermes never receives the Docker socket, host mounts, or a shell.
 Only public `http(s)` product URLs are accepted. Private, Tailscale, loopback,
 link-local and RFC1918 destinations are rejected before a fetch.
 
-## Architecture direction
+## Hermes integration
 
-The next layer is a constrained Command Center MCP adapter. It will expose a
-small set of general capabilities—read-only inspection, scoped files,
-browser/API calls, and approval-gated execution—rather than a separate agent
-tool for every service. Arbitrary shell access will never be exposed directly
-to Telegram; high-impact commands are proposed, independently approved, then
-run in a scoped worker with an audit record.
+Hermes reaches this service through a separate internal Streamable HTTP MCP
+adapter. The adapter has no Docker socket or host mounts; it only calls this
+authenticated allowlisted API. The currently exposed tools are explicitly
+allowlisted in `hermes/config.yaml`. Arbitrary shell access is never exposed
+to Telegram; high-impact commands are proposed for independent approval and
+the Command Center records the approval and execution state.

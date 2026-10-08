@@ -23,10 +23,11 @@ services:
       - ./hermes:/opt/data
 
     # No published ports: Telegram uses outbound long polling.
-    # No docker.sock: Docker access will go through the Command Center later.
+    # No docker.sock: Docker access is constrained through the Command Center MCP adapter.
 
     depends_on:
       - searxng
+      - command-center-mcp
 
     # Chromium needs a larger /dev/shm than Docker's 64MB default.
     shm_size: 1gb
@@ -66,4 +67,15 @@ services:
       - ./command-center/data:/data
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - /proc:/host/proc:ro
-    # Internal only. Hermes will use a constrained MCP adapter in the next step.
+    # Internal only. Its authenticated API is reachable only through the MCP adapter.
+
+  command-center-mcp:
+    build: ./command-center
+    container_name: command-center-mcp
+    restart: unless-stopped
+    command: ["python", "/app/mcp-server.py"]
+    environment:
+      COMMAND_CENTER_TOKEN: ${COMMAND_CENTER_TOKEN:?set COMMAND_CENTER_TOKEN in .env}
+    depends_on:
+      - command-center
+    # Internal-only adapter: it has no Docker socket or host mounts.
