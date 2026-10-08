@@ -18,6 +18,7 @@ db.execute("CREATE TABLE IF NOT EXISTS watches (id TEXT PRIMARY KEY, url TEXT NO
 db.execute("CREATE TABLE IF NOT EXISTS alerts (id INTEGER PRIMARY KEY AUTOINCREMENT, watch_id TEXT NOT NULL, price REAL NOT NULL, created INTEGER NOT NULL)")
 db.execute("CREATE TABLE IF NOT EXISTS searchgram_sessions (id TEXT PRIMARY KEY, query TEXT NOT NULL, page_json TEXT NOT NULL, created INTEGER NOT NULL)")
 db.commit()
+searchgram_delivery_lock = threading.Lock()
 
 PRIVATE = ("10.", "127.", "192.168.", "169.254.", "100.")
 def public_url(value):
@@ -154,13 +155,21 @@ def queue_searchgram_result(session_id, result_number):
     audit_id = audit("searchgram_download", {"query": page["query"], "title": item.get("title"), "size": item.get("size")})
     db.execute("UPDATE approvals SET status='processing' WHERE id=?", (audit_id,)); db.commit()
     def deliver():
-        try:
-            internal_json("POST", BROWSER_URL, "/api/search/download", {
-                "message_id": page["message_id"], "callback_data": item["callback_data"]})
-        except Exception:
-            db.execute("UPDATE approvals SET status='failed' WHERE id=?", (audit_id,)); db.commit()
-        else:
-            db.execute("UPDATE approvals SET status='executed' WHERE id=?", (audit_id,)); db.commit()
+        # SearchGram's Telegram delivery bot can rate-limit bursts. Serializing
+        # requests prevents the agent from turning one temporary limit into a
+        # flood of overlapping retries.
+        with searchgram_delivery_lock:
+            try:
+                internal_json("POST", BROWSER_URL, "/api/search/download", {
+                    "message_id": page["message_id"], "callback_data": item["callback_data"]})
+            except Exception as exc:
+                row = db.execute("SELECT payload FROM approvals WHERE id=?", (audit_id,)).fetchone()
+                detail = json.loads(row[0]) if row else {}
+                detail["delivery_error"] = str(exc)
+                db.execute("UPDATE approvals SET payload=?,status='failed' WHERE id=?",
+                           (json.dumps(detail), audit_id)); db.commit()
+            else:
+                db.execute("UPDATE approvals SET status='executed' WHERE id=?", (audit_id,)); db.commit()
     threading.Thread(target=deliver, daemon=True).start()
     return {"audit_id": audit_id, "queued_result": {"title": item.get("title"), "size": item.get("size")},
             "status": "processing"}
@@ -170,7 +179,8 @@ def media_download_status():
             "SELECT id,payload,status,created FROM approvals WHERE action='searchgram_download' ORDER BY created DESC LIMIT 10"):
         detail = json.loads(payload)
         deliveries.append({"audit_id": audit_id, "title": detail.get("title"),
-                           "size": detail.get("size"), "status": status, "created": created})
+                           "size": detail.get("size"), "status": status, "created": created,
+                           "error": detail.get("delivery_error")})
     return {"downloader": internal_json("GET", DOWNLOADER_URL, "/status"),
             "recent_searchgram_deliveries": deliveries}
 def jellyfin_search(query):
