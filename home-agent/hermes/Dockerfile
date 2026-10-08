@@ -9,9 +9,7 @@ RUN apt-get -o Acquire::Retries=3 update \
     && rm -rf /var/lib/apt/lists/*
 
 COPY entrypoint-network-guard.sh /usr/local/bin/hermes-network-guard
-COPY command-center-telegram-buttons.py /opt/overrides/sitecustomize.py
+COPY telegram-adapter.py /opt/hermes/plugins/platforms/telegram/adapter.py
 RUN chmod 0755 /usr/local/bin/hermes-network-guard
-
-ENV PYTHONPATH=/opt/overrides:${PYTHONPATH}
 
 ENTRYPOINT ["/usr/local/bin/hermes-network-guard"]
