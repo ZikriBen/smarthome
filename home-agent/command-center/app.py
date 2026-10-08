@@ -152,16 +152,27 @@ def queue_searchgram_result(session_id, result_number):
         raise ValueError("result number is not on the current SearchGram page")
     item = items[result_number - 1]
     audit_id = audit("searchgram_download", {"query": page["query"], "title": item.get("title"), "size": item.get("size")})
-    try:
-        result = internal_json("POST", BROWSER_URL, "/api/search/download", {
-            "message_id": page["message_id"], "callback_data": item["callback_data"]})
-    except Exception:
-        db.execute("UPDATE approvals SET status='failed' WHERE id=?", (audit_id,)); db.commit(); raise
-    db.execute("UPDATE approvals SET status='executed' WHERE id=?", (audit_id,)); db.commit()
+    db.execute("UPDATE approvals SET status='processing' WHERE id=?", (audit_id,)); db.commit()
+    def deliver():
+        try:
+            internal_json("POST", BROWSER_URL, "/api/search/download", {
+                "message_id": page["message_id"], "callback_data": item["callback_data"]})
+        except Exception:
+            db.execute("UPDATE approvals SET status='failed' WHERE id=?", (audit_id,)); db.commit()
+        else:
+            db.execute("UPDATE approvals SET status='executed' WHERE id=?", (audit_id,)); db.commit()
+    threading.Thread(target=deliver, daemon=True).start()
     return {"audit_id": audit_id, "queued_result": {"title": item.get("title"), "size": item.get("size")},
-            "downloader": result}
+            "status": "processing"}
 def media_download_status():
-    return internal_json("GET", DOWNLOADER_URL, "/status")
+    deliveries = []
+    for audit_id, payload, status, created in db.execute(
+            "SELECT id,payload,status,created FROM approvals WHERE action='searchgram_download' ORDER BY created DESC LIMIT 10"):
+        detail = json.loads(payload)
+        deliveries.append({"audit_id": audit_id, "title": detail.get("title"),
+                           "size": detail.get("size"), "status": status, "created": created})
+    return {"downloader": internal_json("GET", DOWNLOADER_URL, "/status"),
+            "recent_searchgram_deliveries": deliveries}
 def jellyfin_search(query):
     """Search Jellyfin's library through its read-only item lookup endpoint."""
     query = str(query).strip()
