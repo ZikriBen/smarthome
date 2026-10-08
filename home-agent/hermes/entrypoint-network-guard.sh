@@ -1,13 +1,14 @@
 #!/bin/sh
 # Block requests from Hermes/Chromium to private and link-local networks.
 # This is network-level enforcement: unlike Hermes's URL check it also applies
-# after redirects and DNS resolution. SearXNG and the constrained Command
-# Center MCP adapter are the only private exceptions.
+# after redirects and DNS resolution. SearXNG, the constrained Command Center
+# MCP adapter, and the internal approval callback are the only exceptions.
 set -eu
 
 searxng_ip="$(getent ahostsv4 searxng | awk 'NR == 1 { print $1 }')"
 command_center_mcp_ip="$(getent ahostsv4 command-center-mcp | awk 'NR == 1 { print $1 }')"
-if [ -z "$searxng_ip" ] || [ -z "$command_center_mcp_ip" ]; then
+command_center_ip="$(getent ahostsv4 command-center | awk 'NR == 1 { print $1 }')"
+if [ -z "$searxng_ip" ] || [ -z "$command_center_mcp_ip" ] || [ -z "$command_center_ip" ]; then
     echo "[network-guard] Cannot resolve an internal required service" >&2
     exit 1
 fi
@@ -21,6 +22,9 @@ install_ipv4_guard() {
     # (not on the NUC) and is required by Docker DNS and Chromium's local CDP.
     iptables -A HERMES_EGRESS_GUARD -d "$searxng_ip" -j ACCEPT
     iptables -A HERMES_EGRESS_GUARD -d "$command_center_mcp_ip" -j ACCEPT
+    # Only the in-image approval callback uses this direct route. Telegram
+    # conversations have no raw network capability to reach this API.
+    iptables -A HERMES_EGRESS_GUARD -d "$command_center_ip" -j ACCEPT
     iptables -A HERMES_EGRESS_GUARD -d 127.0.0.0/8 -j ACCEPT
 
     # RFC 1918, link-local, and Tailscale CGNAT ranges.

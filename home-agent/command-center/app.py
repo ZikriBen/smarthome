@@ -4,6 +4,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 TOKEN = os.environ["COMMAND_CENTER_TOKEN"]
+CALLBACK_TOKEN = os.environ.get("COMMAND_CENTER_CALLBACK_TOKEN", "")
 KUMA_URL = os.environ.get("UPTIME_KUMA_URL", "").rstrip("/")
 KUMA_API_KEY = os.environ.get("UPTIME_KUMA_API_KEY", "")
 BROWSER_URL = os.environ.get("TELEGRAM_BROWSER_URL", "").rstrip("/")
@@ -239,6 +240,8 @@ class API(BaseHTTPRequestHandler):
         raw=json.dumps(data).encode(); self.send_response(code); self.send_header("Content-Type","application/json"); self.send_header("Content-Length",str(len(raw))); self.end_headers(); self.wfile.write(raw)
     def body(self): return json.loads(self.rfile.read(int(self.headers.get("Content-Length","0"))) or b"{}")
     def auth(self): return self.headers.get("Authorization")==f"Bearer {TOKEN}"
+    def callback_auth(self):
+        return bool(CALLBACK_TOKEN) and self.headers.get("X-Command-Center-Callback") == CALLBACK_TOKEN
     def do_GET(self):
         if not self.auth(): return self.send(401,{"error":"unauthorized"})
         try:
@@ -256,7 +259,8 @@ class API(BaseHTTPRequestHandler):
             return self.send(404,{"error":"not found"})
         except Exception as e: return self.send(502,{"error":str(e)})
     def do_POST(self):
-        if not self.auth(): return self.send(401,{"error":"unauthorized"})
+        callback_route = self.path.startswith("/v1/approvals/") and self.path.endswith(("/approve", "/deny"))
+        if not self.auth() and not (callback_route and self.callback_auth()): return self.send(401,{"error":"unauthorized"})
         try:
             p=self.body()
             if self.path=="/v1/maps/search":
@@ -271,9 +275,17 @@ class API(BaseHTTPRequestHandler):
                 watch={"id":os.urandom(8).hex(),"url":public_url(p["url"]),"target":float(p["target"]),"currency":p.get("currency","USD"),"every_minutes":max(60,int(p.get("every_minutes",360)))}
                 watch["baseline_price"]=price(watch["url"]); return self.send(202,{"approval_id":audit("price_watch_create",watch),"proposal":watch})
             if self.path.startswith("/v1/approvals/") and self.path.endswith("/approve"):
-                ident=self.path.split("/")[3]; row=db.execute("SELECT action,payload,status FROM approvals WHERE id=?",(ident,)).fetchone()
+                ident=self.path.split("/")[3]; row=db.execute("SELECT action,payload,status,created FROM approvals WHERE id=?",(ident,)).fetchone()
                 if not row or row[2]!="pending": raise ValueError("unknown or already used approval")
+                if int(time.time()) - row[3] > 900:
+                    db.execute("UPDATE approvals SET status='expired' WHERE id=?",(ident,)); db.commit()
+                    raise ValueError("approval expired")
                 result=execute(row[0],json.loads(row[1])); db.execute("UPDATE approvals SET status='executed' WHERE id=?",(ident,)); db.commit(); return self.send(200,result)
+            if self.path.startswith("/v1/approvals/") and self.path.endswith("/deny"):
+                ident=self.path.split("/")[3]; row=db.execute("SELECT status FROM approvals WHERE id=?",(ident,)).fetchone()
+                if not row or row[0]!="pending": raise ValueError("unknown or already used approval")
+                db.execute("UPDATE approvals SET status='denied' WHERE id=?",(ident,)); db.commit()
+                return self.send(200,{"approval_id":ident,"status":"denied"})
             return self.send(404,{"error":"not found"})
         except Exception as e: return self.send(400,{"error":str(e)})
 threading.Thread(target=watch_loop, daemon=True).start()

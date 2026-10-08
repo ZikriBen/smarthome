@@ -63,6 +63,7 @@ services:
     restart: unless-stopped
     environment:
       COMMAND_CENTER_TOKEN: ${COMMAND_CENTER_TOKEN:?set COMMAND_CENTER_TOKEN in .env}
+      COMMAND_CENTER_CALLBACK_TOKEN: ${COMMAND_CENTER_CALLBACK_TOKEN:?set COMMAND_CENTER_CALLBACK_TOKEN in .env}
       UPTIME_KUMA_URL: http://host.docker.internal:3001
       UPTIME_KUMA_API_KEY: ${UPTIME_KUMA_API_KEY:?set UPTIME_KUMA_API_KEY in .env}
       TELEGRAM_BROWSER_URL: http://host.docker.internal:8788
