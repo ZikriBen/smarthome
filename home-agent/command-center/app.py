@@ -21,7 +21,7 @@ MAX_TEXT_BYTES = 512 * 1024
 GOOGLE_CLIENT_SECRET = Path("/google/client-secret.json")
 GOOGLE_TOKEN = Path("/data/google-token.json")
 GOOGLE_REDIRECT_URI = "http://localhost:8766/"
-GOOGLE_SCOPES = ["https://www.googleapis.com/auth/calendar.readonly", "https://www.googleapis.com/auth/gmail.readonly", "https://www.googleapis.com/auth/gmail.send"]
+GOOGLE_SCOPES = ["https://www.googleapis.com/auth/calendar.readonly", "https://www.googleapis.com/auth/calendar.events.owned", "https://www.googleapis.com/auth/gmail.readonly", "https://www.googleapis.com/auth/gmail.send"]
 google_auth_lock = threading.Lock()
 google_pending_state = None
 google_pending_code_verifier = None
@@ -406,7 +406,7 @@ def google_credentials():
 
 def google_status():
     return {"client_configured": GOOGLE_CLIENT_SECRET.is_file(), "authorized": GOOGLE_TOKEN.is_file(),
-            "scopes": ["calendar.readonly", "gmail.readonly", "gmail.send"]}
+            "scopes": ["calendar.readonly", "calendar.events.owned", "gmail.readonly", "gmail.send"]}
 
 def save_google_token(credentials):
     """Persist refreshed OAuth credentials without a permissive-file window."""
@@ -439,6 +439,7 @@ def google_calendars():
     return {"calendars": calendars}
 
 def google_calendar_events(days=7, max_results=25):
+    from googleapiclient.discovery import build
     days = max(1, min(int(days), 31))
     max_results = max(1, min(int(max_results), 100))
     now = datetime.now(timezone.utc)
@@ -459,6 +460,33 @@ def google_calendar_events(days=7, max_results=25):
     events.sort(key=lambda event: event.get("start") or "")
     return {"days": days, "calendars_checked": [calendar["name"] for calendar in calendars],
             "events": events[:max_results]}
+
+def calendar_event_payload(summary, start, end, location=""):
+    if not isinstance(summary, str) or not summary.strip() or len(summary) > 500:
+        raise ValueError("an event summary is required")
+    if not isinstance(start, str) or not isinstance(end, str):
+        raise ValueError("event start and end must be ISO 8601 datetimes with timezone")
+    try:
+        start_at = datetime.fromisoformat(start.replace("Z", "+00:00"))
+        end_at = datetime.fromisoformat(end.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ValueError("event start and end must be ISO 8601 datetimes with timezone") from exc
+    if start_at.tzinfo is None or end_at.tzinfo is None or end_at <= start_at:
+        raise ValueError("event end must be after start, and both must include timezone")
+    if not isinstance(location, str) or len(location) > 1000:
+        raise ValueError("event location is invalid")
+    return {"summary": summary.strip(), "start": start, "end": end, "location": location.strip()}
+
+def calendar_create_event(summary, start, end, location=""):
+    payload = calendar_event_payload(summary, start, end, location)
+    from googleapiclient.discovery import build
+    service = build("calendar", "v3", credentials=google_credentials(), cache_discovery=False)
+    event = service.events().insert(calendarId="primary", body={
+        "summary": payload["summary"], "start": {"dateTime": payload["start"]},
+        "end": {"dateTime": payload["end"]}, **({"location": payload["location"]} if payload["location"] else {}),
+    }).execute()
+    return {"event_id": event.get("id"), "summary": event.get("summary"),
+            "start": event.get("start", {}).get("dateTime"), "end": event.get("end", {}).get("dateTime")}
 
 def gmail_text(payload):
     """Extract a bounded plain-text representation from Gmail's MIME payload."""
@@ -521,6 +549,7 @@ def audit(action, payload):
 def execute(action, p):
     if action == "docker_restart": docker("POST",f"/containers/{urllib.parse.quote(p['container'],safe='')}/restart?t=20"); return {"restarted":p["container"]}
     if action == "gmail_send": return gmail_send(p["to"], p["subject"], p["body"])
+    if action == "calendar_create": return calendar_create_event(p["summary"], p["start"], p["end"], p.get("location", ""))
     if action == "price_watch_create":
         db.execute("INSERT INTO watches VALUES (?,?,?,?,?,?,?,?)",(p["id"],p["url"],p["target"],p["currency"],p["every_minutes"],1,None,None)); db.commit(); return {"watch_id":p["id"]}
     raise ValueError("action is not allowlisted")
@@ -579,6 +608,9 @@ class API(BaseHTTPRequestHandler):
             if self.path=="/v1/google/calendar/events": return self.send(200,google_calendar_events(p.get("days", 7), p.get("max_results", 25)))
             if self.path=="/v1/google/gmail/search": return self.send(200,gmail_messages(p.get("query", ""), p.get("max_results", 10)))
             if self.path=="/v1/google/gmail/message": return self.send(200,gmail_message(p["message_id"]))
+            if self.path=="/v1/proposals/calendar-create":
+                event = calendar_event_payload(p["summary"], p["start"], p["end"], p.get("location", ""))
+                return self.send(202,{"approval_id":audit("calendar_create",event),"status":"pending","proposal":event})
             if self.path=="/v1/proposals/gmail-send":
                 # Validate now, before creating an approval card; execution
                 # re-validates immediately before it sends.
