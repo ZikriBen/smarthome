@@ -1,0 +1,6 @@
+# Hermes runtime state; only our config is tracked
+hermes/*
+!hermes/config.yaml
+!hermes/SOUL.md
+!hermes/Dockerfile
+!hermes/entrypoint-network-guard.sh

@@ -1,0 +1,70 @@
+# Hermes overrides. Defaults: /opt/hermes/cli-config.yaml.example inside the image.
+
+model:
+  provider: "custom"
+  base_url: "https://api.openai.com/v1"
+  default: "gpt-5.5"
+
+web:
+  search_backend: "searxng"
+
+# Web assistant: public-web search, browsing, and task planning. Chromium is
+# prevented from reaching LAN/Tailscale/loopback targets by the container guard.
+# No terminal, file or docker access.
+platform_toolsets:
+  cli: [search, browser, todo]
+  telegram: [search, browser, todo]
+
+mcp_servers:
+  command_center:
+    url: http://command-center-mcp:8000/mcp
+    # This server has no legitimate reason to ask Hermes to invoke a model.
+    sampling:
+      enabled: false
+    # Keep the initial surface deliberately small and stable.
+    tools:
+      include:
+        - system_health
+        - docker_containers
+        - uptime_kuma_status
+        - media_download_status
+        - jellyfin_search
+        - searchgram_search
+        - searchgram_next_page
+        - searchgram_previous_page
+        - queue_searchgram_result
+        - map_search
+        - price_watch_status
+        - price_quote
+        - propose_docker_restart
+        - propose_price_watch
+
+browser:
+  # "off" = built-in browser_* tools on local Chromium (default auto-picks the Browser Use CLI,
+  # which hides those tools and left the agent with no browser).
+  backend: "off"
+  inactivity_timeout: 120
+  restrict_evaluate: true
+
+# Browser vault: no external password managers. The local vault stays empty unless we add logins.
+vault:
+  onepassword:
+    enabled: false
+  bitwarden:
+    enabled: false
+
+# Block browser/web access to LAN, Tailscale and loopback addresses (default, pinned explicitly).
+security:
+  allow_private_urls: false
+
+platforms:
+  telegram:
+    guest_mode: false
+
+# Hermes latches first-touch hints here; keep the profile-building offer suppressed.
+onboarding:
+  seen:
+    profile_build_offered: true
+    busy_input_prompt: true
+
+_config_version: 46
