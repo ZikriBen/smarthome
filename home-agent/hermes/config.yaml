@@ -29,6 +29,7 @@ mcp_servers:
         - uptime_kuma_status
         - media_download_status
         - jellyfin_search
+        - jellyfin_series_episodes
         - attachment_files
         - workspace_files
         - save_attachment_to_workspace

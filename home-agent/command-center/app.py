@@ -318,6 +318,58 @@ def jellyfin_search(query):
                 "year": item.get("ProductionYear"), "series": item.get("SeriesName"),
                 "watched": bool(item.get("UserData", {}).get("Played", False)),
             } for item in items]}
+
+def jellyfin_get(path, params):
+    req = urllib.request.Request(
+        JELLYFIN_URL + path + "?" + urllib.parse.urlencode(params),
+        headers={"Authorization": f'MediaBrowser Token="{JELLYFIN_API_KEY}"'},
+    )
+    with urllib.request.urlopen(req, timeout=20) as response:
+        return json.load(response)
+
+def normalized_title(value):
+    return "".join(char for char in str(value).casefold() if char.isalnum())
+
+def jellyfin_series_episodes(query, season):
+    """Return one season's episode inventory, falling back to the complete series list."""
+    query = str(query).strip()
+    if not query:
+        raise ValueError("series query is empty")
+    if isinstance(season, bool) or not isinstance(season, int) or season < 0:
+        raise ValueError("season must be a non-negative number")
+    if not JELLYFIN_URL or not JELLYFIN_API_KEY:
+        raise ValueError("Jellyfin library search is not configured")
+    fields = "ProductionYear,SortName"
+    result = jellyfin_get("/Items", {"SearchTerm": query, "Recursive": "true", "Limit": 20,
+                                      "IncludeItemTypes": "Series", "Fields": fields})
+    candidates = result.get("Items", [])
+    fallback_used = False
+    if not candidates:
+        # A title can be indexed differently (for example a localized title).
+        # At this library size, a bounded full-series scan is cheap and gives
+        # the assistant a useful fallback without widening filesystem access.
+        result = jellyfin_get("/Items", {"Recursive": "true", "Limit": 10000,
+                                          "IncludeItemTypes": "Series", "Fields": fields})
+        needle = normalized_title(query)
+        candidates = [item for item in result.get("Items", [])
+                      if needle in normalized_title(item.get("Name", ""))
+                      or needle in normalized_title(item.get("SortName", ""))]
+        fallback_used = True
+    if not candidates:
+        raise ValueError("series not found in Jellyfin")
+    needle = normalized_title(query)
+    series = next((item for item in candidates if normalized_title(item.get("Name", "")) == needle), candidates[0])
+    episodes = jellyfin_get(f"/Shows/{urllib.parse.quote(series['Id'], safe='')}/Episodes", {
+        "Season": season, "Fields": "UserData,Overview",
+    })
+    items = episodes.get("Items", [])
+    if not isinstance(items, list):
+        raise ValueError("Jellyfin returned an invalid episode response")
+    return {"series": series.get("Name"), "year": series.get("ProductionYear"), "season": season,
+            "total": int(episodes.get("TotalRecordCount", len(items))), "fallback_used": fallback_used,
+            "episodes": [{"number": item.get("IndexNumber"), "title": item.get("Name"),
+                          "watched": item.get("UserData", {}).get("Played") if isinstance(item.get("UserData"), dict) else None}
+                         for item in items]}
 def audit(action, payload):
     ident=os.urandom(9).hex(); db.execute("INSERT INTO approvals VALUES (?,?,?,?,?)",(ident,action,json.dumps(payload),"pending",int(time.time()))); db.commit(); return ident
 def execute(action, p):
@@ -378,6 +430,7 @@ class API(BaseHTTPRequestHandler):
             if self.path=="/v1/searchgram/next-page": return self.send(200,searchgram_navigate(p["search_id"], "next"))
             if self.path=="/v1/searchgram/previous-page": return self.send(200,searchgram_navigate(p["search_id"], "previous"))
             if self.path=="/v1/searchgram/queue": return self.send(202,queue_searchgram_result(p["search_id"], p["result_number"]))
+            if self.path=="/v1/jellyfin/series-episodes": return self.send(200,jellyfin_series_episodes(p["query"], p["season"]))
             if self.path=="/v1/files/import-attachment": return self.send(201,save_attachment_to_workspace(p["attachment_name"], p.get("destination")))
             if self.path=="/v1/files/read-text": return self.send(200,read_workspace_text(p["name"]))
             if self.path=="/v1/files/read-pdf": return self.send(200,read_pdf(p["source"], p["name"], p.get("max_pages", 20)))

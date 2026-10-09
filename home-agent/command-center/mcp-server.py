@@ -46,6 +46,11 @@ def jellyfin_search(query: str) -> dict:
     return request("GET", "/jellyfin/search?" + urllib.parse.urlencode({"query": query}))
 
 @mcp.tool()
+def jellyfin_series_episodes(query: str, season: int) -> dict:
+    """List the numbered episodes available for one Jellyfin series season. Searches normally first, then falls back to the complete series list if no result is found; this is read-only."""
+    return request("POST", "/jellyfin/series-episodes", {"query": query, "season": season})
+
+@mcp.tool()
 def attachment_files() -> list[dict]:
     """List recent Telegram document attachments that may be imported into the disposable workspace. This is read-only."""
     return request("GET", "/v1/files/attachments")
