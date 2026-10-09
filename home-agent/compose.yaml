@@ -81,6 +81,11 @@ services:
       - "host.docker.internal:host-gateway"
     volumes:
       - ./command-center/data:/data
+      # Incoming Telegram documents are an import-only, read-only source.
+      - ./hermes/cache/documents:/attachments:ro
+      # This is the sole assistant-writable filesystem area. It is disposable
+      # and deliberately not mounted into Hermes itself.
+      - ./workspace:/workspace
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - /proc:/host/proc:ro
     # Internal only. Its authenticated API is reachable only through the MCP adapter.
