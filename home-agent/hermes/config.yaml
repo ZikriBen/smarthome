@@ -30,6 +30,9 @@ mcp_servers:
         - media_download_status
         - jellyfin_search
         - jellyfin_series_episodes
+        - calendar_events
+        - gmail_search
+        - gmail_message
         - attachment_files
         - workspace_files
         - save_attachment_to_workspace

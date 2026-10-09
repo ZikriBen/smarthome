@@ -1,5 +1,6 @@
 """Small, allowlisted Command Center. It intentionally has no shell endpoint."""
-import base64, ipaddress, json, os, re, shutil, socket, sqlite3, threading, time, urllib.parse, urllib.request
+import base64, ipaddress, json, os, re, secrets, shutil, socket, sqlite3, threading, time, urllib.parse, urllib.request
+from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path, PurePosixPath
 
@@ -16,6 +17,12 @@ ATTACHMENTS = Path("/attachments").resolve()
 WORKSPACE = Path("/workspace").resolve()
 MAX_FILE_BYTES = 25 * 1024 * 1024
 MAX_TEXT_BYTES = 512 * 1024
+GOOGLE_CLIENT_SECRET = Path("/google/client-secret.json")
+GOOGLE_TOKEN = Path("/data/google-token.json")
+GOOGLE_REDIRECT_URI = "http://localhost:8765/"
+GOOGLE_SCOPES = ["https://www.googleapis.com/auth/calendar.readonly", "https://www.googleapis.com/auth/gmail.readonly"]
+google_auth_lock = threading.Lock()
+google_pending_state = None
 DB.parent.mkdir(parents=True, exist_ok=True)
 WORKSPACE.mkdir(parents=True, exist_ok=True)
 db = sqlite3.connect(DB, check_same_thread=False)
@@ -370,6 +377,99 @@ def jellyfin_series_episodes(query, season):
             "episodes": [{"number": item.get("IndexNumber"), "title": item.get("Name"),
                           "watched": item.get("UserData", {}).get("Played") if isinstance(item.get("UserData"), dict) else None}
                          for item in items]}
+
+def google_flow():
+    from google_auth_oauthlib.flow import Flow
+    if not GOOGLE_CLIENT_SECRET.is_file():
+        raise ValueError("Google OAuth client is not configured")
+    return Flow.from_client_secrets_file(str(GOOGLE_CLIENT_SECRET), scopes=GOOGLE_SCOPES,
+                                         redirect_uri=GOOGLE_REDIRECT_URI)
+
+def google_credentials():
+    from google.auth.transport.requests import Request
+    from google.oauth2.credentials import Credentials
+    if not GOOGLE_TOKEN.is_file():
+        raise ValueError("Google is not connected; complete the one-time authorization first")
+    credentials = Credentials.from_authorized_user_file(str(GOOGLE_TOKEN), GOOGLE_SCOPES)
+    if credentials.expired and credentials.refresh_token:
+        credentials.refresh(Request())
+        save_google_token(credentials)
+    if not credentials.valid:
+        raise ValueError("Google authorization expired; complete authorization again")
+    return credentials
+
+def google_status():
+    return {"client_configured": GOOGLE_CLIENT_SECRET.is_file(), "authorized": GOOGLE_TOKEN.is_file(),
+            "scopes": ["calendar.readonly", "gmail.readonly"]}
+
+def save_google_token(credentials):
+    """Persist refreshed OAuth credentials without a permissive-file window."""
+    descriptor = os.open(GOOGLE_TOKEN, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(descriptor, "w", encoding="utf-8") as token_file:
+        os.fchmod(descriptor, 0o600)
+        token_file.write(credentials.to_json())
+
+def google_auth_start():
+    global google_pending_state
+    flow = google_flow()
+    authorization_url, state = flow.authorization_url(access_type="offline", prompt="consent",
+                                                       include_granted_scopes="true")
+    with google_auth_lock:
+        google_pending_state = state
+    return {"authorization_url": authorization_url, "redirect_uri": GOOGLE_REDIRECT_URI}
+
+def google_calendar_events(days=7, max_results=25):
+    from googleapiclient.discovery import build
+    days = max(1, min(int(days), 31))
+    max_results = max(1, min(int(max_results), 100))
+    now = datetime.now(timezone.utc)
+    service = build("calendar", "v3", credentials=google_credentials(), cache_discovery=False)
+    response = service.events().list(calendarId="primary", timeMin=now.isoformat(),
+        timeMax=(now + timedelta(days=days)).isoformat(), singleEvents=True,
+        orderBy="startTime", maxResults=max_results).execute()
+    return {"days": days, "events": [{"title": event.get("summary", "(untitled)"),
+        "start": event.get("start", {}).get("dateTime", event.get("start", {}).get("date")),
+        "end": event.get("end", {}).get("dateTime", event.get("end", {}).get("date")),
+        "location": event.get("location")} for event in response.get("items", [])]}
+
+def gmail_text(payload):
+    """Extract a bounded plain-text representation from Gmail's MIME payload."""
+    parts = [payload]
+    text = []
+    while parts and sum(len(value) for value in text) < 100_000:
+        part = parts.pop(0)
+        parts.extend(part.get("parts", []))
+        body = part.get("body", {}).get("data")
+        if body and part.get("mimeType", "").startswith("text/"):
+            try:
+                text.append(base64.urlsafe_b64decode(body + "===").decode("utf-8", "replace"))
+            except Exception:
+                continue
+    return "\n\n".join(text)[:100_000]
+
+def gmail_messages(query="", max_results=10):
+    from googleapiclient.discovery import build
+    max_results = max(1, min(int(max_results), 25))
+    service = build("gmail", "v1", credentials=google_credentials(), cache_discovery=False)
+    listing = service.users().messages().list(userId="me", q=str(query), maxResults=max_results).execute()
+    messages = []
+    for ref in listing.get("messages", []):
+        message = service.users().messages().get(userId="me", id=ref["id"], format="metadata",
+            metadataHeaders=["From", "To", "Subject", "Date"]).execute()
+        headers = {item["name"].lower(): item["value"] for item in message.get("payload", {}).get("headers", [])}
+        messages.append({"id": message["id"], "from": headers.get("from"), "to": headers.get("to"),
+                         "subject": headers.get("subject"), "date": headers.get("date"),
+                         "snippet": message.get("snippet", "")})
+    return {"query": str(query), "messages": messages}
+
+def gmail_message(message_id):
+    from googleapiclient.discovery import build
+    service = build("gmail", "v1", credentials=google_credentials(), cache_discovery=False)
+    message = service.users().messages().get(userId="me", id=str(message_id), format="full").execute()
+    headers = {item["name"].lower(): item["value"] for item in message.get("payload", {}).get("headers", [])}
+    return {"id": message["id"], "from": headers.get("from"), "to": headers.get("to"),
+            "subject": headers.get("subject"), "date": headers.get("date"),
+            "body": gmail_text(message.get("payload", {}))}
 def audit(action, payload):
     ident=os.urandom(9).hex(); db.execute("INSERT INTO approvals VALUES (?,?,?,?,?)",(ident,action,json.dumps(payload),"pending",int(time.time()))); db.commit(); return ident
 def execute(action, p):
@@ -411,6 +511,7 @@ class API(BaseHTTPRequestHandler):
                 return self.send(200,[{"id":x["Id"][:12],"name":x["Names"][0].lstrip("/"),"image":x["Image"],"state":x["State"],"status":x["Status"]} for x in docker("GET","/containers/json?all=1")])
             if self.path=="/v1/uptime-kuma/monitors": return self.send(200,kuma_status())
             if self.path=="/v1/media/download-status": return self.send(200,media_download_status())
+            if self.path=="/v1/google/status": return self.send(200,google_status())
             if self.path=="/v1/files/attachments": return self.send(200,attachment_files())
             if self.path=="/v1/files/workspace": return self.send(200,workspace_files())
             if self.path.startswith("/v1/jellyfin/search?"):
@@ -426,6 +527,10 @@ class API(BaseHTTPRequestHandler):
             p=self.body()
             if self.path=="/v1/maps/search":
                 q=urllib.parse.quote(p["query"]); req=urllib.request.Request(f"https://nominatim.openstreetmap.org/search?q={q}&format=jsonv2&limit=5",headers={"User-Agent":"CommandCenter/1.0"}); return self.send(200,json.loads(urllib.request.urlopen(req,timeout=20).read()))
+            if self.path=="/v1/google/auth/start": return self.send(200,google_auth_start())
+            if self.path=="/v1/google/calendar/events": return self.send(200,google_calendar_events(p.get("days", 7), p.get("max_results", 25)))
+            if self.path=="/v1/google/gmail/search": return self.send(200,gmail_messages(p.get("query", ""), p.get("max_results", 10)))
+            if self.path=="/v1/google/gmail/message": return self.send(200,gmail_message(p["message_id"]))
             if self.path=="/v1/searchgram/search": return self.send(200,searchgram_search(p["query"]))
             if self.path=="/v1/searchgram/next-page": return self.send(200,searchgram_navigate(p["search_id"], "next"))
             if self.path=="/v1/searchgram/previous-page": return self.send(200,searchgram_navigate(p["search_id"], "previous"))
@@ -455,5 +560,33 @@ class API(BaseHTTPRequestHandler):
                 return self.send(200,{"approval_id":ident,"status":"denied"})
             return self.send(404,{"error":"not found"})
         except Exception as e: return self.send(400,{"error":str(e)})
+
+class GoogleOAuthCallback(BaseHTTPRequestHandler):
+    """Local-only OAuth callback, reached through the user's SSH tunnel."""
+    def log_message(self, *_): pass
+    def do_GET(self):
+        global google_pending_state
+        params = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+        if params.get("error"):
+            message = "Google authorization was cancelled or denied. You can close this page."
+            self.send_response(400); self.end_headers(); self.wfile.write(message.encode()); return
+        code, state = params.get("code", [None])[0], params.get("state", [None])[0]
+        with google_auth_lock:
+            valid_state = google_pending_state
+        if not code or not state or not secrets.compare_digest(state, valid_state or ""):
+            message = "Invalid or expired Google authorization request. Start authorization again."
+            self.send_response(400); self.end_headers(); self.wfile.write(message.encode()); return
+        try:
+            flow = google_flow()
+            flow.fetch_token(authorization_response=GOOGLE_REDIRECT_URI + "?" + urllib.parse.urlencode({"code": code, "state": state}))
+            save_google_token(flow.credentials)
+            with google_auth_lock:
+                google_pending_state = None
+        except Exception:
+            message = "Google authorization could not be completed. Return to the assistant and try again."
+            self.send_response(400); self.end_headers(); self.wfile.write(message.encode()); return
+        message = "Google Calendar and Gmail are connected. You can close this page."
+        self.send_response(200); self.send_header("Content-Type", "text/plain; charset=utf-8"); self.end_headers(); self.wfile.write(message.encode())
 threading.Thread(target=watch_loop, daemon=True).start()
+threading.Thread(target=lambda: ThreadingHTTPServer(("0.0.0.0", 8765), GoogleOAuthCallback).serve_forever(), daemon=True).start()
 ThreadingHTTPServer(("0.0.0.0",8080),API).serve_forever()

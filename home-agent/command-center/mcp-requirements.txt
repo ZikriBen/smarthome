@@ -1,2 +1,4 @@
 mcp==1.26.0
 pypdf==5.1.0
+google-api-python-client==2.154.0
+google-auth-oauthlib==1.2.1

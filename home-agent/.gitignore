@@ -4,3 +4,6 @@ hermes/*
 !hermes/SOUL.md
 !hermes/Dockerfile
 !hermes/entrypoint-network-guard.sh
+
+# OAuth client configuration and refreshed user tokens are server-only.
+google/

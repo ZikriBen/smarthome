@@ -79,8 +79,13 @@ services:
     # hostname is available only to the Command Center, never to Hermes.
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    ports:
+      # One-time Google OAuth callback. Bound to the server loopback only and
+      # reached from the user's browser through an SSH tunnel.
+      - "127.0.0.1:8765:8765"
     volumes:
       - ./command-center/data:/data
+      - ./google:/google:ro
       # Incoming Telegram documents are an import-only, read-only source.
       - ./hermes/cache/documents:/attachments:ro
       # This is the sole assistant-writable filesystem area. It is disposable
