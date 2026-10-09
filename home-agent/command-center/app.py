@@ -384,6 +384,10 @@ def google_flow():
     from google_auth_oauthlib.flow import Flow
     if not GOOGLE_CLIENT_SECRET.is_file():
         raise ValueError("Google OAuth client is not configured")
+    # Google installed-app OAuth explicitly permits an HTTP *loopback*
+    # redirect. The callback port is host-loopback-only and reached via SSH;
+    # Google token/API traffic remains HTTPS.
+    os.environ.setdefault("OAUTHLIB_INSECURE_TRANSPORT", "1")
     return Flow.from_client_secrets_file(str(GOOGLE_CLIENT_SECRET), scopes=GOOGLE_SCOPES,
                                          redirect_uri=GOOGLE_REDIRECT_URI)
 
