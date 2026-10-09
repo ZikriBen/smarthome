@@ -142,7 +142,7 @@ def searchgram_previous_page(search_id: str) -> dict:
 
 @mcp.tool()
 def queue_searchgram_result(search_id: str, result_number: int) -> dict:
-    """Queue one confirmed SearchGram result asynchronously. Immediately tell the user it was submitted, then create a one-shot cron check for this audit_id in 1 minute; never wait silently or automatically retry a failure."""
+    """Queue one confirmed SearchGram result asynchronously. Immediately tell the user it was submitted, then create a one-shot cron check for this audit_id in 30 seconds; never wait silently or automatically retry a failure."""
     return request("POST", "/searchgram/queue", {"search_id": search_id, "result_number": result_number})
 
 @mcp.tool()

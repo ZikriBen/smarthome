@@ -291,7 +291,7 @@ def queue_searchgram_result(session_id, result_number):
                 db.execute("UPDATE approvals SET status='executed' WHERE id=?", (audit_id,)); db.commit()
     threading.Thread(target=deliver, daemon=True).start()
     return {"audit_id": audit_id, "queued_result": {"title": item.get("title"), "size": item.get("size")},
-            "status": "processing", "follow_up_after_seconds": 60}
+            "status": "processing", "follow_up_after_seconds": 30}
 
 def searchgram_delivery_status(audit_id, wait_seconds=0):
     if not isinstance(audit_id, str) or not re.fullmatch(r"[0-9a-f]{18}", audit_id):
