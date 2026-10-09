@@ -31,3 +31,32 @@ the Command Center records the approval and execution state.
 Uptime Kuma is queried through its read-only Prometheus metrics API. Its API
 key is supplied only to the Command Center as `UPTIME_KUMA_API_KEY`; monitor
 URLs and the key are never returned to Hermes.
+
+## Code structure
+
+`app.py` and `mcp-server.py` are transport launchers only. The implementation
+is grouped by domain in the `command_center` package:
+
+```text
+command_center/
+  api.py                 HTTP authentication and dispatch
+  approvals.py           audited, single-use action registry
+  config.py              environment and path configuration
+  database.py            SQLite schema and connection
+  files.py               attachments, workspace, and PDF reads
+  google_workspace.py    OAuth, Calendar, and Gmail
+  docker.py              Docker reads and approved restarts
+  host.py                host health
+  jellyfin.py            read-only Jellyfin library access
+  maps.py                 public place search
+  price_watches.py        public price reads and watches
+  searchgram.py           SearchGram and downloader workflow
+  uptime_kuma.py          read-only monitor status
+  mcp_tools/             MCP registrations grouped by the same domains
+```
+
+To add a capability, put its business logic and HTTP routes in the appropriate
+domain module's `register_routes(router)`. Add the matching MCP-facing function
+to that domain's `mcp_tools` module. New approved writes are registered once
+through `approvals.register_action`; integrations do not implement their own
+approval state machines.
