@@ -1,7 +1,7 @@
 """Small, allowlisted Command Center. It intentionally has no shell endpoint."""
-import base64, ipaddress, json, os, re, socket, sqlite3, threading, time, urllib.parse, urllib.request
+import base64, ipaddress, json, os, re, shutil, socket, sqlite3, threading, time, urllib.parse, urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 TOKEN = os.environ["COMMAND_CENTER_TOKEN"]
 CALLBACK_TOKEN = os.environ.get("COMMAND_CENTER_CALLBACK_TOKEN", "")
@@ -12,7 +12,12 @@ DOWNLOADER_URL = os.environ.get("TELEGRAM_DOWNLOADER_URL", "").rstrip("/")
 JELLYFIN_URL = os.environ.get("JELLYFIN_URL", "").rstrip("/")
 JELLYFIN_API_KEY = os.environ.get("JELLYFIN_API_KEY", "")
 DB = Path("/data/command-center.sqlite3")
+ATTACHMENTS = Path("/attachments").resolve()
+WORKSPACE = Path("/workspace").resolve()
+MAX_FILE_BYTES = 25 * 1024 * 1024
+MAX_TEXT_BYTES = 512 * 1024
 DB.parent.mkdir(parents=True, exist_ok=True)
+WORKSPACE.mkdir(parents=True, exist_ok=True)
 db = sqlite3.connect(DB, check_same_thread=False)
 db.execute("CREATE TABLE IF NOT EXISTS approvals (id TEXT PRIMARY KEY, action TEXT NOT NULL, payload TEXT NOT NULL, status TEXT NOT NULL, created INTEGER NOT NULL)")
 db.execute("CREATE TABLE IF NOT EXISTS watches (id TEXT PRIMARY KEY, url TEXT NOT NULL, target REAL NOT NULL, currency TEXT NOT NULL, every_minutes INTEGER NOT NULL, enabled INTEGER NOT NULL, last_price REAL, last_checked INTEGER)")
@@ -37,6 +42,101 @@ class PublicRedirectHandler(urllib.request.HTTPRedirectHandler):
         return super().redirect_request(req, fp, code, msg, headers, newurl)
 
 PUBLIC_URL_OPENER = urllib.request.build_opener(PublicRedirectHandler())
+
+def scoped_path(root, relative, *, require_exists=True):
+    """Resolve a relative file name without permitting path or symlink escapes."""
+    if not isinstance(relative, str) or not relative or len(relative) > 512:
+        raise ValueError("file path is required")
+    parsed = PurePosixPath(relative)
+    if parsed.is_absolute() or ".." in parsed.parts:
+        raise ValueError("file path must stay inside its designated workspace")
+    candidate = (root / parsed).resolve()
+    if candidate != root and root not in candidate.parents:
+        raise ValueError("file path escapes its designated workspace")
+    if require_exists and not candidate.exists():
+        raise ValueError("file not found")
+    return candidate
+
+def file_summary(root):
+    if not root.exists():
+        return []
+    files = []
+    for candidate in sorted(root.rglob("*")):
+        if not candidate.is_file():
+            continue
+        try:
+            resolved = candidate.resolve()
+            if root not in resolved.parents or resolved.stat().st_size > MAX_FILE_BYTES:
+                continue
+            stat = resolved.stat()
+            files.append({"name": str(resolved.relative_to(root)), "size_bytes": stat.st_size,
+                          "modified": int(stat.st_mtime)})
+        except OSError:
+            continue
+        if len(files) >= 100:
+            break
+    return files
+
+def attachment_files():
+    """List Telegram-uploaded documents, exposed only as a read-only import source."""
+    return file_summary(ATTACHMENTS)
+
+def workspace_files():
+    return file_summary(WORKSPACE)
+
+def save_attachment_to_workspace(attachment_name, destination=None):
+    source = scoped_path(ATTACHMENTS, attachment_name)
+    if not source.is_file() or source.stat().st_size > MAX_FILE_BYTES:
+        raise ValueError("attachment is not an allowed file")
+    destination = destination or source.name
+    target = scoped_path(WORKSPACE, destination, require_exists=False)
+    if target.exists():
+        raise ValueError("workspace destination already exists")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(source, target)
+    return {"name": str(target.relative_to(WORKSPACE)), "size_bytes": target.stat().st_size}
+
+def read_workspace_text(name):
+    path = scoped_path(WORKSPACE, name)
+    if not path.is_file() or path.stat().st_size > MAX_TEXT_BYTES:
+        raise ValueError("text file is missing or too large")
+    if path.suffix.lower() == ".pdf":
+        raise ValueError("use the PDF reader for PDF files")
+    return {"name": str(path.relative_to(WORKSPACE)),
+            "content": path.read_bytes()[:MAX_TEXT_BYTES].decode("utf-8", "replace")}
+
+def write_workspace_text(name, content):
+    if not isinstance(content, str) or len(content.encode("utf-8")) > MAX_TEXT_BYTES:
+        raise ValueError("text content is required and limited to 512 KiB")
+    path = scoped_path(WORKSPACE, name, require_exists=False)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content, encoding="utf-8")
+    return {"name": str(path.relative_to(WORKSPACE)), "size_bytes": path.stat().st_size}
+
+def delete_workspace_file(name):
+    path = scoped_path(WORKSPACE, name)
+    if not path.is_file():
+        raise ValueError("only files in the workspace can be deleted")
+    path.unlink()
+    return {"deleted": str(path.relative_to(WORKSPACE))}
+
+def read_pdf(source, name, max_pages=20):
+    roots = {"attachment": ATTACHMENTS, "workspace": WORKSPACE}
+    if source not in roots:
+        raise ValueError("PDF source must be attachment or workspace")
+    path = scoped_path(roots[source], name)
+    if not path.is_file() or path.suffix.lower() != ".pdf" or path.stat().st_size > MAX_FILE_BYTES:
+        raise ValueError("PDF is missing or too large")
+    try:
+        max_pages = max(1, min(int(max_pages), 30))
+        from pypdf import PdfReader
+        reader = PdfReader(str(path), strict=False)
+        text = "\n\n".join(page.extract_text() or "" for page in reader.pages[:max_pages])
+    except Exception as exc:
+        raise ValueError(f"could not read PDF: {exc}") from exc
+    return {"name": str(path.relative_to(roots[source])), "source": source,
+            "pages_read": min(len(reader.pages), max_pages), "total_pages": len(reader.pages),
+            "text": text[:100_000], "truncated": len(text) > 100_000 or len(reader.pages) > max_pages}
 def docker(method, path):
     s=socket.socket(socket.AF_UNIX); s.connect("/var/run/docker.sock")
     # HTTP/1.0 requests make Docker return a length-delimited response rather
@@ -259,6 +359,8 @@ class API(BaseHTTPRequestHandler):
                 return self.send(200,[{"id":x["Id"][:12],"name":x["Names"][0].lstrip("/"),"image":x["Image"],"state":x["State"],"status":x["Status"]} for x in docker("GET","/containers/json?all=1")])
             if self.path=="/v1/uptime-kuma/monitors": return self.send(200,kuma_status())
             if self.path=="/v1/media/download-status": return self.send(200,media_download_status())
+            if self.path=="/v1/files/attachments": return self.send(200,attachment_files())
+            if self.path=="/v1/files/workspace": return self.send(200,workspace_files())
             if self.path.startswith("/v1/jellyfin/search?"):
                 return self.send(200,jellyfin_search(urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query).get("query", [""])[0]))
             if self.path=="/v1/price-watches": return self.send(200,[dict(zip(["id","url","target","currency","every_minutes","enabled","last_price","last_checked"],r)) for r in db.execute("SELECT * FROM watches")])
@@ -276,6 +378,11 @@ class API(BaseHTTPRequestHandler):
             if self.path=="/v1/searchgram/next-page": return self.send(200,searchgram_navigate(p["search_id"], "next"))
             if self.path=="/v1/searchgram/previous-page": return self.send(200,searchgram_navigate(p["search_id"], "previous"))
             if self.path=="/v1/searchgram/queue": return self.send(202,queue_searchgram_result(p["search_id"], p["result_number"]))
+            if self.path=="/v1/files/import-attachment": return self.send(201,save_attachment_to_workspace(p["attachment_name"], p.get("destination")))
+            if self.path=="/v1/files/read-text": return self.send(200,read_workspace_text(p["name"]))
+            if self.path=="/v1/files/read-pdf": return self.send(200,read_pdf(p["source"], p["name"], p.get("max_pages", 20)))
+            if self.path=="/v1/files/write-text": return self.send(201,write_workspace_text(p["name"], p["content"]))
+            if self.path=="/v1/files/delete": return self.send(200,delete_workspace_file(p["name"]))
             if self.path=="/v1/price-watches/quote": return self.send(200,{"price":price(p["url"])})
             if self.path=="/v1/proposals/docker-restart": return self.send(202,{"approval_id":audit("docker_restart",{"container":p["container"]}),"status":"pending"})
             if self.path=="/v1/proposals/price-watch":

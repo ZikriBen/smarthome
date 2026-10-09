@@ -29,6 +29,13 @@ mcp_servers:
         - uptime_kuma_status
         - media_download_status
         - jellyfin_search
+        - attachment_files
+        - workspace_files
+        - save_attachment_to_workspace
+        - read_workspace_text
+        - read_pdf
+        - write_workspace_text
+        - delete_workspace_file
         - searchgram_search
         - searchgram_next_page
         - searchgram_previous_page
@@ -62,9 +69,17 @@ platforms:
     guest_mode: false
 
 # Hermes latches first-touch hints here; keep the profile-building offer suppressed.
+    enabled: true
+    home_channel:
+      platform: telegram
+      chat_id: '6481204868'
+      name: Liel Zikri
+      user_id: '6481204868'
 onboarding:
   seen:
     profile_build_offered: true
     busy_input_prompt: true
 
 _config_version: 46
+approvals:
+  destructive_slash_confirm: false
