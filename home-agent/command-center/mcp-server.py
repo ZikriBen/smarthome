@@ -66,6 +66,11 @@ def gmail_message(message_id: str) -> dict:
     return request("POST", "/google/gmail/message", {"message_id": message_id})
 
 @mcp.tool()
+def propose_gmail_send(to: str, subject: str, body: str) -> dict:
+    """Propose sending one plain-text email from the home Gmail account. Call only after the user has explicitly confirmed the exact recipient, subject, and body; the proposal still requires an Approve button tap."""
+    return request("POST", "/proposals/gmail-send", {"to": to, "subject": subject, "body": body})
+
+@mcp.tool()
 def attachment_files() -> list[dict]:
     """List recent Telegram document attachments that may be imported into the disposable workspace. This is read-only."""
     return request("GET", "/v1/files/attachments")

@@ -33,6 +33,7 @@ mcp_servers:
         - calendar_events
         - gmail_search
         - gmail_message
+        - propose_gmail_send
         - attachment_files
         - workspace_files
         - save_attachment_to_workspace

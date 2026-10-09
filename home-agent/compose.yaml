@@ -82,7 +82,7 @@ services:
     ports:
       # One-time Google OAuth callback. Bound to the server loopback only and
       # reached from the user's browser through an SSH tunnel.
-      - "127.0.0.1:8765:8765"
+      - "127.0.0.1:8766:8765"
     volumes:
       - ./command-center/data:/data
       - ./google:/google:ro

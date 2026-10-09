@@ -1,6 +1,7 @@
 """Small, allowlisted Command Center. It intentionally has no shell endpoint."""
 import base64, ipaddress, json, os, re, secrets, shutil, socket, sqlite3, threading, time, urllib.parse, urllib.request
 from datetime import datetime, timedelta, timezone
+from email.message import EmailMessage
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path, PurePosixPath
 
@@ -19,8 +20,8 @@ MAX_FILE_BYTES = 25 * 1024 * 1024
 MAX_TEXT_BYTES = 512 * 1024
 GOOGLE_CLIENT_SECRET = Path("/google/client-secret.json")
 GOOGLE_TOKEN = Path("/data/google-token.json")
-GOOGLE_REDIRECT_URI = "http://localhost:8765/"
-GOOGLE_SCOPES = ["https://www.googleapis.com/auth/calendar.readonly", "https://www.googleapis.com/auth/gmail.readonly"]
+GOOGLE_REDIRECT_URI = "http://localhost:8766/"
+GOOGLE_SCOPES = ["https://www.googleapis.com/auth/calendar.readonly", "https://www.googleapis.com/auth/gmail.readonly", "https://www.googleapis.com/auth/gmail.send"]
 google_auth_lock = threading.Lock()
 google_pending_state = None
 DB.parent.mkdir(parents=True, exist_ok=True)
@@ -400,7 +401,7 @@ def google_credentials():
 
 def google_status():
     return {"client_configured": GOOGLE_CLIENT_SECRET.is_file(), "authorized": GOOGLE_TOKEN.is_file(),
-            "scopes": ["calendar.readonly", "gmail.readonly"]}
+            "scopes": ["calendar.readonly", "gmail.readonly", "gmail.send"]}
 
 def save_google_token(credentials):
     """Persist refreshed OAuth credentials without a permissive-file window."""
@@ -470,10 +471,29 @@ def gmail_message(message_id):
     return {"id": message["id"], "from": headers.get("from"), "to": headers.get("to"),
             "subject": headers.get("subject"), "date": headers.get("date"),
             "body": gmail_text(message.get("payload", {}))}
+
+def gmail_send(to, subject, body):
+    """Send an already-approved plain-text email through the home Gmail account."""
+    if not isinstance(to, str) or not re.fullmatch(r"[^\s@<>]+@[^\s@<>]+", to.strip()):
+        raise ValueError("a single valid recipient email address is required")
+    if not isinstance(subject, str) or not subject.strip() or "\r" in subject or "\n" in subject:
+        raise ValueError("an email subject is required")
+    if not isinstance(body, str) or not body.strip() or len(body.encode("utf-8")) > 100_000:
+        raise ValueError("an email body is required and limited to 100 KiB")
+    message = EmailMessage()
+    message["To"] = to.strip()
+    message["Subject"] = subject.strip()
+    message.set_content(body)
+    from googleapiclient.discovery import build
+    service = build("gmail", "v1", credentials=google_credentials(), cache_discovery=False)
+    raw = base64.urlsafe_b64encode(message.as_bytes()).decode("ascii")
+    sent = service.users().messages().send(userId="me", body={"raw": raw}).execute()
+    return {"message_id": sent.get("id"), "to": to.strip(), "subject": subject.strip()}
 def audit(action, payload):
     ident=os.urandom(9).hex(); db.execute("INSERT INTO approvals VALUES (?,?,?,?,?)",(ident,action,json.dumps(payload),"pending",int(time.time()))); db.commit(); return ident
 def execute(action, p):
     if action == "docker_restart": docker("POST",f"/containers/{urllib.parse.quote(p['container'],safe='')}/restart?t=20"); return {"restarted":p["container"]}
+    if action == "gmail_send": return gmail_send(p["to"], p["subject"], p["body"])
     if action == "price_watch_create":
         db.execute("INSERT INTO watches VALUES (?,?,?,?,?,?,?,?)",(p["id"],p["url"],p["target"],p["currency"],p["every_minutes"],1,None,None)); db.commit(); return {"watch_id":p["id"]}
     raise ValueError("action is not allowlisted")
@@ -531,6 +551,14 @@ class API(BaseHTTPRequestHandler):
             if self.path=="/v1/google/calendar/events": return self.send(200,google_calendar_events(p.get("days", 7), p.get("max_results", 25)))
             if self.path=="/v1/google/gmail/search": return self.send(200,gmail_messages(p.get("query", ""), p.get("max_results", 10)))
             if self.path=="/v1/google/gmail/message": return self.send(200,gmail_message(p["message_id"]))
+            if self.path=="/v1/proposals/gmail-send":
+                # Validate now, before creating an approval card; execution
+                # re-validates immediately before it sends.
+                gmail_send_payload = {"to": p["to"], "subject": p["subject"], "body": p["body"]}
+                if not isinstance(gmail_send_payload["to"], str) or not re.fullmatch(r"[^\s@<>]+@[^\s@<>]+", gmail_send_payload["to"].strip()): raise ValueError("a single valid recipient email address is required")
+                if not isinstance(gmail_send_payload["subject"], str) or not gmail_send_payload["subject"].strip() or "\r" in gmail_send_payload["subject"] or "\n" in gmail_send_payload["subject"]: raise ValueError("an email subject is required")
+                if not isinstance(gmail_send_payload["body"], str) or not gmail_send_payload["body"].strip() or len(gmail_send_payload["body"].encode("utf-8")) > 100_000: raise ValueError("an email body is required and limited to 100 KiB")
+                return self.send(202,{"approval_id":audit("gmail_send",gmail_send_payload),"status":"pending","proposal":{"to":gmail_send_payload["to"],"subject":gmail_send_payload["subject"]}})
             if self.path=="/v1/searchgram/search": return self.send(200,searchgram_search(p["query"]))
             if self.path=="/v1/searchgram/next-page": return self.send(200,searchgram_navigate(p["search_id"], "next"))
             if self.path=="/v1/searchgram/previous-page": return self.send(200,searchgram_navigate(p["search_id"], "previous"))
