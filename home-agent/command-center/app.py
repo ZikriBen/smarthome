@@ -24,6 +24,7 @@ GOOGLE_REDIRECT_URI = "http://localhost:8766/"
 GOOGLE_SCOPES = ["https://www.googleapis.com/auth/calendar.readonly", "https://www.googleapis.com/auth/gmail.readonly", "https://www.googleapis.com/auth/gmail.send"]
 google_auth_lock = threading.Lock()
 google_pending_state = None
+google_pending_code_verifier = None
 DB.parent.mkdir(parents=True, exist_ok=True)
 WORKSPACE.mkdir(parents=True, exist_ok=True)
 db = sqlite3.connect(DB, check_same_thread=False)
@@ -411,12 +412,17 @@ def save_google_token(credentials):
         token_file.write(credentials.to_json())
 
 def google_auth_start():
-    global google_pending_state
+    global google_pending_state, google_pending_code_verifier
     flow = google_flow()
+    # The installed-app flow uses PKCE. Keep only this short-lived verifier in
+    # memory until the local callback exchanges the one-time authorization
+    # code; credentials themselves never enter Hermes.
+    flow.code_verifier = secrets.token_urlsafe(64)
     authorization_url, state = flow.authorization_url(access_type="offline", prompt="consent",
                                                        include_granted_scopes="true")
     with google_auth_lock:
         google_pending_state = state
+        google_pending_code_verifier = flow.code_verifier
     return {"authorization_url": authorization_url, "redirect_uri": GOOGLE_REDIRECT_URI}
 
 def google_calendar_events(days=7, max_results=25):
@@ -593,7 +599,7 @@ class GoogleOAuthCallback(BaseHTTPRequestHandler):
     """Local-only OAuth callback, reached through the user's SSH tunnel."""
     def log_message(self, *_): pass
     def do_GET(self):
-        global google_pending_state
+        global google_pending_state, google_pending_code_verifier
         params = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
         if params.get("error"):
             message = "Google authorization was cancelled or denied. You can close this page."
@@ -601,16 +607,20 @@ class GoogleOAuthCallback(BaseHTTPRequestHandler):
         code, state = params.get("code", [None])[0], params.get("state", [None])[0]
         with google_auth_lock:
             valid_state = google_pending_state
+            code_verifier = google_pending_code_verifier
         if not code or not state or not secrets.compare_digest(state, valid_state or ""):
             message = "Invalid or expired Google authorization request. Start authorization again."
             self.send_response(400); self.end_headers(); self.wfile.write(message.encode()); return
         try:
             flow = google_flow()
+            flow.code_verifier = code_verifier
             flow.fetch_token(authorization_response=GOOGLE_REDIRECT_URI + "?" + urllib.parse.urlencode({"code": code, "state": state}))
             save_google_token(flow.credentials)
             with google_auth_lock:
                 google_pending_state = None
-        except Exception:
+                google_pending_code_verifier = None
+        except Exception as exc:
+            print(f"[google-oauth] token exchange failed: {type(exc).__name__}: {exc}", flush=True)
             message = "Google authorization could not be completed. Return to the assistant and try again."
             self.send_response(400); self.end_headers(); self.wfile.write(message.encode()); return
         message = "Google Calendar and Gmail are connected. You can close this page."
