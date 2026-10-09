@@ -1,0 +1,97 @@
+services:
+  hermes:
+    # Adds an in-container egress firewall before Hermes starts. This keeps a
+    # headless browser useful for public sites while preventing LAN access.
+    image: smarthome-hermes-agent:2026-10-07
+    build:
+      context: ./hermes
+      dockerfile: Dockerfile
+    container_name: hermes
+    restart: unless-stopped
+    command: ["gateway", "run"]
+
+    environment:
+      # Deliberately do not use ``env_file`` here: it would expose every
+      # Command Center and service credential to the LLM runtime.  Hermes gets
+      # only its own provider/Telegram credentials and the narrow callback
+      # capability used by a human tapping an approval button.
+      OPENAI_API_KEY: ${OPENAI_API_KEY:?set OPENAI_API_KEY in .env}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:?set TELEGRAM_BOT_TOKEN in .env}
+      TELEGRAM_ALLOWED_USERS: ${TELEGRAM_ALLOWED_USERS:?set TELEGRAM_ALLOWED_USERS in .env}
+      COMMAND_CENTER_CALLBACK_TOKEN: ${COMMAND_CENTER_CALLBACK_TOKEN:?set COMMAND_CENTER_CALLBACK_TOKEN in .env}
+      HERMES_UID: 1000
+      HERMES_GID: 1000
+      SEARXNG_URL: http://searxng:8080
+
+    # Hermes state (sessions, memories, logs). config.yaml and SOUL.md are tracked in git.
+    volumes:
+      - ./hermes:/opt/data
+
+    # No published ports: Telegram uses outbound long polling.
+    # No docker.sock: Docker access is constrained through the Command Center MCP adapter.
+
+    depends_on:
+      - searxng
+      - command-center-mcp
+
+    # Chromium needs a larger /dev/shm than Docker's 64MB default.
+    shm_size: 1gb
+
+    # Required only to install the OUTPUT-chain guard in this container's own
+    # network namespace. Hermes itself has no shell, file, Docker, or command
+    # tool exposed to Telegram users.
+    cap_add:
+      - NET_ADMIN
+
+    deploy:
+      resources:
+        limits:
+          memory: 3G
+          cpus: "2.0"
+
+  searxng:
+    image: searxng/searxng:latest@sha256:cc026dbee25b864d7f9731957cd5ef36ba2e2d61abd2996d57f1b863483e7409
+    container_name: searxng
+    restart: unless-stopped
+
+    environment:
+      SEARXNG_SECRET: ${SEARXNG_SECRET:?set SEARXNG_SECRET in .env}
+
+    volumes:
+      - ./searxng/settings.yml:/etc/searxng/settings.yml:ro
+
+    # Internal only, reachable by hermes on the compose network.
+
+  command-center:
+    build: ./command-center
+    container_name: command-center
+    restart: unless-stopped
+    environment:
+      COMMAND_CENTER_TOKEN: ${COMMAND_CENTER_TOKEN:?set COMMAND_CENTER_TOKEN in .env}
+      COMMAND_CENTER_CALLBACK_TOKEN: ${COMMAND_CENTER_CALLBACK_TOKEN:?set COMMAND_CENTER_CALLBACK_TOKEN in .env}
+      UPTIME_KUMA_URL: http://host.docker.internal:3001
+      UPTIME_KUMA_API_KEY: ${UPTIME_KUMA_API_KEY:?set UPTIME_KUMA_API_KEY in .env}
+      TELEGRAM_BROWSER_URL: http://host.docker.internal:8788
+      TELEGRAM_DOWNLOADER_URL: http://host.docker.internal:8787
+      JELLYFIN_URL: http://host.docker.internal:8096
+      JELLYFIN_API_KEY: ${JELLYFIN_API_KEY:?set JELLYFIN_API_KEY in .env}
+    # Uptime Kuma publishes its read-only metrics endpoint on the host. This
+    # hostname is available only to the Command Center, never to Hermes.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ./command-center/data:/data
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /proc:/host/proc:ro
+    # Internal only. Its authenticated API is reachable only through the MCP adapter.
+
+  command-center-mcp:
+    build: ./command-center
+    container_name: command-center-mcp
+    restart: unless-stopped
+    command: ["python", "/app/mcp-server.py"]
+    environment:
+      COMMAND_CENTER_TOKEN: ${COMMAND_CENTER_TOKEN:?set COMMAND_CENTER_TOKEN in .env}
+    depends_on:
+      - command-center
+    # Internal-only adapter: it has no Docker socket or host mounts.
