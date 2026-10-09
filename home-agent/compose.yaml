@@ -10,10 +10,15 @@ services:
     restart: unless-stopped
     command: ["gateway", "run"]
 
-    env_file:
-      - .env
-
     environment:
+      # Deliberately do not use ``env_file`` here: it would expose every
+      # Command Center and service credential to the LLM runtime.  Hermes gets
+      # only its own provider/Telegram credentials and the narrow callback
+      # capability used by a human tapping an approval button.
+      OPENAI_API_KEY: ${OPENAI_API_KEY:?set OPENAI_API_KEY in .env}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:?set TELEGRAM_BOT_TOKEN in .env}
+      TELEGRAM_ALLOWED_USERS: ${TELEGRAM_ALLOWED_USERS:?set TELEGRAM_ALLOWED_USERS in .env}
+      COMMAND_CENTER_CALLBACK_TOKEN: ${COMMAND_CENTER_CALLBACK_TOKEN:?set COMMAND_CENTER_CALLBACK_TOKEN in .env}
       HERMES_UID: 1000
       HERMES_GID: 1000
       SEARXNG_URL: http://searxng:8080

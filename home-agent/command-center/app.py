@@ -1,5 +1,5 @@
 """Small, allowlisted Command Center. It intentionally has no shell endpoint."""
-import base64, json, os, re, socket, sqlite3, threading, time, urllib.parse, urllib.request
+import base64, ipaddress, json, os, re, socket, sqlite3, threading, time, urllib.parse, urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -21,15 +21,22 @@ db.execute("CREATE TABLE IF NOT EXISTS searchgram_sessions (id TEXT PRIMARY KEY,
 db.commit()
 searchgram_delivery_lock = threading.Lock()
 
-PRIVATE = ("10.", "127.", "192.168.", "169.254.", "100.")
 def public_url(value):
     u = urllib.parse.urlparse(value)
-    if u.scheme not in ("http", "https") or not u.hostname: raise ValueError("URL must be public http(s)")
+    if u.scheme not in ("http", "https") or not u.hostname or u.username or u.password:
+        raise ValueError("URL must be a public http(s) URL without credentials")
     for addr in socket.getaddrinfo(u.hostname, None):
-        ip = addr[4][0]
-        if ip.startswith(PRIVATE) or ip.startswith("172.") or ip.startswith("fc") or ip.startswith("fe80:"):
+        if not ipaddress.ip_address(addr[4][0]).is_global:
             raise ValueError("private destinations are not allowed")
     return value
+
+class PublicRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Apply the same SSRF boundary to every redirect hop, not only the first URL."""
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        public_url(newurl)
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+PUBLIC_URL_OPENER = urllib.request.build_opener(PublicRedirectHandler())
 def docker(method, path):
     s=socket.socket(socket.AF_UNIX); s.connect("/var/run/docker.sock")
     # HTTP/1.0 requests make Docker return a length-delimited response rather
@@ -47,7 +54,7 @@ def docker(method, path):
 def price(url):
     public_url(url)
     req=urllib.request.Request(url, headers={"User-Agent":"Mozilla/5.0 (compatible; CommandCenter/1.0)"})
-    html=urllib.request.urlopen(req, timeout=20).read(1_500_000).decode("utf-8","ignore")
+    html=PUBLIC_URL_OPENER.open(req, timeout=20).read(1_500_000).decode("utf-8","ignore")
     matches=re.findall(r'(?:product:price:amount|"price"|itemprop=["\']price["\'])[^>]{0,180}?content=["\']?([0-9]+(?:[.,][0-9]{1,2})?)|"price"\s*:\s*"?([0-9]+(?:\.[0-9]{1,2})?)', html, re.I)
     values=[float((a or b).replace(",","")) for a,b in matches if a or b]
     if not values: raise ValueError("no machine-readable public price found")
