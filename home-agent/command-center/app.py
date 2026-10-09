@@ -1,5 +1,7 @@
 """Small, allowlisted Command Center. It intentionally has no shell endpoint."""
-import base64, ipaddress, json, os, re, shutil, socket, sqlite3, threading, time, urllib.parse, urllib.request
+import base64, ipaddress, json, os, re, secrets, shutil, socket, sqlite3, threading, time, urllib.parse, urllib.request
+from datetime import date, datetime, timedelta, timezone
+from email.message import EmailMessage
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path, PurePosixPath
 
@@ -16,6 +18,14 @@ ATTACHMENTS = Path("/attachments").resolve()
 WORKSPACE = Path("/workspace").resolve()
 MAX_FILE_BYTES = 25 * 1024 * 1024
 MAX_TEXT_BYTES = 512 * 1024
+GOOGLE_CLIENT_SECRET = Path("/google/client-secret.json")
+GOOGLE_TOKEN = Path("/data/google-token.json")
+GOOGLE_REDIRECT_URI = "http://localhost:8766/"
+GOOGLE_SCOPES = ["https://www.googleapis.com/auth/calendar.readonly", "https://www.googleapis.com/auth/calendar.events.owned", "https://www.googleapis.com/auth/gmail.readonly", "https://www.googleapis.com/auth/gmail.send"]
+google_auth_lock = threading.Lock()
+approval_lock = threading.Lock()
+google_pending_state = None
+google_pending_code_verifier = None
 DB.parent.mkdir(parents=True, exist_ok=True)
 WORKSPACE.mkdir(parents=True, exist_ok=True)
 db = sqlite3.connect(DB, check_same_thread=False)
@@ -274,13 +284,37 @@ def queue_searchgram_result(session_id, result_number):
                 row = db.execute("SELECT payload FROM approvals WHERE id=?", (audit_id,)).fetchone()
                 detail = json.loads(row[0]) if row else {}
                 detail["delivery_error"] = str(exc)
+                detail["delivery_http_status"] = getattr(exc, "code", None)
                 db.execute("UPDATE approvals SET payload=?,status='failed' WHERE id=?",
                            (json.dumps(detail), audit_id)); db.commit()
             else:
                 db.execute("UPDATE approvals SET status='executed' WHERE id=?", (audit_id,)); db.commit()
     threading.Thread(target=deliver, daemon=True).start()
     return {"audit_id": audit_id, "queued_result": {"title": item.get("title"), "size": item.get("size")},
-            "status": "processing"}
+            "status": "processing", "follow_up_after_seconds": 30}
+
+def searchgram_delivery_status(audit_id, wait_seconds=0):
+    if not isinstance(audit_id, str) or not re.fullmatch(r"[0-9a-f]{18}", audit_id):
+        raise ValueError("a valid SearchGram delivery audit ID is required")
+    if isinstance(wait_seconds, bool):
+        raise ValueError("wait_seconds must be between 0 and 90")
+    wait_seconds = max(0, min(int(wait_seconds), 90))
+    deadline = time.monotonic() + wait_seconds
+    while True:
+        row = db.execute(
+            "SELECT payload,status,created FROM approvals WHERE id=? AND action='searchgram_download'",
+            (audit_id,)).fetchone()
+        if not row or row[1] != "processing" or time.monotonic() >= deadline:
+            break
+        time.sleep(2)
+    if not row:
+        raise ValueError("SearchGram delivery was not found")
+    detail = json.loads(row[0])
+    delivery = {"audit_id": audit_id, "title": detail.get("title"), "size": detail.get("size"),
+                "status": row[1], "created": row[2], "error": detail.get("delivery_error"),
+                "http_status": detail.get("delivery_http_status")}
+    return {"delivery": delivery, "downloader": internal_json("GET", DOWNLOADER_URL, "/status")}
+
 def media_download_status():
     deliveries = []
     for audit_id, payload, status, created in db.execute(
@@ -288,7 +322,8 @@ def media_download_status():
         detail = json.loads(payload)
         deliveries.append({"audit_id": audit_id, "title": detail.get("title"),
                            "size": detail.get("size"), "status": status, "created": created,
-                           "error": detail.get("delivery_error")})
+                           "error": detail.get("delivery_error"),
+                           "http_status": detail.get("delivery_http_status")})
     return {"downloader": internal_json("GET", DOWNLOADER_URL, "/status"),
             "recent_searchgram_deliveries": deliveries}
 def jellyfin_search(query):
@@ -370,10 +405,248 @@ def jellyfin_series_episodes(query, season):
             "episodes": [{"number": item.get("IndexNumber"), "title": item.get("Name"),
                           "watched": item.get("UserData", {}).get("Played") if isinstance(item.get("UserData"), dict) else None}
                          for item in items]}
+
+def google_flow():
+    from google_auth_oauthlib.flow import Flow
+    if not GOOGLE_CLIENT_SECRET.is_file():
+        raise ValueError("Google OAuth client is not configured")
+    # Google installed-app OAuth explicitly permits an HTTP *loopback*
+    # redirect. The callback port is host-loopback-only and reached via SSH;
+    # Google token/API traffic remains HTTPS.
+    os.environ.setdefault("OAUTHLIB_INSECURE_TRANSPORT", "1")
+    return Flow.from_client_secrets_file(str(GOOGLE_CLIENT_SECRET), scopes=GOOGLE_SCOPES,
+                                         redirect_uri=GOOGLE_REDIRECT_URI)
+
+def google_credentials():
+    from google.auth.transport.requests import Request
+    from google.oauth2.credentials import Credentials
+    if not GOOGLE_TOKEN.is_file():
+        raise ValueError("Google is not connected; complete the one-time authorization first")
+    credentials = Credentials.from_authorized_user_file(str(GOOGLE_TOKEN), GOOGLE_SCOPES)
+    if credentials.expired and credentials.refresh_token:
+        credentials.refresh(Request())
+        save_google_token(credentials)
+    if not credentials.valid:
+        raise ValueError("Google authorization expired; complete authorization again")
+    return credentials
+
+def google_status():
+    return {"client_configured": GOOGLE_CLIENT_SECRET.is_file(), "authorized": GOOGLE_TOKEN.is_file(),
+            "scopes": ["calendar.readonly", "calendar.events.owned", "gmail.readonly", "gmail.send"]}
+
+def save_google_token(credentials):
+    """Persist refreshed OAuth credentials without a permissive-file window."""
+    descriptor = os.open(GOOGLE_TOKEN, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(descriptor, "w", encoding="utf-8") as token_file:
+        os.fchmod(descriptor, 0o600)
+        token_file.write(credentials.to_json())
+
+def google_auth_start():
+    global google_pending_state, google_pending_code_verifier
+    flow = google_flow()
+    # The installed-app flow uses PKCE. Keep only this short-lived verifier in
+    # memory until the local callback exchanges the one-time authorization
+    # code; credentials themselves never enter Hermes.
+    flow.code_verifier = secrets.token_urlsafe(64)
+    authorization_url, state = flow.authorization_url(access_type="offline", prompt="consent",
+                                                       include_granted_scopes="true")
+    with google_auth_lock:
+        google_pending_state = state
+        google_pending_code_verifier = flow.code_verifier
+    return {"authorization_url": authorization_url, "redirect_uri": GOOGLE_REDIRECT_URI}
+
+def google_calendars():
+    from googleapiclient.discovery import build
+    service = build("calendar", "v3", credentials=google_credentials(), cache_discovery=False)
+    response = service.calendarList().list(maxResults=250, showHidden=False).execute()
+    calendars = [{"id": item.get("id"), "name": item.get("summaryOverride") or item.get("summary"),
+                  "primary": bool(item.get("primary")), "access_role": item.get("accessRole")}
+                 for item in response.get("items", []) if not item.get("hidden")]
+    return {"calendars": calendars}
+
+def google_calendar_events(days=7, max_results=25):
+    from googleapiclient.discovery import build
+    days = max(1, min(int(days), 366))
+    max_results = max(1, min(int(max_results), 100))
+    now = datetime.now(timezone.utc)
+    service = build("calendar", "v3", credentials=google_credentials(), cache_discovery=False)
+    calendars = google_calendars()["calendars"]
+    events = []
+    for calendar in calendars:
+        if not calendar["id"]:
+            continue
+        response = service.events().list(calendarId=calendar["id"], timeMin=now.isoformat(),
+            timeMax=(now + timedelta(days=days)).isoformat(), singleEvents=True,
+            orderBy="startTime", maxResults=max_results).execute()
+        for event in response.get("items", []):
+            events.append({"event_id": event.get("id"), "title": event.get("summary", "(untitled)"),
+                "start": event.get("start", {}).get("dateTime", event.get("start", {}).get("date")),
+                "end": event.get("end", {}).get("dateTime", event.get("end", {}).get("date")),
+                "location": event.get("location"), "calendar": calendar["name"],
+                "calendar_id": calendar["id"], "primary": calendar["primary"],
+                "all_day": "date" in event.get("start", {})})
+    events.sort(key=lambda event: event.get("start") or "")
+    return {"days": days, "calendars_checked": [calendar["name"] for calendar in calendars],
+            "events": events[:max_results]}
+
+def calendar_event_payload(summary, start, end, location=""):
+    if not isinstance(summary, str) or not summary.strip() or len(summary) > 500:
+        raise ValueError("an event summary is required")
+    if not isinstance(start, str) or not isinstance(end, str):
+        raise ValueError("event start and end must be ISO 8601 dates or datetimes with timezone")
+    start_is_date = bool(re.fullmatch(r"\d{4}-\d{2}-\d{2}", start))
+    end_is_date = bool(re.fullmatch(r"\d{4}-\d{2}-\d{2}", end))
+    if start_is_date != end_is_date:
+        raise ValueError("event start and end must both be dates or both be datetimes")
+    try:
+        if start_is_date:
+            start_at, end_at = date.fromisoformat(start), date.fromisoformat(end)
+        else:
+            start_at = datetime.fromisoformat(start.replace("Z", "+00:00"))
+            end_at = datetime.fromisoformat(end.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ValueError("event start and end must be ISO 8601 dates or datetimes with timezone") from exc
+    if not start_is_date and (start_at.tzinfo is None or end_at.tzinfo is None):
+        raise ValueError("event start and end datetimes must include timezone")
+    if end_at <= start_at:
+        raise ValueError("event end must be after start")
+    if not isinstance(location, str) or len(location) > 1000:
+        raise ValueError("event location is invalid")
+    return {"summary": summary.strip(), "start": start, "end": end,
+            "location": location.strip(), "all_day": start_is_date}
+
+def calendar_event_times(payload):
+    key = "date" if payload.get("all_day") else "dateTime"
+    return {"start": {key: payload["start"]}, "end": {key: payload["end"]}}
+
+def calendar_create_event(summary, start, end, location=""):
+    payload = calendar_event_payload(summary, start, end, location)
+    from googleapiclient.discovery import build
+    service = build("calendar", "v3", credentials=google_credentials(), cache_discovery=False)
+    event = service.events().insert(calendarId="primary", body={"summary": payload["summary"],
+        **calendar_event_times(payload), **({"location": payload["location"]} if payload["location"] else {}),
+    }).execute()
+    return {"created": calendar_event_snapshot(event)}
+
+def calendar_event_id(event_id):
+    if not isinstance(event_id, str) or not event_id.strip() or len(event_id) > 1024 or any(char.isspace() for char in event_id):
+        raise ValueError("a valid primary-calendar event ID is required")
+    return event_id.strip()
+
+def calendar_primary_event(event_id):
+    from googleapiclient.discovery import build
+    event_id = calendar_event_id(event_id)
+    service = build("calendar", "v3", credentials=google_credentials(), cache_discovery=False)
+    event = service.events().get(calendarId="primary", eventId=event_id).execute()
+    return service, event
+
+def calendar_event_snapshot(event):
+    return {"event_id": event.get("id"), "summary": event.get("summary", "(untitled)"),
+            "start": event.get("start", {}).get("dateTime", event.get("start", {}).get("date")),
+            "end": event.get("end", {}).get("dateTime", event.get("end", {}).get("date")),
+            "location": event.get("location") or "", "all_day": "date" in event.get("start", {})}
+
+def calendar_update_proposal(event_id, summary, start, end, location=""):
+    _, event = calendar_primary_event(event_id)
+    before = calendar_event_snapshot(event)
+    after = calendar_event_payload(summary, start, end, location)
+    return {"event_id": before["event_id"], "version": event.get("etag"), "before": before, "after": after}
+
+def calendar_delete_proposal(event_id):
+    _, event = calendar_primary_event(event_id)
+    return {"event_id": event["id"], "version": event.get("etag"), "event": calendar_event_snapshot(event)}
+
+def calendar_update_event(event_id, after, expected, version):
+    service, current = calendar_primary_event(event_id)
+    if calendar_event_snapshot(current) != expected or current.get("etag") != version:
+        raise ValueError("calendar event changed after approval was requested; review it and try again")
+    payload = calendar_event_payload(after["summary"], after["start"], after["end"], after.get("location", ""))
+    update_request = service.events().patch(calendarId="primary", eventId=event_id, body={
+        "summary": payload["summary"], **calendar_event_times(payload), "location": payload["location"],
+    })
+    if version:
+        update_request.headers["If-Match"] = version
+    updated = update_request.execute()
+    return {"updated": calendar_event_snapshot(updated)}
+
+def calendar_delete_event(event_id, expected, version):
+    service, current = calendar_primary_event(event_id)
+    if calendar_event_snapshot(current) != expected or current.get("etag") != version:
+        raise ValueError("calendar event changed after approval was requested; review it and try again")
+    delete_request = service.events().delete(calendarId="primary", eventId=event_id)
+    if version:
+        delete_request.headers["If-Match"] = version
+    delete_request.execute()
+    return {"deleted": expected}
+
+def gmail_text(payload):
+    """Extract a bounded plain-text representation from Gmail's MIME payload."""
+    parts = [payload]
+    text = []
+    while parts and sum(len(value) for value in text) < 100_000:
+        part = parts.pop(0)
+        parts.extend(part.get("parts", []))
+        body = part.get("body", {}).get("data")
+        if body and part.get("mimeType", "").startswith("text/"):
+            try:
+                text.append(base64.urlsafe_b64decode(body + "===").decode("utf-8", "replace"))
+            except Exception:
+                continue
+    return "\n\n".join(text)[:100_000]
+
+def gmail_messages(query="", max_results=10):
+    from googleapiclient.discovery import build
+    max_results = max(1, min(int(max_results), 25))
+    service = build("gmail", "v1", credentials=google_credentials(), cache_discovery=False)
+    listing = service.users().messages().list(userId="me", q=str(query), maxResults=max_results).execute()
+    messages = []
+    for ref in listing.get("messages", []):
+        message = service.users().messages().get(userId="me", id=ref["id"], format="metadata",
+            metadataHeaders=["From", "To", "Subject", "Date"]).execute()
+        headers = {item["name"].lower(): item["value"] for item in message.get("payload", {}).get("headers", [])}
+        messages.append({"id": message["id"], "from": headers.get("from"), "to": headers.get("to"),
+                         "subject": headers.get("subject"), "date": headers.get("date"),
+                         "snippet": message.get("snippet", "")})
+    return {"query": str(query), "messages": messages}
+
+def gmail_message(message_id):
+    from googleapiclient.discovery import build
+    service = build("gmail", "v1", credentials=google_credentials(), cache_discovery=False)
+    message = service.users().messages().get(userId="me", id=str(message_id), format="full").execute()
+    headers = {item["name"].lower(): item["value"] for item in message.get("payload", {}).get("headers", [])}
+    return {"id": message["id"], "from": headers.get("from"), "to": headers.get("to"),
+            "subject": headers.get("subject"), "date": headers.get("date"),
+            "body": gmail_text(message.get("payload", {}))}
+
+def gmail_send(to, subject, body):
+    """Send an already-approved plain-text email through the home Gmail account."""
+    if not isinstance(to, str) or not re.fullmatch(r"[^\s@<>]+@[^\s@<>]+", to.strip()):
+        raise ValueError("a single valid recipient email address is required")
+    if not isinstance(subject, str) or not subject.strip() or "\r" in subject or "\n" in subject:
+        raise ValueError("an email subject is required")
+    if not isinstance(body, str) or not body.strip() or len(body.encode("utf-8")) > 100_000:
+        raise ValueError("an email body is required and limited to 100 KiB")
+    message = EmailMessage()
+    message["To"] = to.strip()
+    message["Subject"] = subject.strip()
+    message.set_content(body)
+    from googleapiclient.discovery import build
+    service = build("gmail", "v1", credentials=google_credentials(), cache_discovery=False)
+    raw = base64.urlsafe_b64encode(message.as_bytes()).decode("ascii")
+    sent = service.users().messages().send(userId="me", body={"raw": raw}).execute()
+    return {"message_id": sent.get("id"), "to": to.strip(), "subject": subject.strip()}
 def audit(action, payload):
-    ident=os.urandom(9).hex(); db.execute("INSERT INTO approvals VALUES (?,?,?,?,?)",(ident,action,json.dumps(payload),"pending",int(time.time()))); db.commit(); return ident
+    ident=os.urandom(9).hex()
+    with approval_lock:
+        db.execute("INSERT INTO approvals VALUES (?,?,?,?,?)",(ident,action,json.dumps(payload),"pending",int(time.time())))
+        db.commit()
+    return ident
 def execute(action, p):
     if action == "docker_restart": docker("POST",f"/containers/{urllib.parse.quote(p['container'],safe='')}/restart?t=20"); return {"restarted":p["container"]}
+    if action == "gmail_send": return gmail_send(p["to"], p["subject"], p["body"])
+    if action == "calendar_create": return calendar_create_event(p["summary"], p["start"], p["end"], p.get("location", ""))
+    if action == "calendar_update": return calendar_update_event(p["event_id"], p["after"], p["before"], p.get("version"))
+    if action == "calendar_delete": return calendar_delete_event(p["event_id"], p["event"], p.get("version"))
     if action == "price_watch_create":
         db.execute("INSERT INTO watches VALUES (?,?,?,?,?,?,?,?)",(p["id"],p["url"],p["target"],p["currency"],p["every_minutes"],1,None,None)); db.commit(); return {"watch_id":p["id"]}
     raise ValueError("action is not allowlisted")
@@ -411,6 +684,7 @@ class API(BaseHTTPRequestHandler):
                 return self.send(200,[{"id":x["Id"][:12],"name":x["Names"][0].lstrip("/"),"image":x["Image"],"state":x["State"],"status":x["Status"]} for x in docker("GET","/containers/json?all=1")])
             if self.path=="/v1/uptime-kuma/monitors": return self.send(200,kuma_status())
             if self.path=="/v1/media/download-status": return self.send(200,media_download_status())
+            if self.path=="/v1/google/status": return self.send(200,google_status())
             if self.path=="/v1/files/attachments": return self.send(200,attachment_files())
             if self.path=="/v1/files/workspace": return self.send(200,workspace_files())
             if self.path.startswith("/v1/jellyfin/search?"):
@@ -426,10 +700,33 @@ class API(BaseHTTPRequestHandler):
             p=self.body()
             if self.path=="/v1/maps/search":
                 q=urllib.parse.quote(p["query"]); req=urllib.request.Request(f"https://nominatim.openstreetmap.org/search?q={q}&format=jsonv2&limit=5",headers={"User-Agent":"CommandCenter/1.0"}); return self.send(200,json.loads(urllib.request.urlopen(req,timeout=20).read()))
+            if self.path=="/v1/google/auth/start": return self.send(200,google_auth_start())
+            if self.path=="/v1/google/calendar/list": return self.send(200,google_calendars())
+            if self.path=="/v1/google/calendar/events": return self.send(200,google_calendar_events(p.get("days", 7), p.get("max_results", 25)))
+            if self.path=="/v1/google/gmail/search": return self.send(200,gmail_messages(p.get("query", ""), p.get("max_results", 10)))
+            if self.path=="/v1/google/gmail/message": return self.send(200,gmail_message(p["message_id"]))
+            if self.path=="/v1/proposals/calendar-create":
+                event = calendar_event_payload(p["summary"], p["start"], p["end"], p.get("location", ""))
+                return self.send(202,{"approval_id":audit("calendar_create",event),"status":"pending","proposal":event})
+            if self.path=="/v1/proposals/calendar-update":
+                proposal = calendar_update_proposal(p["event_id"], p["summary"], p["start"], p["end"], p.get("location", ""))
+                return self.send(202,{"approval_id":audit("calendar_update",proposal),"status":"pending","proposal":proposal})
+            if self.path=="/v1/proposals/calendar-delete":
+                proposal = calendar_delete_proposal(p["event_id"])
+                return self.send(202,{"approval_id":audit("calendar_delete",proposal),"status":"pending","proposal":proposal})
+            if self.path=="/v1/proposals/gmail-send":
+                # Validate now, before creating an approval card; execution
+                # re-validates immediately before it sends.
+                gmail_send_payload = {"to": p["to"], "subject": p["subject"], "body": p["body"]}
+                if not isinstance(gmail_send_payload["to"], str) or not re.fullmatch(r"[^\s@<>]+@[^\s@<>]+", gmail_send_payload["to"].strip()): raise ValueError("a single valid recipient email address is required")
+                if not isinstance(gmail_send_payload["subject"], str) or not gmail_send_payload["subject"].strip() or "\r" in gmail_send_payload["subject"] or "\n" in gmail_send_payload["subject"]: raise ValueError("an email subject is required")
+                if not isinstance(gmail_send_payload["body"], str) or not gmail_send_payload["body"].strip() or len(gmail_send_payload["body"].encode("utf-8")) > 100_000: raise ValueError("an email body is required and limited to 100 KiB")
+                return self.send(202,{"approval_id":audit("gmail_send",gmail_send_payload),"status":"pending","proposal":{"to":gmail_send_payload["to"],"subject":gmail_send_payload["subject"]}})
             if self.path=="/v1/searchgram/search": return self.send(200,searchgram_search(p["query"]))
             if self.path=="/v1/searchgram/next-page": return self.send(200,searchgram_navigate(p["search_id"], "next"))
             if self.path=="/v1/searchgram/previous-page": return self.send(200,searchgram_navigate(p["search_id"], "previous"))
             if self.path=="/v1/searchgram/queue": return self.send(202,queue_searchgram_result(p["search_id"], p["result_number"]))
+            if self.path=="/v1/searchgram/delivery-status": return self.send(200,searchgram_delivery_status(p["audit_id"], p.get("wait_seconds", 0)))
             if self.path=="/v1/jellyfin/series-episodes": return self.send(200,jellyfin_series_episodes(p["query"], p["season"]))
             if self.path=="/v1/files/import-attachment": return self.send(201,save_attachment_to_workspace(p["attachment_name"], p.get("destination")))
             if self.path=="/v1/files/read-text": return self.send(200,read_workspace_text(p["name"]))
@@ -442,18 +739,65 @@ class API(BaseHTTPRequestHandler):
                 watch={"id":os.urandom(8).hex(),"url":public_url(p["url"]),"target":float(p["target"]),"currency":p.get("currency","USD"),"every_minutes":max(60,int(p.get("every_minutes",360)))}
                 watch["baseline_price"]=price(watch["url"]); return self.send(202,{"approval_id":audit("price_watch_create",watch),"proposal":watch})
             if self.path.startswith("/v1/approvals/") and self.path.endswith("/approve"):
-                ident=self.path.split("/")[3]; row=db.execute("SELECT action,payload,status,created FROM approvals WHERE id=?",(ident,)).fetchone()
-                if not row or row[2]!="pending": raise ValueError("unknown or already used approval")
-                if int(time.time()) - row[3] > 900:
-                    db.execute("UPDATE approvals SET status='expired' WHERE id=?",(ident,)); db.commit()
-                    raise ValueError("approval expired")
-                result=execute(row[0],json.loads(row[1])); db.execute("UPDATE approvals SET status='executed' WHERE id=?",(ident,)); db.commit(); return self.send(200,result)
+                ident=self.path.split("/")[3]
+                with approval_lock:
+                    row=db.execute("SELECT action,payload,status,created FROM approvals WHERE id=?",(ident,)).fetchone()
+                    if not row or row[2]!="pending": raise ValueError("unknown or already used approval")
+                    if int(time.time()) - row[3] > 900:
+                        db.execute("UPDATE approvals SET status='expired' WHERE id=?",(ident,)); db.commit()
+                        raise ValueError("approval expired")
+                    claimed=db.execute("UPDATE approvals SET status='executing' WHERE id=? AND status='pending'",(ident,)).rowcount
+                    db.commit()
+                    if claimed != 1: raise ValueError("unknown or already used approval")
+                try:
+                    result=execute(row[0],json.loads(row[1]))
+                except Exception:
+                    with approval_lock:
+                        db.execute("UPDATE approvals SET status='failed' WHERE id=? AND status='executing'",(ident,)); db.commit()
+                    raise
+                with approval_lock:
+                    db.execute("UPDATE approvals SET status='executed' WHERE id=? AND status='executing'",(ident,)); db.commit()
+                return self.send(200,result)
             if self.path.startswith("/v1/approvals/") and self.path.endswith("/deny"):
-                ident=self.path.split("/")[3]; row=db.execute("SELECT status FROM approvals WHERE id=?",(ident,)).fetchone()
-                if not row or row[0]!="pending": raise ValueError("unknown or already used approval")
-                db.execute("UPDATE approvals SET status='denied' WHERE id=?",(ident,)); db.commit()
+                ident=self.path.split("/")[3]
+                with approval_lock:
+                    row=db.execute("SELECT status FROM approvals WHERE id=?",(ident,)).fetchone()
+                    if not row or row[0]!="pending": raise ValueError("unknown or already used approval")
+                    db.execute("UPDATE approvals SET status='denied' WHERE id=?",(ident,)); db.commit()
                 return self.send(200,{"approval_id":ident,"status":"denied"})
             return self.send(404,{"error":"not found"})
         except Exception as e: return self.send(400,{"error":str(e)})
+
+class GoogleOAuthCallback(BaseHTTPRequestHandler):
+    """Local-only OAuth callback, reached through the user's SSH tunnel."""
+    def log_message(self, *_): pass
+    def do_GET(self):
+        global google_pending_state, google_pending_code_verifier
+        params = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+        if params.get("error"):
+            message = "Google authorization was cancelled or denied. You can close this page."
+            self.send_response(400); self.end_headers(); self.wfile.write(message.encode()); return
+        code, state = params.get("code", [None])[0], params.get("state", [None])[0]
+        with google_auth_lock:
+            valid_state = google_pending_state
+            code_verifier = google_pending_code_verifier
+        if not code or not state or not secrets.compare_digest(state, valid_state or ""):
+            message = "Invalid or expired Google authorization request. Start authorization again."
+            self.send_response(400); self.end_headers(); self.wfile.write(message.encode()); return
+        try:
+            flow = google_flow()
+            flow.code_verifier = code_verifier
+            flow.fetch_token(authorization_response=GOOGLE_REDIRECT_URI + "?" + urllib.parse.urlencode({"code": code, "state": state}))
+            save_google_token(flow.credentials)
+            with google_auth_lock:
+                google_pending_state = None
+                google_pending_code_verifier = None
+        except Exception as exc:
+            print(f"[google-oauth] token exchange failed: {type(exc).__name__}: {exc}", flush=True)
+            message = "Google authorization could not be completed. Return to the assistant and try again."
+            self.send_response(400); self.end_headers(); self.wfile.write(message.encode()); return
+        message = "Google Calendar and Gmail are connected. You can close this page."
+        self.send_response(200); self.send_header("Content-Type", "text/plain; charset=utf-8"); self.end_headers(); self.wfile.write(message.encode())
 threading.Thread(target=watch_loop, daemon=True).start()
+threading.Thread(target=lambda: ThreadingHTTPServer(("0.0.0.0", 8765), GoogleOAuthCallback).serve_forever(), daemon=True).start()
 ThreadingHTTPServer(("0.0.0.0",8080),API).serve_forever()
