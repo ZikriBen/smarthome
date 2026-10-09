@@ -33,6 +33,8 @@ mcp_servers:
         - calendar_events
         - google_calendars
         - propose_calendar_event
+        - propose_calendar_event_update
+        - propose_calendar_event_delete
         - gmail_search
         - gmail_message
         - propose_gmail_send

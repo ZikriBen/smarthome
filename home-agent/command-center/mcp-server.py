@@ -57,13 +57,23 @@ def google_calendars() -> dict:
 
 @mcp.tool()
 def calendar_events(days: int = 7, max_results: int = 25) -> dict:
-    """List upcoming events from every non-hidden Google calendar visible to the connected account, including shared calendars. Each event identifies its calendar; this is read-only."""
+    """List upcoming events for up to 366 days from every visible Google calendar, including shared calendars. Each event identifies its calendar, stable event ID, and whether it is on the primary calendar; this is read-only."""
     return request("POST", "/google/calendar/events", {"days": days, "max_results": max_results})
 
 @mcp.tool()
 def propose_calendar_event(summary: str, start: str, end: str, location: str = "") -> dict:
-    """Propose creating one event only in the connected Google primary calendar. Call only after the user explicitly confirms the exact summary, timezone-bearing start/end, and optional location; the proposal still requires an Approve button tap."""
+    """Propose creating one event only in the connected Google primary calendar. Start/end must both be ISO dates (exclusive end date) for an all-day event or timezone-bearing ISO datetimes. Call only after explicit confirmation; requires an Approve button tap."""
     return request("POST", "/proposals/calendar-create", {"summary": summary, "start": start, "end": end, "location": location})
+
+@mcp.tool()
+def propose_calendar_event_update(event_id: str, summary: str, start: str, end: str, location: str = "") -> dict:
+    """Propose replacing the title, start, end, and location of one primary-calendar event. Start/end must both be ISO dates (exclusive end date) or timezone-bearing ISO datetimes. Use an exact ID from calendar_events after explicit confirmation; requires an Approve button tap."""
+    return request("POST", "/proposals/calendar-update", {"event_id": event_id, "summary": summary, "start": start, "end": end, "location": location})
+
+@mcp.tool()
+def propose_calendar_event_delete(event_id: str) -> dict:
+    """Propose permanently deleting one event from the primary calendar. Use only an exact event ID returned by calendar_events after the user explicitly confirms that exact event. Requires an Approve button tap."""
+    return request("POST", "/proposals/calendar-delete", {"event_id": event_id})
 
 @mcp.tool()
 def gmail_search(query: str = "", max_results: int = 10) -> dict:
