@@ -284,13 +284,37 @@ def queue_searchgram_result(session_id, result_number):
                 row = db.execute("SELECT payload FROM approvals WHERE id=?", (audit_id,)).fetchone()
                 detail = json.loads(row[0]) if row else {}
                 detail["delivery_error"] = str(exc)
+                detail["delivery_http_status"] = getattr(exc, "code", None)
                 db.execute("UPDATE approvals SET payload=?,status='failed' WHERE id=?",
                            (json.dumps(detail), audit_id)); db.commit()
             else:
                 db.execute("UPDATE approvals SET status='executed' WHERE id=?", (audit_id,)); db.commit()
     threading.Thread(target=deliver, daemon=True).start()
     return {"audit_id": audit_id, "queued_result": {"title": item.get("title"), "size": item.get("size")},
-            "status": "processing"}
+            "status": "processing", "follow_up_after_seconds": 60}
+
+def searchgram_delivery_status(audit_id, wait_seconds=0):
+    if not isinstance(audit_id, str) or not re.fullmatch(r"[0-9a-f]{18}", audit_id):
+        raise ValueError("a valid SearchGram delivery audit ID is required")
+    if isinstance(wait_seconds, bool):
+        raise ValueError("wait_seconds must be between 0 and 90")
+    wait_seconds = max(0, min(int(wait_seconds), 90))
+    deadline = time.monotonic() + wait_seconds
+    while True:
+        row = db.execute(
+            "SELECT payload,status,created FROM approvals WHERE id=? AND action='searchgram_download'",
+            (audit_id,)).fetchone()
+        if not row or row[1] != "processing" or time.monotonic() >= deadline:
+            break
+        time.sleep(2)
+    if not row:
+        raise ValueError("SearchGram delivery was not found")
+    detail = json.loads(row[0])
+    delivery = {"audit_id": audit_id, "title": detail.get("title"), "size": detail.get("size"),
+                "status": row[1], "created": row[2], "error": detail.get("delivery_error"),
+                "http_status": detail.get("delivery_http_status")}
+    return {"delivery": delivery, "downloader": internal_json("GET", DOWNLOADER_URL, "/status")}
+
 def media_download_status():
     deliveries = []
     for audit_id, payload, status, created in db.execute(
@@ -298,7 +322,8 @@ def media_download_status():
         detail = json.loads(payload)
         deliveries.append({"audit_id": audit_id, "title": detail.get("title"),
                            "size": detail.get("size"), "status": status, "created": created,
-                           "error": detail.get("delivery_error")})
+                           "error": detail.get("delivery_error"),
+                           "http_status": detail.get("delivery_http_status")})
     return {"downloader": internal_json("GET", DOWNLOADER_URL, "/status"),
             "recent_searchgram_deliveries": deliveries}
 def jellyfin_search(query):
@@ -701,6 +726,7 @@ class API(BaseHTTPRequestHandler):
             if self.path=="/v1/searchgram/next-page": return self.send(200,searchgram_navigate(p["search_id"], "next"))
             if self.path=="/v1/searchgram/previous-page": return self.send(200,searchgram_navigate(p["search_id"], "previous"))
             if self.path=="/v1/searchgram/queue": return self.send(202,queue_searchgram_result(p["search_id"], p["result_number"]))
+            if self.path=="/v1/searchgram/delivery-status": return self.send(200,searchgram_delivery_status(p["audit_id"], p.get("wait_seconds", 0)))
             if self.path=="/v1/jellyfin/series-episodes": return self.send(200,jellyfin_series_episodes(p["query"], p["season"]))
             if self.path=="/v1/files/import-attachment": return self.send(201,save_attachment_to_workspace(p["attachment_name"], p.get("destination")))
             if self.path=="/v1/files/read-text": return self.send(200,read_workspace_text(p["name"]))

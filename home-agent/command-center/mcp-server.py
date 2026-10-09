@@ -13,11 +13,11 @@ mcp = FastMCP(
     ),
 )
 
-def request(method, path, payload=None):
+def request(method, path, payload=None, timeout=30):
     data = json.dumps(payload).encode() if payload is not None else None
     req = urllib.request.Request(BASE + path, data=data, method=method,
         headers={"Authorization": "Bearer " + TOKEN, "Content-Type": "application/json"})
-    with urllib.request.urlopen(req, timeout=30) as response:
+    with urllib.request.urlopen(req, timeout=timeout) as response:
         return json.load(response)
 
 @mcp.tool()
@@ -142,8 +142,15 @@ def searchgram_previous_page(search_id: str) -> dict:
 
 @mcp.tool()
 def queue_searchgram_result(search_id: str, result_number: int) -> dict:
-    """Queue one numbered SearchGram result through the Telegram Downloader. Call only after the user explicitly confirms that exact title and size in the current conversation."""
+    """Queue one confirmed SearchGram result asynchronously. Immediately tell the user it was submitted, then create a one-shot cron check for this audit_id in 1 minute; never wait silently or automatically retry a failure."""
     return request("POST", "/searchgram/queue", {"search_id": search_id, "result_number": result_number})
+
+@mcp.tool()
+def searchgram_delivery_status(audit_id: str, wait_seconds: int = 0) -> dict:
+    """Check one exact SearchGram delivery and downloader state. A scheduled follow-up may wait up to 90 seconds for a terminal result. HTTP 504 means unconfirmed delivery; report it and never retry automatically."""
+    wait_seconds = max(0, min(int(wait_seconds), 90))
+    return request("POST", "/searchgram/delivery-status",
+                   {"audit_id": audit_id, "wait_seconds": wait_seconds}, timeout=wait_seconds + 30)
 
 @mcp.tool()
 def map_search(query: str) -> list[dict]:

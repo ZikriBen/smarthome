@@ -13,7 +13,10 @@ web:
 # No terminal, file or docker access.
 platform_toolsets:
   cli: [search, browser, todo]
-  telegram: [search, browser, todo]
+  telegram: [search, browser, todo, cronjob]
+  # Scheduled follow-ups may reason over Command Center results, but receive no
+  # terminal, filesystem, browser, or general web capability.
+  cron: [todo]
 
 mcp_servers:
   command_center:
@@ -49,6 +52,7 @@ mcp_servers:
         - searchgram_next_page
         - searchgram_previous_page
         - queue_searchgram_result
+        - searchgram_delivery_status
         - map_search
         - price_watch_status
         - price_quote
