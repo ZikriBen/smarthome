@@ -429,19 +429,36 @@ def google_auth_start():
         google_pending_code_verifier = flow.code_verifier
     return {"authorization_url": authorization_url, "redirect_uri": GOOGLE_REDIRECT_URI}
 
-def google_calendar_events(days=7, max_results=25):
+def google_calendars():
     from googleapiclient.discovery import build
+    service = build("calendar", "v3", credentials=google_credentials(), cache_discovery=False)
+    response = service.calendarList().list(maxResults=250, showHidden=False).execute()
+    calendars = [{"id": item.get("id"), "name": item.get("summaryOverride") or item.get("summary"),
+                  "primary": bool(item.get("primary")), "access_role": item.get("accessRole")}
+                 for item in response.get("items", []) if not item.get("hidden")]
+    return {"calendars": calendars}
+
+def google_calendar_events(days=7, max_results=25):
     days = max(1, min(int(days), 31))
     max_results = max(1, min(int(max_results), 100))
     now = datetime.now(timezone.utc)
     service = build("calendar", "v3", credentials=google_credentials(), cache_discovery=False)
-    response = service.events().list(calendarId="primary", timeMin=now.isoformat(),
-        timeMax=(now + timedelta(days=days)).isoformat(), singleEvents=True,
-        orderBy="startTime", maxResults=max_results).execute()
-    return {"days": days, "events": [{"title": event.get("summary", "(untitled)"),
-        "start": event.get("start", {}).get("dateTime", event.get("start", {}).get("date")),
-        "end": event.get("end", {}).get("dateTime", event.get("end", {}).get("date")),
-        "location": event.get("location")} for event in response.get("items", [])]}
+    calendars = google_calendars()["calendars"]
+    events = []
+    for calendar in calendars:
+        if not calendar["id"]:
+            continue
+        response = service.events().list(calendarId=calendar["id"], timeMin=now.isoformat(),
+            timeMax=(now + timedelta(days=days)).isoformat(), singleEvents=True,
+            orderBy="startTime", maxResults=max_results).execute()
+        for event in response.get("items", []):
+            events.append({"title": event.get("summary", "(untitled)"),
+                "start": event.get("start", {}).get("dateTime", event.get("start", {}).get("date")),
+                "end": event.get("end", {}).get("dateTime", event.get("end", {}).get("date")),
+                "location": event.get("location"), "calendar": calendar["name"]})
+    events.sort(key=lambda event: event.get("start") or "")
+    return {"days": days, "calendars_checked": [calendar["name"] for calendar in calendars],
+            "events": events[:max_results]}
 
 def gmail_text(payload):
     """Extract a bounded plain-text representation from Gmail's MIME payload."""
@@ -558,6 +575,7 @@ class API(BaseHTTPRequestHandler):
             if self.path=="/v1/maps/search":
                 q=urllib.parse.quote(p["query"]); req=urllib.request.Request(f"https://nominatim.openstreetmap.org/search?q={q}&format=jsonv2&limit=5",headers={"User-Agent":"CommandCenter/1.0"}); return self.send(200,json.loads(urllib.request.urlopen(req,timeout=20).read()))
             if self.path=="/v1/google/auth/start": return self.send(200,google_auth_start())
+            if self.path=="/v1/google/calendar/list": return self.send(200,google_calendars())
             if self.path=="/v1/google/calendar/events": return self.send(200,google_calendar_events(p.get("days", 7), p.get("max_results", 25)))
             if self.path=="/v1/google/gmail/search": return self.send(200,gmail_messages(p.get("query", ""), p.get("max_results", 10)))
             if self.path=="/v1/google/gmail/message": return self.send(200,gmail_message(p["message_id"]))

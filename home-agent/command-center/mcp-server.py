@@ -51,8 +51,13 @@ def jellyfin_series_episodes(query: str, season: int) -> dict:
     return request("POST", "/jellyfin/series-episodes", {"query": query, "season": season})
 
 @mcp.tool()
+def google_calendars() -> dict:
+    """List all non-hidden Google calendars visible to the connected account, including shared calendars. This is read-only."""
+    return request("POST", "/google/calendar/list", {})
+
+@mcp.tool()
 def calendar_events(days: int = 7, max_results: int = 25) -> dict:
-    """List upcoming events from the connected Google primary calendar. This is read-only."""
+    """List upcoming events from every non-hidden Google calendar visible to the connected account, including shared calendars. Each event identifies its calendar; this is read-only."""
     return request("POST", "/google/calendar/events", {"days": days, "max_results": max_results})
 
 @mcp.tool()

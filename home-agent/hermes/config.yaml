@@ -31,6 +31,7 @@ mcp_servers:
         - jellyfin_search
         - jellyfin_series_episodes
         - calendar_events
+        - google_calendars
         - gmail_search
         - gmail_message
         - propose_gmail_send
