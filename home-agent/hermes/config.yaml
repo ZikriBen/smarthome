@@ -13,7 +13,10 @@ web:
 # No terminal, file or docker access.
 platform_toolsets:
   cli: [search, browser, todo]
-  telegram: [search, browser, todo]
+  telegram: [search, browser, todo, cronjob]
+  # Scheduled follow-ups may reason over Command Center results, but receive no
+  # terminal, filesystem, browser, or general web capability.
+  cron: [todo]
 
 mcp_servers:
   command_center:
@@ -30,6 +33,14 @@ mcp_servers:
         - media_download_status
         - jellyfin_search
         - jellyfin_series_episodes
+        - calendar_events
+        - google_calendars
+        - propose_calendar_event
+        - propose_calendar_event_update
+        - propose_calendar_event_delete
+        - gmail_search
+        - gmail_message
+        - propose_gmail_send
         - attachment_files
         - workspace_files
         - save_attachment_to_workspace
@@ -41,6 +52,7 @@ mcp_servers:
         - searchgram_next_page
         - searchgram_previous_page
         - queue_searchgram_result
+        - searchgram_delivery_status
         - map_search
         - price_watch_status
         - price_quote
