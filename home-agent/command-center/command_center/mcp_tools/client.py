@@ -2,6 +2,7 @@
 
 import json
 import os
+import urllib.error
 import urllib.request
 
 
@@ -16,5 +17,14 @@ class CommandCenterClient:
             self.base + path, data=data, method=method,
             headers={"Authorization": "Bearer " + self.token,
                      "Content-Type": "application/json"})
-        with urllib.request.urlopen(request, timeout=timeout) as response:
-            return json.load(response)
+        try:
+            with urllib.request.urlopen(request, timeout=timeout) as response:
+                return json.load(response)
+        except urllib.error.HTTPError as exc:
+            try:
+                body = json.loads(exc.read().decode("utf-8", "replace"))
+                detail = body.get("error", body)
+            except (UnicodeDecodeError, json.JSONDecodeError):
+                detail = exc.reason
+            raise RuntimeError(
+                f"Command Center returned HTTP {exc.code}: {detail}") from exc
