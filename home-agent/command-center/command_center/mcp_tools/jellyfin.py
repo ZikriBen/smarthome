@@ -9,5 +9,5 @@ def register(mcp, client):
 
     @mcp.tool()
     def jellyfin_series_episodes(query: str, season: int) -> dict:
-        """List the numbered episodes available for one Jellyfin series season. Searches normally first, then falls back to the complete series list if no result is found; this is read-only."""
+        """List a Jellyfin season's numbered episodes. If found is false, retry with the title translated to English; a missing localized title is a normal result, not an error. This is read-only."""
         return client.request("POST", "/jellyfin/series-episodes", {"query": query, "season": season})
