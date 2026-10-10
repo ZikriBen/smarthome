@@ -59,7 +59,8 @@ def series_episodes(query, season):
                       or needle in normalized_title(item.get("SortName", ""))]
         fallback_used = True
     if not candidates:
-        raise ValueError("series not found in Jellyfin")
+        return {"found": False, "query": query, "season": season, "total": 0,
+                "fallback_used": fallback_used, "episodes": []}
     needle = normalized_title(query)
     series = next((item for item in candidates
                    if normalized_title(item.get("Name", "")) == needle), candidates[0])
@@ -68,7 +69,8 @@ def series_episodes(query, season):
     items = episodes.get("Items", [])
     if not isinstance(items, list):
         raise ValueError("Jellyfin returned an invalid episode response")
-    return {"series": series.get("Name"), "year": series.get("ProductionYear"), "season": season,
+    return {"found": True, "series": series.get("Name"), "year": series.get("ProductionYear"),
+            "season": season,
             "total": int(episodes.get("TotalRecordCount", len(items))),
             "fallback_used": fallback_used,
             "episodes": [{"number": item.get("IndexNumber"), "title": item.get("Name"),

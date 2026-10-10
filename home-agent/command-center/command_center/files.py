@@ -5,6 +5,34 @@ from pathlib import PurePosixPath
 
 from .config import ATTACHMENTS_PATH, MAX_FILE_BYTES, MAX_TEXT_BYTES, WORKSPACE_PATH
 
+HERMES_DOCUMENTS_PATH = PurePosixPath("/opt/data/cache/documents")
+
+
+def normalize_attachment_name(value):
+    """Map Hermes's absolute upload path to the read-only attachment mount."""
+    if not isinstance(value, str):
+        raise ValueError("attachment path is required")
+    parsed = PurePosixPath(value)
+    if not parsed.is_absolute():
+        return value
+    for prefix in (HERMES_DOCUMENTS_PATH, PurePosixPath("/attachments")):
+        try:
+            return str(parsed.relative_to(prefix))
+        except ValueError:
+            continue
+    raise ValueError("absolute paths are allowed only for Telegram attachments")
+
+
+def pdf_reference(source, name):
+    source = str(source or "attachment").lower()
+    if source in {"file", "path", "local"}:
+        source = "attachment"
+    if source == "attachment":
+        name = normalize_attachment_name(name)
+    elif source == "workspace" and isinstance(name, str) and name.startswith("/workspace/"):
+        name = str(PurePosixPath(name).relative_to("/workspace"))
+    return source, name
+
 
 def scoped_path(root, relative, *, require_exists=True):
     if not isinstance(relative, str) or not relative or len(relative) > 512:
@@ -50,6 +78,7 @@ def workspace_files():
 
 
 def save_attachment_to_workspace(attachment_name, destination=None):
+    attachment_name = normalize_attachment_name(attachment_name)
     source = scoped_path(ATTACHMENTS_PATH, attachment_name)
     if not source.is_file() or source.stat().st_size > MAX_FILE_BYTES:
         raise ValueError("attachment is not an allowed file")
@@ -89,6 +118,7 @@ def delete_workspace_file(name):
 
 
 def read_pdf(source, name, max_pages=20):
+    source, name = pdf_reference(source, name)
     roots = {"attachment": ATTACHMENTS_PATH, "workspace": WORKSPACE_PATH}
     if source not in roots:
         raise ValueError("PDF source must be attachment or workspace")
@@ -114,6 +144,7 @@ def register_routes(router):
                 lambda p, _q: save_attachment_to_workspace(p["attachment_name"], p.get("destination")), 201)
     router.post("/v1/files/read-text", lambda p, _q: read_workspace_text(p["name"]))
     router.post("/v1/files/read-pdf",
-                lambda p, _q: read_pdf(p["source"], p["name"], p.get("max_pages", 20)))
+                lambda p, _q: read_pdf(p.get("source", "attachment"), p["name"],
+                                       p.get("max_pages", 20)))
     router.post("/v1/files/write-text", lambda p, _q: write_workspace_text(p["name"], p["content"]), 201)
     router.post("/v1/files/delete", lambda p, _q: delete_workspace_file(p["name"]))
