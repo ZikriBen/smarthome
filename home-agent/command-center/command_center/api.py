@@ -4,7 +4,7 @@ import json
 import re
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from . import (approvals, docker, files, google_workspace, host, jellyfin, maps,
+from . import (approvals, docker, files, google_workspace, health, host, jellyfin, maps,
                price_watches, searchgram, uptime_kuma)
 from .config import CALLBACK_TOKEN, TOKEN
 from .router import Router
@@ -49,6 +49,18 @@ class API(BaseHTTPRequestHandler):
                 and self.headers.get("X-Command-Center-Callback") == CALLBACK_TOKEN)
 
     def do_GET(self):
+        # These endpoints are intentionally unauthenticated and reveal no
+        # operational details. They are reachable only on the private Compose
+        # network and let Uptime Kuma monitor the control plane itself.
+        if self.path == "/health":
+            _, result = health.status()
+            return self.send_json(200, result)
+        if self.path == "/health/hermes":
+            try:
+                available, result = health.hermes_status()
+                return self.send_json(200 if available else 503, result)
+            except Exception:
+                return self.send_json(503, {"status": "unavailable"})
         if not self.authorized():
             return self.send_json(401, {"error": "unauthorized"})
         try:
