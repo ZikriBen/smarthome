@@ -1,6 +1,7 @@
 services:
   homarr:
-    image: homarr-pr-test:latest
+    image: ghcr.io/homarr-labs/homarr:latest
+    pull_policy: always
     restart: unless-stopped
     ports:
       - "7575:7575"
