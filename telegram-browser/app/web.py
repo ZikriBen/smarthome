@@ -63,6 +63,15 @@ SEARCH_DELIVERY_BOT = os.getenv(
     "searchgram_bbot",
 )
 
+SEARCH_DELIVERY_BOTS = [
+    bot.strip()
+    for bot in os.getenv(
+        "SEARCH_DELIVERY_BOTS",
+        f"{SEARCH_DELIVERY_BOT},searchgram_robot",
+    ).split(",")
+    if bot.strip()
+]
+
 SESSION = os.getenv(
     "TELEGRAM_SESSION",
     "/data/telegram-browser",
@@ -453,8 +462,8 @@ async def lifespan(
         search_chat_id=(
             SEARCH_CHAT_ID
         ),
-        delivery_bot=(
-            SEARCH_DELIVERY_BOT
+        delivery_bots=(
+            SEARCH_DELIVERY_BOTS
         ),
     )
 
@@ -1196,15 +1205,9 @@ async def downloads_api(
         SOURCE_CHAT_ID
     ]
 
-    if (
-        searchgram is not None
-        and searchgram
-        .delivery_chat_id
-        is not None
-    ):
-        chat_ids.append(
-            searchgram
-            .delivery_chat_id
+    if searchgram is not None:
+        chat_ids.extend(
+            searchgram.delivery_chat_ids
         )
 
     status_code, result = (
