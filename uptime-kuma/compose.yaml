@@ -9,6 +9,10 @@ services:
     volumes:
       - kuma-data:/app/data
 
+    networks:
+      - default
+      - home-agent
+
   tailscale-kuma:
     image: tailscale/tailscale:latest
     container_name: tailscale-kuma
@@ -30,3 +34,8 @@ services:
 
 volumes:
   kuma-data:
+
+networks:
+  home-agent:
+    external: true
+    name: home-agent_default
