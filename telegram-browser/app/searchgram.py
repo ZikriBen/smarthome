@@ -70,28 +70,45 @@ class SearchGram:
         self,
         client: TelegramClient,
         search_chat_id: int,
-        delivery_bot: str,
+        delivery_bots: list[str],
     ):
         self.client = client
         self.search_chat_id = (
             search_chat_id
         )
-        self.delivery_bot = (
-            delivery_bot
+        self.delivery_bots = tuple(
+            dict.fromkeys(
+                bot.lstrip("@").lower()
+                for bot in delivery_bots
+                if bot.strip()
+            )
         )
+
+        if not self.delivery_bots:
+            raise ValueError(
+                "At least one SearchGram "
+                "delivery bot is required"
+            )
 
         self.search_chat = None
         self.search_peer = None
 
-        self.delivery_entity = None
-        self.delivery_chat_id: int | None = (
-            None
-        )
+        self.delivery_entities = {}
 
         # SearchGram is one shared Telegram
         # conversation. Serialize interactions
         # so responses cannot cross.
         self.lock = asyncio.Lock()
+
+    @property
+    def delivery_chat_ids(
+        self,
+    ) -> tuple[int, ...]:
+        return tuple(
+            entity.id
+            for entity
+            in self.delivery_entities.values()
+        )
 
     async def initialize(
         self,
@@ -109,20 +126,22 @@ class SearchGram:
             )
         )
 
-        self.delivery_entity = (
-            await self.client.get_entity(
-                self.delivery_bot
+        for bot in self.delivery_bots:
+            self.delivery_entities[bot] = (
+                await self.client.get_entity(
+                    bot
+                )
             )
-        )
-
-        self.delivery_chat_id = (
-            self.delivery_entity.id
-        )
 
         print(
             "SearchGram initialized: "
             f"search={self.search_chat_id}, "
-            f"delivery={self.delivery_chat_id}",
+            "delivery="
+            + ",".join(
+                f"{bot}:{entity.id}"
+                for bot, entity
+                in self.delivery_entities.items()
+            ),
             flush=True,
         )
 
@@ -589,10 +608,10 @@ class SearchGram:
             ),
         )
 
-    def _start_token_from_callback(
+    def _delivery_request_from_callback(
         self,
         callback_result,
-    ) -> str:
+    ) -> tuple[str, str]:
         url = getattr(
             callback_result,
             "url",
@@ -623,11 +642,49 @@ class SearchGram:
                 "contains no start token"
             )
 
-        return values[0]
+        if parsed.scheme in {
+            "http",
+            "https",
+        } and parsed.hostname in {
+            "t.me",
+            "telegram.me",
+            "www.t.me",
+            "www.telegram.me",
+        }:
+            bot = parsed.path.strip(
+                "/"
+            ).split("/", 1)[0]
+
+        elif (
+            parsed.scheme == "tg"
+            and parsed.netloc == "resolve"
+        ):
+            domains = params.get(
+                "domain"
+            )
+            bot = (
+                domains[0]
+                if domains
+                else ""
+            )
+
+        else:
+            bot = ""
+
+        bot = bot.lstrip("@").lower()
+
+        if bot not in self.delivery_entities:
+            raise RuntimeError(
+                "SearchGram callback selected "
+                "an unapproved delivery bot"
+            )
+
+        return values[0], bot
 
     async def _wait_for_delivery(
         self,
         *,
+        delivery_entity,
         after_message_id: int,
         timeout: float = 30.0,
     ):
@@ -647,7 +704,7 @@ class SearchGram:
             messages = (
                 await self.client
                 .get_messages(
-                    self.delivery_entity,
+                    delivery_entity,
                     limit=20,
                 )
             )
@@ -708,20 +765,6 @@ class SearchGram:
                     "no longer exists"
                 )
 
-            latest = (
-                await self.client
-                .get_messages(
-                    self.delivery_entity,
-                    limit=1,
-                )
-            )
-
-            before_id = (
-                latest[0].id
-                if latest
-                else 0
-            )
-
             #
             # Important:
             # send callback directly rather than
@@ -736,24 +779,45 @@ class SearchGram:
                 )
             )
 
-            token = (
+            token, delivery_bot = (
                 self
-                ._start_token_from_callback(
+                ._delivery_request_from_callback(
                     callback_result
                 )
+            )
+
+            delivery_entity = (
+                self.delivery_entities[
+                    delivery_bot
+                ]
+            )
+
+            latest = (
+                await self.client
+                .get_messages(
+                    delivery_entity,
+                    limit=1,
+                )
+            )
+
+            before_id = (
+                latest[0].id
+                if latest
+                else 0
             )
 
             print(
                 "SearchGram selected "
                 f"{callback_data}; "
-                f"delivery token={token}",
+                f"delivery bot={delivery_bot}; "
+                f"token={token}",
                 flush=True,
             )
 
             sent = (
                 await self.client
                 .send_message(
-                    self.delivery_entity,
+                    delivery_entity,
                     f"/start {token}",
                 )
             )
@@ -767,6 +831,9 @@ class SearchGram:
             media_message = (
                 await self
                 ._wait_for_delivery(
+                    delivery_entity=(
+                        delivery_entity
+                    ),
                     after_message_id=(
                         before_id
                     )
@@ -783,7 +850,7 @@ class SearchGram:
 
             return DeliveredMedia(
                 chat_id=(
-                    self.delivery_chat_id
+                    delivery_entity.id
                 ),
                 message_id=(
                     media_message.id
