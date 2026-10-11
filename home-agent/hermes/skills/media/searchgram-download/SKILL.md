@@ -49,15 +49,32 @@ on the public web.
    "download result 3" after the current page was shown is confirmation.
 5. Call `queue_searchgram_result` with that page's `search_id` and result
    number. Report that it was queued for the Telegram Downloader, not that it
-   is already available in the library.
+   is already available in the library. For several explicitly confirmed
+   selections, queue each one; Command Center serializes delivery. Acknowledge
+   the submission once in a short, conversational sentence. Do not repeat the
+   result list, sizes, raw filenames, audit IDs, or scheduling mechanics.
 6. Use `media_download_status` when asked for queue progress, failures, or
    available media disk space.
+7. Schedule delivery follow-up with Hermes cron using `in 1m` (second-based
+   durations such as `in 30s` are invalid). For several submissions from one
+   request, create one follow-up job containing all audit IDs and have it send
+   one consolidated status message after checking every ID with
+   `searchgram_delivery_status` and `wait_seconds: 90`. The cron prompt should
+   ask for one or two natural sentences in the user's language, with no audit
+   IDs, raw filenames, file sizes, HTTP codes, queue counters, tool names, or
+   technical status heading. Say simply which downloads started and which did
+   not; for partial results, use friendly episode/movie names. Never create one
+   cron job per item. Do not include media titles in the cron prompt; resolve
+   them from the audit IDs.
 
 ## Delivery Limits
 
 - A `failed` SearchGram delivery means the item did not reach Telegram
   Downloader. Do not retry it automatically; report the failure and suggest
-  waiting before trying again.
+  waiting before trying again. An HTTP 504 specifically means SearchGram did
+  not provide the file in time. Tell the user plainly that the download could
+  not be started; keep the HTTP code and internal service names out of the
+  user-facing response.
 
 If the request is whether something is already available, use
 `jellyfin_search` first. If the user asks to download something, check

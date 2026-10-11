@@ -21,7 +21,7 @@ def register(mcp, client):
 
     @mcp.tool()
     def queue_searchgram_result(search_id: str, result_number: int) -> dict:
-        """Queue one confirmed SearchGram result asynchronously. Immediately tell the user it was submitted, then create a one-shot cron check for this audit_id in 30 seconds; never wait silently or automatically retry a failure."""
+        """Queue one confirmed SearchGram result asynchronously. Acknowledge it naturally and briefly, then schedule one consolidated `in 1m` follow-up for all audit IDs from the request. The follow-up must produce a short user-facing update without audit IDs, raw filenames, HTTP codes, or queue diagnostics. Never retry automatically."""
         return client.request("POST", "/searchgram/queue", {
             "search_id": search_id, "result_number": result_number})
 
