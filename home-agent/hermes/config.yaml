@@ -96,3 +96,5 @@ onboarding:
 _config_version: 46
 approvals:
   destructive_slash_confirm: false
+cron:
+  wrap_response: false
