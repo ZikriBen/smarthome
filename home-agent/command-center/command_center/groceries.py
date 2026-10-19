@@ -114,7 +114,7 @@ def learn(p, _q):
     item, site = str(p["item"]), p.get("site") or None
     change = _resolve_pin(item, p["change"], site)
     out = _text(_api().learn_preference, item, change, p.get("reason", ""), site, defaults_path=str(DEFAULTS))
-    if out["text"].startswith("נלמד"):
+    if out["text"].startswith(("נלמד", "נשמר כהערה")):
         grocery_db.log_learned(connection, item, change, p.get("reason", ""))
     return out
 

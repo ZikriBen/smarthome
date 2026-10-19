@@ -13,7 +13,7 @@ from .model import CAT_KEYS, UNITS, Item
 INTENT_KEYS = {
     "qty", "qty_unit", "terms", "fallback_terms", "extra_terms", "keywords", "exclude_words", "require_any", "prefer_words",
     "brands", "product_id", "pinned", "filters", "unit", "size_min", "size_max", "produce",
-    "unit_weight_kg", "note", "pack_preference",
+    "unit_weight_kg", "note", "pack_preference", "kashrut",
 } | set(CAT_KEYS)
 ITEM_KEYS = INTENT_KEYS | {"name"}
 ALIAS_KEYS = INTENT_KEYS | {"aliases", "_learned"}
@@ -84,6 +84,13 @@ def parse_intent(raw: dict, where: str, allowed=INTENT_KEYS) -> Dict:
         out["produce"] = bool(raw["produce"])
     if "note" in raw:
         out["note"] = raw["note"]
+    if "kashrut" in raw:
+        from .kashrut import norm_level
+        try:
+            lv = norm_level(raw["kashrut"])
+        except ValueError as e:
+            raise ListError(f"{where}.kashrut: {e}")
+        out["kashrut"] = lv or ""
     if raw.get("product_id") not in (None, ""):
         out["product_id"] = str(raw["product_id"]).strip()
     if "pinned" in raw and raw["pinned"]:

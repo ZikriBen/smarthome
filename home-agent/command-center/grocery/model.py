@@ -37,6 +37,7 @@ class Item:
     produce: bool = False
     unit_weight_kg: Optional[float] = None
     note: Optional[str] = None
+    kashrut: Optional[str] = None        # "mehadrin" | "badatz" | "" (explicitly none) | None (unset)
     source: str = "list"                 # list | defaults | text | unknown
     raw_text: Optional[str] = None
 
@@ -76,6 +77,8 @@ class Product:
     sell_method: str = "unit"        # unit | weight
     link_code: Optional[str] = None  # code used in cart links: Rami barcode (produce: 101/104), Shufersal "P_…"
     attrs: Set[str] = field(default_factory=set)  # פרווה/חלבי/… from name (see attrs.py)
+    kashrut: Optional[List[str]] = None            # hechsher names; None = no data (see kashrut.py)
+    kashrut_levels: Set[str] = field(default_factory=set)  # {"mehadrin","badatz"} satisfied
     raw: dict = field(default_factory=dict, repr=False)
 
     @property

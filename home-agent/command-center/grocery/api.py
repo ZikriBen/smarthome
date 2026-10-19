@@ -53,7 +53,7 @@ def add_item(text: str, defaults_path: str = DEFAULTS) -> str:
     d = load_defaults(defaults_path)
     st = _load()
     added = []
-    for pl in freetext.parse_text(text):
+    for pl in freetext.parse_text(text, split=d.split_known):
         it = d.resolve_parsed(pl)
         e = {"text": pl.text, "item": it.name, "qty": pl.qty, "qty_unit": pl.qty_unit, "known": it.source == "defaults"}
         ex = next((x for x in st["items"] if x["item"] == it.name), None)

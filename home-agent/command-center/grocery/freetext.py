@@ -76,5 +76,17 @@ def parse_line(raw: str) -> ParsedLine:
     return ParsedLine(raw, _strip(s), None, None)
 
 
-def parse_text(text: str) -> List[ParsedLine]:
-    return [parse_line(p) for p in split_items(text)]
+def parse_text(text: str, split=None) -> List[ParsedLine]:
+    """split: optional callable(str) -> [str] (Defaults.split_known) for 'X וY' when both are known items."""
+    out = []
+    for p in split_items(text):
+        pl = parse_line(p)
+        parts = split(pl.text) if split else [pl.text]
+        if len(parts) > 1:
+            out += [ParsedLine(q, q, None, None) for q in parts]
+            if pl.qty is not None:   # "2 X וY" → qty on the first part only would be a guess; keep on both
+                for x in out[-len(parts):]:
+                    x.qty, x.qty_unit = pl.qty, pl.qty_unit
+        else:
+            out.append(pl)
+    return out

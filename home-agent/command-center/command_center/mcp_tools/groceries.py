@@ -27,14 +27,14 @@ def register(mcp, client):
     @mcp.tool()
     def grocery_learn_preference(item: str, change: dict | str, reason: str = "",
                                  site: Literal["", "rami_levy", "shufersal"] = "") -> str:
-        """Remember a preference. change: exclude words, prefer brands, require_any, pack_preference (טרי/קפוא/אריזה/במשקל), pin {id,name?,price?}, delivery {site:{fee,min_order,free_above}} (item ignored), or a short phrase ("דמי משלוח רמי 29.90" / "פרווה" / "ללא סוכר"). Attributes → require/exclude."""
+        """Save a preference. item = product, or "כללי" for ALL items. change = Ben's short Hebrew phrase ("פרווה", "רק X", "בלי X", "מותג X", "מהדרין", "דמי משלוח רמי 29.90") or a dict with keys: require, exclude, brand, prefer, pack_preference, qty, size_min, size_max, pin, kashrut (mehadrin|badatz|none), note, delivery (require_any/exclude_words/brands also accepted). Global: item="כללי", change={"kashrut":"mehadrin"}. Unparsed text is saved as a note (not enforced); reply with the result text."""
         return client.request("POST", "/grocery/learn", {
             "item": item, "change": change, "reason": reason, "site": site or None})["text"]
 
     @mcp.tool()
     def grocery_preferences(action: Literal["list", "full", "update", "delete"] = "list",
                             index: int = 0, change: dict | str = "", undo: bool = False) -> str:
-        """Manage preferences. list = learned (numbered); full = +builtins. delete index=N (undo=true restores); update index=N change="פרווה". ADD via grocery_learn_preference. "מה ההעדפות" / "תמחק העדפה N"."""
+        """List/edit/delete preferences. "מה ההעדפות" → list; "העדפות מלאות"/"תאחד הכל" → full (+built-ins). "תמחק העדפה N" → delete index=N (undo=true restores); "תשנה העדפה N ל…" → update index=N change=... Add new ones with grocery_learn_preference."""
         payload = {"action": action, "undo": undo, "full": action == "full"}
         if index:
             payload["index"] = index

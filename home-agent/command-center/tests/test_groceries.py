@@ -183,6 +183,31 @@ class GroceryRouteTests(unittest.TestCase):
 
 
 
+    def test_hermes_log_strings_19oct_never_400(self):
+        # exact calls from the Hermes log (13:55 / 19:22 UTC)
+        r = g.learn({"item": "ממרח חלווה", "change": "בנפרד", "reason": "ממרח חלווה בנפרד"}, {})
+        self.assertIn("פיצול", r["text"])
+        r = g.learn({"item": "כללי", "change": "תמיד מהדרין/בדצ",
+                     "reason": "בכללי תוסיף לההעדפות, תמיד מהדרין/בדצ"}, {})
+        self.assertTrue(r["text"].startswith("נלמד (כללי"), r)
+        r = g.learn({"item": "כללי", "change": {"require_any": ["מהדרין", 'בד"צ', "בדצ"]}}, {})
+        self.assertTrue(r["text"].startswith("נלמד (כללי"), r)
+        r = g.learn({"item": "כללי", "change": "מהדרין"}, {})
+        self.assertTrue(r["text"].startswith("נלמד (כללי"), r)
+        r = g.learn({"item": "ביצים", "change": "שיהיו מתרנגולות חופש אם אפשר"}, {})
+        self.assertTrue(r["text"].startswith("נשמר כהערה"), r)
+        listed = g.preferences({"action": "list"}, {})["text"]
+        self.assertIn("כללי (כל המוצרים): כשרות מהדרין", listed)
+        self.assertIn("לא מיושם אוטומטית", listed)
+        n = conn().execute("SELECT count(*) FROM grocery_learned").fetchone()[0]
+        self.assertGreaterEqual(n, 4)          # 3 global + 1 note logged (the split reply is not a change)
+
+    def test_add_splits_known_pair(self):
+        out = g.add_item({"text": "ממרח שוקולד וממרח חלווה"}, {})["text"]
+        self.assertIn("ממרח שוקולד", out)
+        self.assertIn("ממרח חלבה", out)
+        self.assertIn("(ברשימה: 2)", out)
+
     def test_preferences_list_and_parve_learn(self):
         self.assertIn("אין עדיין", g.preferences({"action": "list"}, {})["text"])
         self.assertIn("נלמד", g.learn({"item": "ממרח שוקולד", "change": "פרווה",

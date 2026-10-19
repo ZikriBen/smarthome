@@ -424,6 +424,12 @@ class Picker:
             best = ranked[0]
 
         pinned_id = item.pinned_for(self.site)
+        kosher_flag = None
+        if item.kashrut and not item.produce and not pinned_id and ranked:
+            from . import kashrut as K
+            ranked, kosher_flag, filtered = K.apply(ranked, item.kashrut)
+            if filtered:
+                best = ranked[0]
         pref_flags: List[str] = []
         if pinned_id:
             pinned = next((c for c in cands if c.p.id == pinned_id), None)
@@ -457,6 +463,10 @@ class Picker:
             miss = " / ".join(item.require_any or item.exclude_words[:1] or ["העדפה"])
             flags.append(f"לא נמצא {miss}")
             conf = "low" if conf != "none" else conf
+        if kosher_flag and best is not None:
+            flags.append(kosher_flag)
+            if kosher_flag.startswith("לא נמצא"):
+                conf = "low" if conf != "none" else conf
         if relaxed and best is not None:
             flags.append("סינון הקטגוריה הסיר הכל — נבחר בלי סינון")
             conf = "low" if conf != "none" else conf

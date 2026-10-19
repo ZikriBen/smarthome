@@ -25,6 +25,7 @@ from ..cartlogic import CartError, diff, merge, to_qty
 from ..http import CHROME_UA, Client, HttpError, Response, RobotsPolicy
 from ..model import Product
 from ..attrs import extract_attrs
+from .. import kashrut as K
 from .base import SiteAdapter
 from .rami_levy import check_session_file
 
@@ -211,6 +212,8 @@ class ShufersalAdapter(SiteAdapter):
                        step=float(raw.get("minOrderWeight")) if by_weight and raw.get("minOrderWeight") else None,
                        sell_method="weight" if by_weight else "unit", link_code=str(raw["code"]),
                        attrs=extract_attrs(name, str(brand or "")),
+                       kashrut=K.name_hechsherim(name, str(raw.get("description") or "")),
+                       kashrut_levels=K.name_level(f"{name} {raw.get('description') or ''}"),
                        raw=raw)
 
     # ---------------- phase 2 ----------------

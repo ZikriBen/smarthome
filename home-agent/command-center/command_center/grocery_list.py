@@ -30,9 +30,11 @@ def _defaults():
     return load_defaults(_cfg["defaults"])
 
 
-def _parse(text):
+def _parse(text, d=None):
+    """d (Defaults) → also split 'X וY' when both are known items (only for Ben's own add requests;
+    phone task titles are never split, so a task maps to exactly one entry)."""
     from grocery.freetext import parse_text
-    return parse_text(text)
+    return parse_text(text, split=d.split_known if d is not None else None)
 
 
 def _now():
@@ -210,7 +212,7 @@ def add_item(text):
     d = _defaults()
     w = _Writer(st, warn)
     out = []
-    for pl in _parse(text):
+    for pl in _parse(text, d):
         it = d.resolve_parsed(pl)
         ex = _find(st, it.name)
         if ex is None:

@@ -22,6 +22,7 @@ from ..cartlogic import CartError, diff, merge, to_qty
 from ..http import CHROME_UA, Client, CLOUDFLARE_MSG, HttpError
 from ..model import Product
 from ..attrs import extract_attrs
+from .. import kashrut as K
 from .base import SiteAdapter
 
 WEB_ORIGIN = "https://www.rami-levy.co.il"
@@ -181,6 +182,8 @@ class RamiLevyAdapter(SiteAdapter):
             cats=cats, step=step, sell_method="weight" if pack.by_weight else "unit",
             link_code=(str(raw["barcode"]).strip() or None) if raw.get("barcode") not in (None, "") else None,
             attrs=extract_attrs(raw.get("name"), (raw.get("gs") or {}).get("BrandName")),
+            kashrut=K.rami_hechsherim(raw.get("kashruts")),
+            kashrut_levels=K.rami_levels(raw.get("kashruts")) | K.name_level(raw.get("name") or ""),
             raw=raw)
 
     # ---------------- phase 2 ----------------

@@ -29,7 +29,14 @@ RULE_FIELDS = (
     ("size_min", "גודל מינ׳"),
     ("size_max", "גודל מקס׳"),
     ("terms", "חיפוש"),
+    ("kashrut", "כשרות"),
 )
+NOTE_MARK = "📝 (לא מיושם אוטומטית)"
+
+
+def _kashrut_he(v) -> str:
+    from .kashrut import LEVEL_HE
+    return LEVEL_HE.get(v, "ללא דרישה") if v else "ללא דרישה"
 
 
 def _user_path(defaults_path: str, user_path: Optional[str] = None) -> str:
@@ -92,17 +99,32 @@ def collect(defaults_path: str, user_path: Optional[str] = None) -> List[dict]:
                          "value": cfg})
             seen.add(("delivery", site))
 
+    # Global (all items)
+    g = user.get("global") or {}
+    if isinstance(g, dict) and g.get("kashrut"):
+        rows.append({"kind": "global", "item": "כללי", "site": "", "field": "kashrut",
+                     "label": f"כללי (כל המוצרים): כשרות {_kashrut_he(g['kashrut'])}", "source": "learned",
+                     "value": g["kashrut"]})
+
     # Per-item learned rules (anything in user aliases except empty/_learned-only)
     for name, entry in (user.get("aliases") or {}).items():
         if not isinstance(entry, dict):
             continue
         for field, he in RULE_FIELDS:
-            if field not in entry or entry[field] in (None, "", [], {}):
+            if field not in entry or entry[field] in (None, [], {}) or (entry[field] == "" and field != "kashrut"):
                 continue
-            label = f"{name}: {he} {_fmt_val(entry[field])}"
+            val = _kashrut_he(entry[field]) if field == "kashrut" else _fmt_val(entry[field])
+            label = f"{name}: {he} {val}"
             rows.append({"kind": "item", "item": name, "site": "", "field": field,
                          "label": label, "source": "learned", "value": entry[field]})
             seen.add(("item", name, field))
+
+    # Free-text notes (saved, not enforced)
+    for i, n in enumerate(user.get("notes") or []):
+        if isinstance(n, dict) and n.get("text"):
+            rows.append({"kind": "note", "item": n.get("item") or "כללי", "site": "", "field": "note",
+                         "label": f"{n.get('item') or 'כללי'}: \"{n['text']}\" {NOTE_MARK}", "source": "learned",
+                         "value": n["text"], "note_index": i})
 
     # Notable built-ins (require/exclude/brand/pack) not overridden
     for name, entry in d.aliases.items():
@@ -173,6 +195,11 @@ def delete(index: int, defaults_path: str, user_path: Optional[str] = None,
         if not snap:
             return "אין מחיקה אחרונה לשחזר"
         data["aliases"] = snap.get("aliases", data.get("aliases", {}))
+        for k in ("global", "notes"):
+            if snap.get(k):
+                data[k] = snap[k]
+            else:
+                data.pop(k, None)
         if "delivery" in snap:
             data["delivery"] = snap["delivery"]
         elif "delivery" in data:
@@ -183,8 +210,19 @@ def delete(index: int, defaults_path: str, user_path: Optional[str] = None,
     data["_prefs_undo"] = {
         "aliases": copy.deepcopy(data.get("aliases") or {}),
         "delivery": copy.deepcopy(data.get("delivery") or {}),
+        "global": copy.deepcopy(data.get("global") or {}),
+        "notes": copy.deepcopy(data.get("notes") or []),
     }
-    if row["kind"] == "delivery":
+    if row["kind"] == "global":
+        g = dict(data.get("global") or {})
+        g.pop(row["field"], None)
+        data["global"] = g
+    elif row["kind"] == "note":
+        notes = list(data.get("notes") or [])
+        if 0 <= row["note_index"] < len(notes):
+            notes.pop(row["note_index"])
+        data["notes"] = notes
+    elif row["kind"] == "delivery":
         deliv = dict(data.get("delivery") or {})
         deliv.pop(row["site"], None)
         data["delivery"] = deliv
@@ -218,6 +256,16 @@ def update(index: int, change, defaults_path: str, user_path: Optional[str] = No
     """Replace one preference row. change = dict or attribute phrase ("פרווה")."""
     up = _user_path(defaults_path, user_path)
     row, _ = _row(defaults_path, up, index, full=full)
+    if row["kind"] == "note":
+        # replace the note with whatever the new wording turns into (a rule, or a new note)
+        data = _load_user(up)
+        notes = list(data.get("notes") or [])
+        if 0 <= row["note_index"] < len(notes):
+            notes.pop(row["note_index"])
+        data["notes"] = notes
+        _save_user(up, data)
+        return learn_preference(row["item"], change, reason=reason or f"עריכת הערה: {row['value']}",
+                                defaults_path=defaults_path, user_path=up)
     if isinstance(change, str):
         change = change.strip()
         try:
@@ -225,7 +273,14 @@ def update(index: int, change, defaults_path: str, user_path: Optional[str] = No
             change = phrase_to_change(change)
         except KeyError:
             from .learn import parse_change
-            change = parse_change(change)
+            try:
+                change = parse_change(change)
+            except LearnError:
+                return learn_preference(row["item"], change, reason=reason or "עריכת העדפה",
+                                        defaults_path=defaults_path, user_path=up)
+    if row["kind"] == "global":
+        return learn_preference("כללי", change, reason=reason or f"עריכת העדפה: {row['label']}",
+                                defaults_path=defaults_path, user_path=up)
     if row["kind"] == "delivery":
         if "delivery" not in change:
             change = {"delivery": {row["site"]: change}}

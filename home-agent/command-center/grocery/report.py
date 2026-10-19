@@ -272,6 +272,9 @@ def _pack_amount(p: Pick):
     return None if c.by_weight else c.pack.amount
 
 
+KASHRUT_UNKNOWN = "כשרות לא ידועה"
+
+
 def check_reasons(site: str, p: Pick) -> List[str]:
     """Why an item of one site needs a look by hand (empty = fine)."""
     if p.to_check:
@@ -403,6 +406,14 @@ def cart_message(results: Dict[str, List[Pick]], names: Dict[str, str], urls: Di
             checks.append(f"{name} ({'; '.join(why)})")
     if checks:
         out.append("⚠️ לבדיקה: " + " · ".join(checks))
+    unk = []
+    for s in sites:
+        names_unk = [p.item.name for p in results[s] if not p.to_check and KASHRUT_UNKNOWN in p.flags]
+        if names_unk:
+            unk.append(f"{SHORT.get(s, s)}: {len(names_unk)} פריטים ({', '.join(names_unk[:6])}"
+                       + ("…" if len(names_unk) > 6 else "") + ")")
+    if unk:
+        out.append(f"⚠️ {KASHRUT_UNKNOWN} (האתר לא מציין כשרות — בדוק באריזה): " + " · ".join(unk))
     out.append("תתחבר קודם לאתר באותו דפדפן. התשלום אצלך בלבד.")
     from .links import split_message
     return split_message("\n".join(out))
