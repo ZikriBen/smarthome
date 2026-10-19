@@ -1,5 +1,16 @@
 """MCP tools for Google Calendar and Gmail."""
 
+from typing import Literal
+
+Weekday = Literal["MO", "TU", "WE", "TH", "FR", "SA", "SU"]
+
+
+def _recurrence(freq, by_weekday, interval, until, count, rrule, time_zone):
+    if not (freq or rrule):
+        return None
+    return {"freq": freq, "by_weekday": by_weekday or [], "interval": interval,
+            "until": until, "count": count, "rrule": rrule, "time_zone": time_zone}
+
 
 def register(mcp, client):
     @mcp.tool()
@@ -14,23 +25,36 @@ def register(mcp, client):
             "days": days, "max_results": max_results})
 
     @mcp.tool()
-    def propose_calendar_event(summary: str, start: str, end: str, location: str = "") -> dict:
-        """Propose creating one event only in the connected Google primary calendar. Start/end must both be ISO dates (exclusive end date) for an all-day event or timezone-bearing ISO datetimes. Call only after explicit confirmation; requires an Approve button tap."""
+    def propose_calendar_event(summary: str, start: str, end: str, location: str = "",
+                               freq: Literal["", "DAILY", "WEEKLY", "MONTHLY"] = "",
+                               by_weekday: list[Weekday] | None = None, interval: int = 1,
+                               until: str = "", count: int = 0, rrule: str = "",
+                               time_zone: str = "Asia/Jerusalem") -> dict:
+        """Propose one primary-calendar event, or ONE recurring series. For repeats (e.g. every Mon+Fri for 6 months) make a single call with freq (+by_weekday for WEEKLY) and until (YYYY-MM-DD, inclusive) or count; never call once per date. start/end = the first occurrence: timezone-bearing ISO datetimes, or ISO dates (exclusive end) for all-day. rrule = optional raw RRULE instead of freq. Returns the rule text and occurrence count to show the user. Call only after explicit confirmation; requires an Approve tap."""
         return client.request("POST", "/proposals/calendar-create", {
-            "summary": summary, "start": start, "end": end, "location": location})
+            "summary": summary, "start": start, "end": end, "location": location,
+            "recurrence": _recurrence(freq, by_weekday, interval, until, count, rrule, time_zone)})
 
     @mcp.tool()
     def propose_calendar_event_update(event_id: str, summary: str, start: str, end: str,
-                                      location: str = "") -> dict:
-        """Propose replacing the title, start, end, and location of one primary-calendar event. Start/end must both be ISO dates (exclusive end date) or timezone-bearing ISO datetimes. Use an exact ID from calendar_events after explicit confirmation; requires an Approve button tap."""
+                                      location: str = "",
+                                      scope: Literal["this", "series"] = "this",
+                                      freq: Literal["", "DAILY", "WEEKLY", "MONTHLY"] = "",
+                                      by_weekday: list[Weekday] | None = None,
+                                      interval: int = 1, until: str = "", count: int = 0,
+                                      rrule: str = "") -> dict:
+        """Propose replacing title, start, end and location of one primary-calendar event. scope='series' changes the whole recurring series (any instance ID works; its first date is kept, time of day comes from start/end); add freq/until etc. only to change the repeat rule, e.g. end it earlier. Start/end: ISO dates (exclusive end) or timezone-bearing ISO datetimes. Use an exact ID from calendar_events after explicit confirmation; requires an Approve tap."""
         return client.request("POST", "/proposals/calendar-update", {
             "event_id": event_id, "summary": summary, "start": start, "end": end,
-            "location": location})
+            "location": location, "scope": scope,
+            "recurrence": _recurrence(freq, by_weekday, interval, until, count, rrule, "")})
 
     @mcp.tool()
-    def propose_calendar_event_delete(event_id: str) -> dict:
-        """Propose permanently deleting one event from the primary calendar. Use only an exact event ID returned by calendar_events after the user explicitly confirms that exact event. Requires an Approve button tap."""
-        return client.request("POST", "/proposals/calendar-delete", {"event_id": event_id})
+    def propose_calendar_event_delete(event_id: str,
+                                      scope: Literal["this", "series"] = "this") -> dict:
+        """Propose permanently deleting one primary-calendar event, or with scope='series' the whole recurring series it belongs to (one approval). Use only an exact event ID from calendar_events after the user explicitly confirms. Requires an Approve tap."""
+        return client.request("POST", "/proposals/calendar-delete", {
+            "event_id": event_id, "scope": scope})
 
     @mcp.tool()
     def gmail_search(query: str = "", max_results: int = 10) -> dict:
