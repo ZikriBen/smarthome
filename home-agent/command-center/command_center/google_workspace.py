@@ -10,7 +10,7 @@ from datetime import date, datetime, timedelta, timezone
 from email.message import EmailMessage
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from . import approvals
+from . import approvals, calendar_recurrence
 from .config import GOOGLE_CLIENT_SECRET, GOOGLE_REDIRECT_URI, GOOGLE_SCOPES, GOOGLE_TOKEN
 
 _auth_lock = threading.Lock()
@@ -100,6 +100,7 @@ def google_calendar_events(days=7, max_results=25):
                 "end": event.get("end", {}).get("dateTime", event.get("end", {}).get("date")),
                 "location": event.get("location"), "calendar": calendar["name"],
                 "calendar_id": calendar["id"], "primary": calendar["primary"],
+                "series_id": event.get("recurringEventId"),
                 "all_day": "date" in event.get("start", {})})
     events.sort(key=lambda event: event.get("start") or "")
     return {"days": days, "calendars_checked": [item["name"] for item in calendars],
@@ -136,24 +137,53 @@ def calendar_event_payload(summary, start, end, location=""):
 
 def calendar_event_times(payload):
     key = "date" if payload.get("all_day") else "dateTime"
-    return {"start": {key: payload["start"]}, "end": {key: payload["end"]}}
+    start, end = {key: payload["start"]}, {key: payload["end"]}
+    if payload.get("time_zone"):
+        # Required by Google for recurring events: the zone the series expands in (DST-safe).
+        start["timeZone"] = end["timeZone"] = payload["time_zone"]
+    return {"start": start, "end": end}
+
+
+def calendar_recurring_payload(payload, recurrence):
+    """Apply an optional recurrence dict (freq/by_weekday/interval/until/count/rrule/time_zone)."""
+    recurrence = dict(recurrence or {})
+    if not calendar_recurrence.wants_recurrence(recurrence.get("freq"), recurrence.get("rrule")):
+        if any(recurrence.get(key) for key in ("by_weekday", "until", "count")):
+            raise ValueError("by_weekday/until/count need freq (or use rrule)")
+        return payload
+    return calendar_recurrence.build(
+        payload, freq=recurrence.get("freq", ""), by_weekday=recurrence.get("by_weekday"),
+        interval=recurrence.get("interval", 1), until=recurrence.get("until", ""),
+        count=recurrence.get("count", 0), rrule=recurrence.get("rrule", ""),
+        tz_name=recurrence.get("time_zone", ""))
 
 
 def calendar_event_snapshot(event):
     return {"event_id": event.get("id"), "summary": event.get("summary", "(untitled)"),
             "start": event.get("start", {}).get("dateTime", event.get("start", {}).get("date")),
             "end": event.get("end", {}).get("dateTime", event.get("end", {}).get("date")),
-            "location": event.get("location") or "", "all_day": "date" in event.get("start", {})}
+            "location": event.get("location") or "", "all_day": "date" in event.get("start", {}),
+            "series_id": event.get("recurringEventId"),
+            "recurrence": event.get("recurrence") or []}
 
 
-def calendar_create_event(summary, start, end, location=""):
+def calendar_create_event(summary, start, end, location="", recurrence=None, time_zone=""):
     payload = calendar_event_payload(summary, start, end, location)
+    if recurrence:
+        # Re-validated at execution; the stored start already matches, so no second shift.
+        payload = calendar_recurring_payload(
+            payload, {"rrule": recurrence["rrule"], "time_zone": time_zone})
     from googleapiclient.discovery import build
     service = build("calendar", "v3", credentials=google_credentials(), cache_discovery=False)
-    event = service.events().insert(calendarId="primary", body={
-        "summary": payload["summary"], **calendar_event_times(payload),
-        **({"location": payload["location"]} if payload["location"] else {})}).execute()
-    return {"created": calendar_event_snapshot(event)}
+    body = {"summary": payload["summary"], **calendar_event_times(payload),
+            **({"location": payload["location"]} if payload["location"] else {})}
+    if recurrence:
+        body["recurrence"] = [payload["recurrence"]["rrule"]]
+    event = service.events().insert(calendarId="primary", body=body).execute()
+    result = {"created": calendar_event_snapshot(event)}
+    if recurrence:
+        result.update(series_id=event.get("id"), rule=recurrence.get("human"))
+    return result
 
 
 def calendar_event_id(event_id):
@@ -163,24 +193,56 @@ def calendar_event_id(event_id):
     return event_id.strip()
 
 
-def calendar_primary_event(event_id):
+def calendar_primary_event(event_id, scope="this"):
+    """scope='series' resolves any instance ID to its recurring master event."""
     from googleapiclient.discovery import build
+    if scope not in ("this", "series"):
+        raise ValueError("scope must be 'this' or 'series'")
     event_id = calendar_event_id(event_id)
     service = build("calendar", "v3", credentials=google_credentials(), cache_discovery=False)
-    return service, service.events().get(calendarId="primary", eventId=event_id).execute()
+    event = service.events().get(calendarId="primary", eventId=event_id).execute()
+    if scope == "series":
+        master_id = event.get("recurringEventId")
+        if master_id:
+            event = service.events().get(calendarId="primary", eventId=master_id).execute()
+        elif not event.get("recurrence"):
+            raise ValueError("this event is not part of a recurring series")
+    return service, event
 
 
-def calendar_update_proposal(event_id, summary, start, end, location=""):
-    _, event = calendar_primary_event(event_id)
+def _series_times(master, start, end):
+    """Whole-series edit: keep the series' first date, take time of day/duration from start/end."""
+    old = master.get("start", {})
+    if "date" in old or re.fullmatch(r"\d{4}-\d{2}-\d{2}", start):
+        return start, end  # all-day series: dates as given
+    name, tz = calendar_recurrence.time_zone(old.get("timeZone"))
+    first = datetime.fromisoformat(old["dateTime"].replace("Z", "+00:00")).astimezone(tz).date()
+    new_start = datetime.fromisoformat(start.replace("Z", "+00:00")).astimezone(tz)
+    new_end = datetime.fromisoformat(end.replace("Z", "+00:00")).astimezone(tz)
+    moved = datetime.combine(first, new_start.time().replace(tzinfo=None), tz)
+    return moved.isoformat(), (moved + (new_end - new_start)).isoformat()
+
+
+def calendar_update_proposal(event_id, summary, start, end, location="", scope="this",
+                             recurrence=None):
+    _, event = calendar_primary_event(event_id, scope)
     before = calendar_event_snapshot(event)
+    if scope == "series" and not recurrence:
+        start, end = _series_times(event, start, end)
     after = calendar_event_payload(summary, start, end, location)
-    return {"event_id": before["event_id"], "version": event.get("etag"),
+    if scope == "series":
+        after["time_zone"] = event.get("start", {}).get("timeZone") or ""
+        if recurrence:  # e.g. end the series earlier: same freq/by_weekday with a new until
+            after = calendar_recurring_payload(after, dict(recurrence, time_zone=after["time_zone"]))
+    elif recurrence:
+        raise ValueError("recurrence changes need scope='series'")
+    return {"event_id": before["event_id"], "version": event.get("etag"), "scope": scope,
             "before": before, "after": after}
 
 
-def calendar_delete_proposal(event_id):
-    _, event = calendar_primary_event(event_id)
-    return {"event_id": event["id"], "version": event.get("etag"),
+def calendar_delete_proposal(event_id, scope="this"):
+    _, event = calendar_primary_event(event_id, scope)
+    return {"event_id": event["id"], "version": event.get("etag"), "scope": scope,
             "event": calendar_event_snapshot(event)}
 
 
@@ -190,9 +252,12 @@ def calendar_update_event(event_id, after, expected, version):
         raise ValueError("calendar event changed after approval was requested; review it and try again")
     payload = calendar_event_payload(
         after["summary"], after["start"], after["end"], after.get("location", ""))
-    request = service.events().patch(calendarId="primary", eventId=event_id, body={
-        "summary": payload["summary"], **calendar_event_times(payload),
-        "location": payload["location"]})
+    payload["time_zone"] = after.get("time_zone", "")
+    body = {"summary": payload["summary"], **calendar_event_times(payload),
+            "location": payload["location"]}
+    if after.get("recurrence"):
+        body["recurrence"] = [after["recurrence"]["rrule"]]
+    request = service.events().patch(calendarId="primary", eventId=event_id, body=body)
     if version:
         request.headers["If-Match"] = version
     return {"updated": calendar_event_snapshot(request.execute())}
@@ -302,6 +367,7 @@ def register_routes(router):
 def _calendar_create_response(payload):
     proposal = calendar_event_payload(
         payload["summary"], payload["start"], payload["end"], payload.get("location", ""))
+    proposal = calendar_recurring_payload(proposal, payload.get("recurrence"))
     return {"approval_id": approvals.create("calendar_create", proposal), "status": "pending",
             "proposal": proposal}
 
@@ -309,13 +375,13 @@ def _calendar_create_response(payload):
 def _calendar_update_response(payload):
     proposal = calendar_update_proposal(
         payload["event_id"], payload["summary"], payload["start"], payload["end"],
-        payload.get("location", ""))
+        payload.get("location", ""), payload.get("scope", "this"), payload.get("recurrence"))
     return {"approval_id": approvals.create("calendar_update", proposal), "status": "pending",
             "proposal": proposal}
 
 
 def _calendar_delete_response(payload):
-    proposal = calendar_delete_proposal(payload["event_id"])
+    proposal = calendar_delete_proposal(payload["event_id"], payload.get("scope", "this"))
     return {"approval_id": approvals.create("calendar_delete", proposal), "status": "pending",
             "proposal": proposal}
 
@@ -323,7 +389,8 @@ def _calendar_delete_response(payload):
 def register_actions():
     approvals.register_action("gmail_send", lambda p: gmail_send(p["to"], p["subject"], p["body"]))
     approvals.register_action("calendar_create", lambda p: calendar_create_event(
-        p["summary"], p["start"], p["end"], p.get("location", "")))
+        p["summary"], p["start"], p["end"], p.get("location", ""), p.get("recurrence"),
+        p.get("time_zone", "")))
     approvals.register_action("calendar_update", lambda p: calendar_update_event(
         p["event_id"], p["after"], p["before"], p.get("version")))
     approvals.register_action("calendar_delete", lambda p: calendar_delete_event(
