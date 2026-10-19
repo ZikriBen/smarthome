@@ -260,7 +260,8 @@ def cart(sites: Union[str, List[str]] = "both", fixtures: Optional[str] = None, 
     else:
         msg = report.cart_message(ok, names, urls, errors,
                                   {s: skipped[s] for s in skipped},
-                                  _il_now().strftime("%H:%M"))
+                                  _il_now().strftime("%H:%M"),
+                                  delivery=d.delivery)
     return {"message": msg, "links": {s: (urls.get(s) or [None])[0] for s in want},
             "urls": urls, "lines": lines, "site_errors": errors, "blocked": blocked, "missing": missing,
             "plan_paths": paths, "items": len(items)}

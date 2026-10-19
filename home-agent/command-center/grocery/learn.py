@@ -46,7 +46,24 @@ def parse_change(text: str, site: Optional[str] = None) -> Dict:
     Leading 'תזכור ש' / 'remember that' / 'next time' / 'בפעם הבאה' is ignored."""
     s = " " + re.sub(r"\s+", " ", text.strip()) + " "
     s = re.sub(r"^\s*(תזכור ש|תזכרי ש|זכור ש|remember that|remember|next time|בפעם הבאה)\s*", " ", s, flags=re.I)
+    # Whole-string delivery/min phrases first (must not go through the "." split — 29.90 has a decimal).
     ch: Dict = {}
+    m = re.search(r"(?:דמי\s*משלוח|משלוח|delivery(?:\s*fee)?)\s+"
+                  r"(רמי(?:\s*לוי)?|rami(?:[_\s-]?levy)?|שופרסל|shufersal)\s+" + _NUM, s, re.I)
+    if m:
+        site_raw = m.group(1).lower()
+        site = "rami_levy" if site_raw.startswith(("רמי", "rami")) else "shufersal"
+        ch.setdefault("delivery", {})[site] = {"fee": float(m.group(2))}
+        s = s[:m.start()] + " " + s[m.end():]
+    m = re.search(r"(?:מינימום(?:\s*הזמנה)?|min(?:imum)?(?:\s*order)?)\s+"
+                  r"(רמי(?:\s*לוי)?|rami(?:[_\s-]?levy)?|שופרסל|shufersal)\s+" + _NUM, s, re.I)
+    if m:
+        site_raw = m.group(1).lower()
+        site = "rami_levy" if site_raw.startswith(("רמי", "rami")) else "shufersal"
+        ch.setdefault("delivery", {})[site] = {**ch.get("delivery", {}).get(site, {}), "min_order": float(m.group(2))}
+        s = s[:m.start()] + " " + s[m.end():]
+    if ch and not re.sub(r"\s+", "", s):
+        return ch
     for part in re.split(r"[,;]| אלא | but |\.", s):
         p = part.strip()
         if not p:
@@ -100,11 +117,14 @@ def learn_preference(item: str, change: Union[Dict, str], reason: str = "", defa
         change = parse_change(change, site)
     if not isinstance(change, dict) or not change:
         raise LearnError("change must be a non-empty dict or phrase")
-    unknown = set(change) - set(MERGE_LISTS) - set(REPLACE) - {"pin", "unpin", "unbrand", "unexclude"}
+    unknown = set(change) - set(MERGE_LISTS) - set(REPLACE) - {"pin", "unpin", "unbrand", "unexclude", "delivery"}
     if unknown:
         raise LearnError(f"unknown change key(s) {sorted(unknown)}")
     if user_path is None:
         user_path = os.path.splitext(defaults_path)[0] + ".user.yaml"
+    # Delivery is site-level (not per item). "תזכור שדמי משלוח רמי 29.90" → change={"delivery":{…}}.
+    if "delivery" in change and set(change) == {"delivery"}:
+        return _learn_delivery(change["delivery"], reason=reason, user_path=user_path, today=today)
     defaults = load_defaults(defaults_path, user_path) if defaults_path else None
     canonical = (defaults.lookup(item) if defaults else None) or item.strip()
     base = dict(defaults.aliases.get(canonical, {})) if defaults else {}
@@ -155,3 +175,38 @@ def learn_preference(item: str, change: Union[Dict, str], reason: str = "", defa
         f.write(minyaml.dumps(data) + "\n")
     os.replace(tmp, user_path)
     return f"נלמד: {canonical} — {_summary(change)}" + (f" (סיבה: {reason})" if reason else "")
+
+
+def _learn_delivery(change, reason: str = "", user_path: str = None, today: Optional[str] = None) -> str:
+    """Write top-level delivery: overrides into defaults.user.yaml. change = {site: {fee?, min_order?, …}}."""
+    if not isinstance(change, dict) or not change:
+        raise LearnError("delivery change must be {site: {fee|min_order|free_above: number}}")
+    data = {"version": 1, "aliases": {}}
+    if os.path.exists(user_path):
+        loaded = load_structured(user_path) or {}
+        if isinstance(loaded, dict):
+            data.update(loaded)
+            data["aliases"] = dict(loaded.get("aliases") or {})
+    cur = dict(data.get("delivery") or {})
+    for site, cfg in change.items():
+        if not isinstance(cfg, dict):
+            raise LearnError(f"delivery[{site}] must be a mapping")
+        site = str(site)
+        if site not in ("rami_levy", "shufersal"):
+            raise LearnError(f"unknown delivery site {site}")
+        entry = dict(cur.get(site) or {})
+        for k in ("fee", "min_order", "free_above", "note"):
+            if k in cfg:
+                entry[k] = cfg[k]
+        cur[site] = entry
+    data["delivery"] = cur
+    hist = list(data.get("_learned_delivery") or [])
+    hist.append({"date": today or dt.date.today().isoformat(), "reason": reason or "",
+                 "change": _summary({"delivery": change})})
+    data["_learned_delivery"] = hist[-20:]
+    tmp = user_path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        f.write("# Written by upsert_default()/learn_preference() — user overrides on top of defaults.yaml\n")
+        f.write(minyaml.dumps(data) + "\n")
+    os.replace(tmp, user_path)
+    return f"נלמד: דמי משלוח — {_summary({'delivery': change})}" + (f" (סיבה: {reason})" if reason else "")

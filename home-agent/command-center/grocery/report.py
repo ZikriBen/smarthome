@@ -286,19 +286,27 @@ def check_reasons(site: str, p: Pick) -> List[str]:
     return out
 
 
+def _site_total(results_site):
+    return sum(p.chosen.p.price * p.qty for p in results_site if not p.to_check)
+
+
 def cart_message(results: Dict[str, List[Pick]], names: Dict[str, str], urls: Dict[str, List[str]],
                  site_errors: Dict[str, str] = None, skipped: Dict[str, str] = None,
-                 generated: str = "") -> str:
+                 generated: str = "", delivery: Dict = None) -> str:
     """results: {site: picks (same item order)}; urls: {site: [url, …]} (empty list = no link).
-    site_errors: {site: message} for a site that failed/blocked during the run; skipped: {site: why} for a
-    site not searched at all (circuit breaker). Totals only count items priced on every searched site."""
+    delivery: {site: SiteDelivery} — when set, header shows items+fee=final and savings use final totals.
+    site_errors / skipped: see plan §1-D. Totals only count items priced on every searched site."""
+    from .delivery import SiteDelivery, final_total
     site_errors, skipped = site_errors or {}, skipped or {}
+    delivery = delivery or {}
     sites = [s for s in results if s not in site_errors]
     n = len(next(iter(results.values()))) if results else 0
     ref = results[sites[0]] if sites else None
     head = f"🛒 {n} פריטים"
     diffs, near, mixed_gain = [], 0, 0.0
-    tot = {s: 0.0 for s in sites}
+    tot = {s: 0.0 for s in sites}          # items-only (common items when comparing)
+    fee_line = []                          # per-site "X + משלוח Y = Z" rows (always when delivery set)
+    min_warn = []
     if len(sites) >= 2:
         mixed = 0.0
         for i in range(n):
@@ -323,17 +331,40 @@ def cart_message(results: Dict[str, List[Pick]], names: Dict[str, str], urls: Di
                 diffs.append((gap, txt))
             else:
                 near += 1
-        best = min(sites, key=lambda s: tot[s])
-        worst = max(sites, key=lambda s: tot[s])
-        head += " · " + " · ".join(f"{names.get(s, s)} ₪{tot[s]:.2f}" for s in sites)
-        if tot[worst] - tot[best] >= 0.01:
-            head += f" (הכי זול: {names.get(best, best)}, חיסכון ₪{tot[worst] - tot[best]:.2f})"
-        mixed_gain = tot[best] - mixed
     elif sites:
         s = sites[0]
-        tot[s] = sum(p.chosen.p.price * p.qty for p in results[s] if not p.to_check)
-        head += f" · {names.get(s, s)} ₪{tot[s]:.2f}"
+        tot[s] = _site_total(results[s])
+    # Final totals = items + delivery (savings and "cheapest" use these).
+    finals = {}
+    for s in sites:
+        d = delivery.get(s) or SiteDelivery()
+        items = tot[s]
+        charge = d.charge(items)
+        fin = final_total(items, d)
+        finals[s] = fin
+        if delivery:
+            fee_txt = f"משלוח ₪{charge:.2f}" + (" (חינם)" if charge == 0 and d.fee else "")
+            fee_line.append(f"{names.get(s, s)}: ₪{items:.2f} + {fee_txt} = ₪{fin:.2f}")
+            short = d.shortfall(items)
+            if short:
+                min_warn.append(f"{names.get(s, s)}: חסרים ₪{short:.2f} למינימום ₪{d.min_order:g}")
+    if len(sites) >= 2:
+        best = min(sites, key=lambda s: finals[s])
+        worst = max(sites, key=lambda s: finals[s])
+        head += " · " + " · ".join(f"{names.get(s, s)} ₪{finals[s]:.2f}" for s in sites)
+        if finals[worst] - finals[best] >= 0.01:
+            head += f" (הכי זול: {names.get(best, best)}, חיסכון ₪{finals[worst] - finals[best]:.2f})"
+        # Mixed basket pays BOTH delivery fees.
+        if delivery:
+            mixed_fees = sum((delivery.get(s) or SiteDelivery()).fee for s in sites)
+            mixed_final = mixed + mixed_fees
+            mixed_gain = finals[best] - mixed_final   # positive only if mixed (items+2 fees) beats best single
+        else:
+            mixed_gain = finals[best] - mixed
+    elif sites:
+        head += f" · {names.get(sites[0], sites[0])} ₪{finals[sites[0]]:.2f}"
     out = [head + (f" · הערכה {generated}" if generated else " · הערכה")]
+    out.extend(fee_line)
     for s in results:
         if s in site_errors:
             out.append(f"{names.get(s, s)}: נחסם/נכשל — לא נשלחו בקשות נוספות ({site_errors[s][:80]})")
@@ -355,7 +386,9 @@ def cart_message(results: Dict[str, List[Pick]], names: Dict[str, str], urls: Di
         if rest:
             out.append(f"עוד {rest} פריטים כמעט זהים")
     if mixed_gain >= MIXED_MIN:
-        out.append(f"קנייה מעורבת (הזול בכל פריט) חוסכת עוד ₪{mixed_gain:.2f} — אבל שני משלוחים")
+        out.append(f"קנייה מעורבת (הזול בכל פריט) חוסכת עוד ₪{mixed_gain:.2f} — כולל שני משלוחים")
+    for w in min_warn:
+        out.append(f"⚠️ מינימום הזמנה — {w}")
     checks = []
     for i in range(n if ref else 0):
         name = ref[i].item.name

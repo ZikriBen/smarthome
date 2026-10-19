@@ -27,7 +27,7 @@ def register(mcp, client):
     @mcp.tool()
     def grocery_learn_preference(item: str, change: dict | str, reason: str = "",
                                  site: Literal["", "rami_levy", "shufersal"] = "") -> str:
-        """Remember a correction so future carts pick right (persistent; takes effect next run). change: a dict with any of exclude/require/brand/prefer/alias/unbrand/unexclude (string lists, added), pin {site: product_id} (empty id = the last pick of this item on that site, for "תמיד את זה"), unpin, pack_preference (numbers), qty, qty_unit (kg|unit), size_min, size_max, terms; or a short phrase (לא X / רק X / קח Y / מארז N, אחרת M / כמות N). reason = the user's own words."""
+        """Remember a correction so future carts pick right (persistent; takes effect next run). change: a dict with any of exclude/require/brand/prefer/alias/unbrand/unexclude (string lists, added), pin {site: product_id} (empty id = the last pick of this item on that site, for "תמיד את זה"), unpin, pack_preference (numbers), qty, qty_unit (kg|unit), size_min, size_max, terms, delivery {site: {fee, min_order, free_above}} (site-level; item arg ignored); or a short phrase ("דמי משלוח רמי 29.90" / "מינימום שופרסל 250") (לא X / רק X / קח Y / מארז N, אחרת M / כמות N). reason = the user's own words."""
         return client.request("POST", "/grocery/learn", {
             "item": item, "change": change, "reason": reason, "site": site or None})["text"]
 

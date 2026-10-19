@@ -63,8 +63,12 @@ class GroceryRouteTests(unittest.TestCase):
         self.assertIn("מלפפון", g.list_items({}, {})["text"])
         self.assertIn("נלמד", g.learn({"item": "נייר כסף", "change": {"exclude": ["נצמד"]},
                                        "reason": "לא נייר נצמד"}, {})["text"])
-        row = conn().execute("SELECT item,reason FROM grocery_learned ORDER BY id DESC LIMIT 1").fetchone()
+        row = conn().execute("SELECT item,reason FROM grocery_learned WHERE item=?",
+                             ("נייר כסף",)).fetchone()
         self.assertEqual(row, ("נייר כסף", "לא נייר נצמד"))
+        self.assertIn("דמי משלוח", g.learn({"item": "משלוח",
+            "change": {"delivery": {"rami_levy": {"fee": 29.90}}}, "reason": "מועדון"}, {})["text"])
+        self.assertIn("29.9", g.USER_DEFAULTS.read_text(encoding="utf-8"))
         self.assertTrue(g.USER_DEFAULTS.is_file())
         g.setup()  # restart: base defaults refreshed, learned file kept
         self.assertTrue(g.USER_DEFAULTS.is_file())
@@ -90,6 +94,8 @@ class GroceryRouteTests(unittest.TestCase):
         self.assertIn("🛒 13 פריטים", st["message"])
         self.assertIn(";101,0.75;", links["rami_levy"])          # weighed: exact kg (5 × 0.15)
         self.assertNotIn("בדוק בעגלה", st["message"])
+        self.assertIn("+ משלוח ₪35.90 = ₪", st["message"])       # delivery fee in final total
+        self.assertRegex(st["message"], r"רמי לוי: ₪\d+\.\d{2} \+ משלוח")
         lines = db.run_lines(conn(), started["run_id"])
         self.assertEqual(len(lines), 26)
         self.assertEqual(sum(l["in_link"] for l in lines if l["site"] == "rami_levy"), 13)

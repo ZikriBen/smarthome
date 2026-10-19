@@ -13,6 +13,7 @@ from typing import Dict, List, Optional
 
 from . import minyaml
 from .listfile import ALIAS_KEYS, ListError, apply_intent, load_structured, parse_intent
+from . import delivery as D
 from .model import Item
 from .normalize import norm_text
 
@@ -40,9 +41,11 @@ def _variants(k: str) -> List[str]:
 
 
 class Defaults:
-    def __init__(self, aliases: Dict[str, dict], produce: dict = None, user_path: Optional[str] = None):
+    def __init__(self, aliases: Dict[str, dict], produce: dict = None, user_path: Optional[str] = None,
+                 delivery: dict = None):
         self.aliases = aliases            # canonical name -> raw entry dict (validated)
         self.produce = dict(PRODUCE_DEFAULTS, **(produce or {}))
+        self.delivery = D.load(delivery)  # {site: SiteDelivery}
         self.user_path = user_path
         self._index: Dict[str, str] = {}
         for name, entry in aliases.items():
@@ -98,22 +101,27 @@ def _validate(data, where) -> (Dict[str, dict], dict):
         entry = entry or {}
         parse_intent(entry, f"{where}.aliases[{name}]", allowed=ALIAS_KEYS)  # validation only
         out[str(name).strip()] = entry
-    return out, data.get("produce_defaults") or {}
+    return out, data.get("produce_defaults") or {}, data.get("delivery") or {}
 
 
 def load_defaults(path: str, user_path: Optional[str] = None) -> Defaults:
-    base, produce = _validate(load_structured(path), os.path.basename(path))
+    base, produce, delivery = _validate(load_structured(path), os.path.basename(path))
     if user_path is None:
         root, ext = os.path.splitext(path)
         user_path = root + ".user" + ext
     if os.path.exists(user_path):
-        user, uprod = _validate(load_structured(user_path), os.path.basename(user_path))
+        loaded = load_structured(user_path) or {}
+        user, uprod, udel = _validate(loaded, os.path.basename(user_path))
         produce = dict(produce, **uprod)
+        # deep-merge delivery per site so a user fee override keeps the base min_order
+        for site, cfg in (udel or {}).items():
+            if isinstance(cfg, dict):
+                delivery[site] = dict(delivery.get(site) or {}, **cfg)
         for name, entry in user.items():
             merged = dict(base.get(name, {}))
             merged.update(entry)
             base[name] = merged
-    return Defaults(base, produce, user_path)
+    return Defaults(base, produce, user_path, delivery)
 
 
 def upsert_default(alias: str, user_path: str, **fields) -> dict:

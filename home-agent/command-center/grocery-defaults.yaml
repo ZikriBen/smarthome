@@ -14,6 +14,20 @@ produce_defaults:
   unit_weight_kg: 0.15  # Ben: 0.15 kg per unit -> default 0.75 kg, rounded UP to the site's step (0.5 -> 1.0)
   kg: 0.5               # default for non-produce goods sold by weight (deli etc.)
 
+# Delivery (home delivery only; pickup not modelled). Fees overrideable via defaults.user.yaml /
+# grocery_learn_preference(change={"delivery": {site: {fee, min_order, free_above}}}).
+# Sources recorded 2026-10-19 — see grocery/delivery.py docstring.
+delivery:
+  rami_levy:
+    fee: 35.90          # https://www.rami-levy.co.il/he/orders-and-deliveries (NUC HTML 19.10.2026)
+    min_order: 0        # no minimum stated on that page; hacoupon.co.il Oct 2026 agrees
+    free_above: null    # past promos (e.g. free above 199 until 24.1.26) are expired
+    note: "flat; credit-club card holders may still pay the old ~29.90 — override with learn if so"
+  shufersal:
+    fee: 35.90          # homepage "35.90 ₪ למשלוח" (NUC HTML 19.10.2026); ynet July 2026 raise
+    min_order: 0        # no site-level minimum found on current homepage; older free-above-750 cancelled
+    free_above: null
+    note: "home delivery; pickup has a separate 15/10 service fee we do not model"
 aliases:
   ביצים:
     aliases: [ביצה, תבנית ביצים]
