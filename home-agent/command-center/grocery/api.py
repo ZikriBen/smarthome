@@ -176,6 +176,15 @@ def run(site: str = "rami_levy", fixtures: Optional[str] = None, store: Optional
 CART_SITES = ("rami_levy", "shufersal")
 
 
+def _il_now():
+    """Israel local time for the message label (containers run in UTC)."""
+    try:
+        from zoneinfo import ZoneInfo
+        return dt.datetime.now(ZoneInfo("Asia/Jerusalem"))
+    except Exception:
+        return dt.datetime.now().astimezone()
+
+
 def cart(sites: Union[str, List[str]] = "both", fixtures: Optional[str] = None, store: Optional[str] = None,
          out_dir: Optional[str] = None, defaults_path: str = DEFAULTS,
          log: Union[None, Callable[[str], None], List[str]] = None, parallel: bool = True,
@@ -251,7 +260,7 @@ def cart(sites: Union[str, List[str]] = "both", fixtures: Optional[str] = None, 
     else:
         msg = report.cart_message(ok, names, urls, errors,
                                   {s: skipped[s] for s in skipped},
-                                  dt.datetime.now().strftime("%H:%M"))
+                                  _il_now().strftime("%H:%M"))
     return {"message": msg, "links": {s: (urls.get(s) or [None])[0] for s in want},
             "urls": urls, "lines": lines, "site_errors": errors, "blocked": blocked, "missing": missing,
             "plan_paths": paths, "items": len(items)}
