@@ -90,13 +90,14 @@ def category_check(p: Product, f: Dict[str, List[str]]):
 
 
 def word_filter(p: Product, item: Item):
-    """Hard name filters, same for every site. Returns (passes, reason)."""
+    """Hard name/attr filters, same for every site. Returns (passes, reason).
+    require/exclude match the product name, brand, OR Product.attrs tags (פרווה/חלבי/…)."""
     nm = N.norm_text(p.name)
+    hay = N.norm_text(p.name + " " + (p.brand or "") + " " + " ".join(sorted(p.attrs or ())))
     for w in item.exclude_words:
-        if N.norm_text(w) in nm:
+        if N.norm_text(w) in hay:
             return False, f"excluded word {w!r}"
     if item.require_any:
-        hay = N.norm_text(p.name + " " + (p.brand or ""))
         if not any(N.norm_text(w) in hay for w in item.require_any):
             return False, f"none of {item.require_any}"
     return True, ""
@@ -385,6 +386,16 @@ class Picker:
         terms_used = list(item.terms)
         size = self.deep_size if item.pack_preference and not item.pinned_for(self.site) else None
         cands = self._gather(item, item.terms, "term", stats, size)
+        attr_miss = False
+        if not cands and (item.require_any or item.exclude_words) and not item.pinned_for(self.site):
+            # Attribute constraint matched nothing: pick the best unconstrained product and flag it.
+            saved_req, saved_exc = item.require_any, item.exclude_words
+            item.require_any, item.exclude_words = [], []
+            try:
+                cands = self._gather(item, item.terms, "term", Counter(), size)
+            finally:
+                item.require_any, item.exclude_words = saved_req, saved_exc
+            attr_miss = bool(cands)
         relaxed = False
         if not cands and stats.get("wrong_category") and any(item.site_filters(self.site).values()):
             # category ids may be stale/wrong: retry without the site filter, but flag it
@@ -442,6 +453,10 @@ class Picker:
                 flags += pref_flags
                 if pref_fallback:
                     conf = {"high": "medium", "medium": "low"}.get(conf, conf)
+        if attr_miss and best is not None:
+            miss = " / ".join(item.require_any or item.exclude_words[:1] or ["העדפה"])
+            flags.append(f"לא נמצא {miss}")
+            conf = "low" if conf != "none" else conf
         if relaxed and best is not None:
             flags.append("סינון הקטגוריה הסיר הכל — נבחר בלי סינון")
             conf = "low" if conf != "none" else conf

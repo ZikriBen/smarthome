@@ -21,6 +21,7 @@ from .. import normalize as N
 from ..cartlogic import CartError, diff, merge, to_qty
 from ..http import CHROME_UA, Client, CLOUDFLARE_MSG, HttpError
 from ..model import Product
+from ..attrs import extract_attrs
 from .base import SiteAdapter
 
 WEB_ORIGIN = "https://www.rami-levy.co.il"
@@ -179,6 +180,7 @@ class RamiLevyAdapter(SiteAdapter):
             unit_price=N.unit_price(eff, pack), available=N.available_in_store(raw, self.store),
             cats=cats, step=step, sell_method="weight" if pack.by_weight else "unit",
             link_code=(str(raw["barcode"]).strip() or None) if raw.get("barcode") not in (None, "") else None,
+            attrs=extract_attrs(raw.get("name"), (raw.get("gs") or {}).get("BrandName")),
             raw=raw)
 
     # ---------------- phase 2 ----------------

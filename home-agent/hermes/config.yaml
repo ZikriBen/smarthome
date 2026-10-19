@@ -63,6 +63,7 @@ mcp_servers:
         - grocery_remove
         - grocery_clear
         - grocery_learn_preference
+        - grocery_preferences
         - grocery_cart
         - grocery_cart_status
 

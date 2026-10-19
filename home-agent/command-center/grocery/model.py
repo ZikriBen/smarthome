@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Set
 
 from .normalize import Pack
 
@@ -75,6 +75,7 @@ class Product:
     step: Optional[float] = None
     sell_method: str = "unit"        # unit | weight
     link_code: Optional[str] = None  # code used in cart links: Rami barcode (produce: 101/104), Shufersal "P_…"
+    attrs: Set[str] = field(default_factory=set)  # פרווה/חלבי/… from name (see attrs.py)
     raw: dict = field(default_factory=dict, repr=False)
 
     @property

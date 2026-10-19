@@ -265,3 +265,24 @@ def cart(sites: Union[str, List[str]] = "both", fixtures: Optional[str] = None, 
     return {"message": msg, "links": {s: (urls.get(s) or [None])[0] for s in want},
             "urls": urls, "lines": lines, "site_errors": errors, "blocked": blocked, "missing": missing,
             "plan_paths": paths, "items": len(items)}
+
+
+def preferences(action: str = "list", index: int = None, change=None, undo: bool = False,
+                full: bool = False, defaults_path: str = DEFAULTS) -> str:
+    """List / update / delete durable preferences. action = list | update | delete.
+    full=True (or action=full) includes built-in defaults in the numbered list."""
+    from . import prefs as P
+    act = (action or "list").strip().lower()
+    if act in ("list", "full"):
+        return P.list_text(defaults_path, full=full or act == "full")
+    if act == "delete":
+        if undo:
+            return P.delete(0, defaults_path, undo=True)
+        if index is None:
+            return "צריך מספר העדפה למחיקה (מהרשימה של grocery_preferences)"
+        return P.delete(int(index), defaults_path, undo=False, full=bool(full))
+    if act == "update":
+        if index is None or change is None:
+            return "צריך מספר העדפה ואת השינוי (למשל change=\"פרווה\")"
+        return P.update(int(index), change, defaults_path, full=bool(full))
+    return f"action לא מוכר: {action} (list|update|delete)"

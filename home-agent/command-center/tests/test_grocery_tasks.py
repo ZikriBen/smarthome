@@ -185,7 +185,7 @@ class GroceryTasksTests(unittest.TestCase):
         tools.register(FakeMCP(), Client())
         self.assertEqual(sorted(names), sorted([
             "grocery_add_item", "grocery_list", "grocery_remove", "grocery_clear",
-            "grocery_learn_preference", "grocery_cart", "grocery_cart_status"]))
+            "grocery_learn_preference", "grocery_preferences", "grocery_cart", "grocery_cart_status"]))
         names["grocery_clear"](undo=True)
         names["grocery_cart"]()
         names["grocery_cart_status"]("abc", wait_seconds=500)

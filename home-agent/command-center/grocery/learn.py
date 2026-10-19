@@ -46,7 +46,26 @@ def parse_change(text: str, site: Optional[str] = None) -> Dict:
     Leading 'תזכור ש' / 'remember that' / 'next time' / 'בפעם הבאה' is ignored."""
     s = " " + re.sub(r"\s+", " ", text.strip()) + " "
     s = re.sub(r"^\s*(תזכור ש|תזכרי ש|זכור ש|remember that|remember|next time|בפעם הבאה)\s*", " ", s, flags=re.I)
-    # Whole-string delivery/min phrases first (must not go through the "." split — 29.90 has a decimal).
+    # Attribute shortcuts ("פרווה", "ללא סוכר", …) before the part loop.
+    try:
+        from .attrs import phrase_to_change
+        bare = re.sub(r"\s+", " ", s).strip()
+        # allow "רק פרווה" / "רק X" already handled below; plain attr word:
+        if bare:
+            try:
+                ch_attr = phrase_to_change(bare)
+                return ch_attr
+            except KeyError:
+                pass
+            m = re.match(r"^(?:רק|only|עדיף|prefer)\s+(.+)$", bare, re.I)
+            if m:
+                try:
+                    return phrase_to_change(m.group(1).strip())
+                except KeyError:
+                    pass
+    except ImportError:
+        pass
+        # Whole-string delivery/min phrases first (must not go through the "." split — 29.90 has a decimal).
     ch: Dict = {}
     m = re.search(r"(?:דמי\s*משלוח|משלוח|delivery(?:\s*fee)?)\s+"
                   r"(רמי(?:\s*לוי)?|rami(?:[_\s-]?levy)?|שופרסל|shufersal)\s+" + _NUM, s, re.I)

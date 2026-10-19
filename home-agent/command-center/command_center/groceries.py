@@ -119,6 +119,23 @@ def learn(p, _q):
     return out
 
 
+def preferences(p, _q):
+    """List / update / delete durable preferences (defaults.user.yaml)."""
+    action = str(p.get("action") or "list")
+    idx = p.get("index")
+    change = p.get("change")
+    undo = bool(p.get("undo", False))
+    full = bool(p.get("full", False))
+    out = _text(_api().preferences, action, index=idx, change=change, undo=undo, full=full,
+                defaults_path=str(DEFAULTS))
+    # Audit every mutating call
+    if action in ("update", "delete") or (action == "delete" and undo):
+        grocery_db.log_learned(connection, f"pref:{action}",
+                               {"index": idx, "change": change, "undo": undo, "full": full},
+                               p.get("reason", ""))
+    return out
+
+
 def _skipped(sites, force=False):
     out = {}
     for s in sites:
@@ -209,5 +226,6 @@ def register_routes(router):
     router.post("/v1/grocery/clear", clear)
     router.post("/v1/grocery/sync", sync)          # internal (runbook); not an MCP tool
     router.post("/v1/grocery/learn", learn)
+    router.post("/v1/grocery/preferences", preferences)
     router.post("/v1/grocery/cart", start_cart, 202)
     router.post("/v1/grocery/cart-status", cart_status)

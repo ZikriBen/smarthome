@@ -24,6 +24,7 @@ from .. import normalize as N
 from ..cartlogic import CartError, diff, merge, to_qty
 from ..http import CHROME_UA, Client, HttpError, Response, RobotsPolicy
 from ..model import Product
+from ..attrs import extract_attrs
 from .base import SiteAdapter
 from .rami_levy import check_session_file
 
@@ -208,7 +209,9 @@ class ShufersalAdapter(SiteAdapter):
                        price=price, shelf_price=shelf, promo_used=promo_used, promo_note="; ".join(notes),
                        pack=pack, unit_price=up, available=available, cats=cats,
                        step=float(raw.get("minOrderWeight")) if by_weight and raw.get("minOrderWeight") else None,
-                       sell_method="weight" if by_weight else "unit", link_code=str(raw["code"]), raw=raw)
+                       sell_method="weight" if by_weight else "unit", link_code=str(raw["code"]),
+                       attrs=extract_attrs(name, str(brand or "")),
+                       raw=raw)
 
     # ---------------- phase 2 ----------------
     @property

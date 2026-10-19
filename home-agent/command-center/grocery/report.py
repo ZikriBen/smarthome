@@ -281,7 +281,10 @@ def check_reasons(site: str, p: Pick) -> List[str]:
         out.append("אין ברקוד — לא בקישור")
     if p.chosen.p.by_weight and site not in WEIGHT_QTY_CONFIRMED:
         out.append("כמות במשקל — בדוק בעגלה")
-    if p.confidence in ("low", "none"):
+    for f in p.flags:
+        if f.startswith("לא נמצא "):
+            out.append(f)
+    if p.confidence in ("low", "none") and not any(x.startswith("לא נמצא") for x in out):
         out.append("לא בטוח בהתאמה")
     return out
 

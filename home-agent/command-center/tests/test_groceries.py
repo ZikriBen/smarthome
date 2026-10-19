@@ -182,6 +182,27 @@ class GroceryRouteTests(unittest.TestCase):
             g.cart_status({"run_id": "nope"}, {})
 
 
+
+    def test_preferences_list_and_parve_learn(self):
+        self.assertIn("אין עדיין", g.preferences({"action": "list"}, {})["text"])
+        self.assertIn("נלמד", g.learn({"item": "ממרח שוקולד", "change": "פרווה",
+                                       "reason": "אני מעדיף פרווה"}, {})["text"])
+        text = g.preferences({"action": "list"}, {})["text"]
+        self.assertIn("ממרח שוקולד: חייב להכיל פרווה", text)
+        self.assertIn("בלי חלבי", text)
+        # pick on fixtures respects it
+        from grocery.defaults import load_defaults
+        from grocery.picker import Picker
+        from grocery.sites.rami_levy import RamiLevyAdapter
+        from grocery.http import FixtureSearcher
+        d = load_defaults(str(g.DEFAULTS), str(g.USER_DEFAULTS))
+        ad = RamiLevyAdapter()
+        ad.searcher = FixtureSearcher(str(Path(FIXTURES) / "rami_levy"), lambda m: None, results_key="data")
+        pick = Picker(ad, produce_defaults=d.produce).pick(d.resolve("ממרח שוקולד"))
+        self.assertIn("פרווה", pick.chosen.p.name)
+        self.assertIn("נמחקה", g.preferences({"action": "delete", "index": 2}, {})["text"])
+        self.assertIn("שוחזרה", g.preferences({"action": "delete", "undo": True}, {})["text"])
+
 class VendoredGuardTests(unittest.TestCase):
     def test_no_cart_write_or_login_code_vendored(self):
         root = HERE / "grocery"
@@ -199,7 +220,7 @@ class VendoredGuardTests(unittest.TestCase):
 
 
 class McpSchemaTests(unittest.TestCase):
-    def test_exactly_seven_grocery_tools_register_in_fastmcp(self):
+    def test_exactly_eight_grocery_tools_register_in_fastmcp(self):
         try:
             from mcp.server.fastmcp import FastMCP
         except ImportError:
@@ -210,7 +231,8 @@ class McpSchemaTests(unittest.TestCase):
         tools = asyncio.run(mcp.list_tools())
         names = sorted(t.name for t in tools if t.name.startswith("grocery_"))
         self.assertEqual(names, sorted(["grocery_add_item", "grocery_list", "grocery_remove", "grocery_clear",
-                                        "grocery_learn_preference", "grocery_cart", "grocery_cart_status"]))
+                                        "grocery_learn_preference", "grocery_preferences",
+                                        "grocery_cart", "grocery_cart_status"]))
         cfg = (HERE.parent / "hermes" / "config.yaml").read_text(encoding="utf-8")
         listed = sorted(set(re.findall(r"^\s*- (grocery_\w+)\s*$", cfg, re.M)))
         self.assertEqual(listed, names)
