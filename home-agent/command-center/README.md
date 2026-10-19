@@ -13,6 +13,9 @@ integrations; Hermes never receives the Docker socket, host mounts, or a shell.
 - Jellyfin: read-only library search returns matching media metadata and
   watched state. The Jellyfin credential is held only by the Command Center.
 - Approval required: Docker restart and creation of a price watch.
+- Groceries: the working list lives in Google Tasks ("קניות", own token
+  `data/google-tasks-token.json`, scope `tasks` only); `data/grocery/state/current_list.json`
+  is a cache used when Tasks is unavailable. Price runs are read-only.
 - Price checks run on their configured interval (minimum 60 minutes), retain the
   last known good price, and record a deduplicated alert when the target is met.
 
@@ -45,6 +48,9 @@ command_center/
   database.py            SQLite schema and connection
   files.py               attachments, workspace, and PDF reads
   google_workspace.py    OAuth, Calendar, and Gmail
+  tasks_store.py         Google Tasks list access (grocery list)
+  grocery_list.py        Tasks-backed working grocery list + offline cache
+  groceries.py           grocery tools and background price runs
   docker.py              Docker reads and approved restarts
   host.py                host health
   jellyfin.py            read-only Jellyfin library access

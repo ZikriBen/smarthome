@@ -1,0 +1,108 @@
+{
+ "q": "פיתות",
+ "_source": "REAL data reconstructed from live NUC run 20261019-112140-nuc by tools/fixtures_from_run.py; pack sizes = price/unit_price; no secrets",
+ "results": [
+  {
+   "code": "P_9398786",
+   "name": "מארז פיתות אסליות",
+   "price": {
+    "value": 9.0
+   },
+   "effectivePrice": null,
+   "promotionMsg": null,
+   "unitDescription": "5 יח'",
+   "sellingMethod": {
+    "code": "BY_UNIT"
+   },
+   "stock": {
+    "stockLevelStatus": {
+     "code": "inStock"
+    }
+   },
+   "purchasable": true,
+   "brand": {
+    "name": "שופרסל"
+   },
+   "commercialCategoryGroup": null,
+   "commercialCategorySubGroup": null,
+   "commercialDepartment": null,
+   "pricePerUnit": null,
+   "unitForComparison": null
+  },
+  {
+   "code": "P_7296073708308",
+   "name": "מארז פיתות אסליות",
+   "price": {
+    "value": 9.0
+   },
+   "effectivePrice": null,
+   "promotionMsg": null,
+   "unitDescription": "5 יח'",
+   "sellingMethod": {
+    "code": "BY_UNIT"
+   },
+   "stock": {
+    "stockLevelStatus": {
+     "code": "inStock"
+    }
+   },
+   "purchasable": true,
+   "brand": null,
+   "commercialCategoryGroup": null,
+   "commercialCategorySubGroup": null,
+   "commercialDepartment": null,
+   "pricePerUnit": null,
+   "unitForComparison": null
+  },
+  {
+   "code": "P_7296073427315",
+   "name": "מארז פיתות כוסמין",
+   "price": {
+    "value": 16.5
+   },
+   "effectivePrice": null,
+   "promotionMsg": null,
+   "unitDescription": "8 יח'",
+   "sellingMethod": {
+    "code": "BY_UNIT"
+   },
+   "stock": {
+    "stockLevelStatus": {
+     "code": "inStock"
+    }
+   },
+   "purchasable": true,
+   "brand": null,
+   "commercialCategoryGroup": null,
+   "commercialCategorySubGroup": null,
+   "commercialDepartment": null,
+   "pricePerUnit": null,
+   "unitForComparison": null
+  },
+  {
+   "code": "P_7296073708315",
+   "name": "פיתות אסליות מארז",
+   "price": {
+    "value": 16.9
+   },
+   "effectivePrice": null,
+   "promotionMsg": null,
+   "unitDescription": "1 ק\"ג",
+   "sellingMethod": {
+    "code": "BY_UNIT"
+   },
+   "stock": {
+    "stockLevelStatus": {
+     "code": "inStock"
+    }
+   },
+   "purchasable": true,
+   "brand": null,
+   "commercialCategoryGroup": null,
+   "commercialCategorySubGroup": null,
+   "commercialDepartment": null,
+   "pricePerUnit": null,
+   "unitForComparison": null
+  }
+ ]
+}

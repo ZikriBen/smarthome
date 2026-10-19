@@ -1,0 +1,108 @@
+{
+ "q": "אבקת מרק עוף",
+ "_source": "REAL data reconstructed from live NUC run 20261019-112140-nuc by tools/fixtures_from_run.py; pack sizes = price/unit_price; no secrets",
+ "results": [
+  {
+   "code": "P_7290100689301",
+   "name": "מרק בטעם עוף זך",
+   "price": {
+    "value": 10.9
+   },
+   "effectivePrice": null,
+   "promotionMsg": null,
+   "unitDescription": "400 גרם",
+   "sellingMethod": {
+    "code": "BY_UNIT"
+   },
+   "stock": {
+    "stockLevelStatus": {
+     "code": "inStock"
+    }
+   },
+   "purchasable": true,
+   "brand": {
+    "name": "אסם"
+   },
+   "commercialCategoryGroup": null,
+   "commercialCategorySubGroup": null,
+   "commercialDepartment": null,
+   "pricePerUnit": null,
+   "unitForComparison": null
+  },
+  {
+   "code": "P_7290112492999",
+   "name": "מרק בטעם עוף",
+   "price": {
+    "value": 17.9
+   },
+   "effectivePrice": null,
+   "promotionMsg": null,
+   "unitDescription": "400 גרם",
+   "sellingMethod": {
+    "code": "BY_UNIT"
+   },
+   "stock": {
+    "stockLevelStatus": {
+     "code": "inStock"
+    }
+   },
+   "purchasable": true,
+   "brand": null,
+   "commercialCategoryGroup": null,
+   "commercialCategorySubGroup": null,
+   "commercialDepartment": null,
+   "pricePerUnit": null,
+   "unitForComparison": null
+  },
+  {
+   "code": "P_7290100685341",
+   "name": "מרק בטעם עוף זך",
+   "price": {
+    "value": 19.9
+   },
+   "effectivePrice": null,
+   "promotionMsg": null,
+   "unitDescription": "400 גרם",
+   "sellingMethod": {
+    "code": "BY_UNIT"
+   },
+   "stock": {
+    "stockLevelStatus": {
+     "code": "inStock"
+    }
+   },
+   "purchasable": true,
+   "brand": null,
+   "commercialCategoryGroup": null,
+   "commercialCategorySubGroup": null,
+   "commercialDepartment": null,
+   "pricePerUnit": null,
+   "unitForComparison": null
+  },
+  {
+   "code": "P_112619",
+   "name": "מרק עוף אמיתי- בשרי",
+   "price": {
+    "value": 19.9
+   },
+   "effectivePrice": null,
+   "promotionMsg": null,
+   "unitDescription": "400 גרם",
+   "sellingMethod": {
+    "code": "BY_UNIT"
+   },
+   "stock": {
+    "stockLevelStatus": {
+     "code": "inStock"
+    }
+   },
+   "purchasable": true,
+   "brand": null,
+   "commercialCategoryGroup": null,
+   "commercialCategorySubGroup": null,
+   "commercialDepartment": null,
+   "pricePerUnit": null,
+   "unitForComparison": null
+  }
+ ]
+}

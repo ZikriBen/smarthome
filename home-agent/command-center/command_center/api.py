@@ -4,8 +4,8 @@ import json
 import re
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from . import (approvals, docker, files, google_workspace, health, host, jellyfin, maps,
-               price_watches, searchgram, uptime_kuma)
+from . import (approvals, docker, files, google_workspace, groceries, health, host, jellyfin,
+               maps, price_watches, searchgram, uptime_kuma)
 from .config import CALLBACK_TOKEN, TOKEN
 from .router import Router
 
@@ -13,7 +13,7 @@ from .router import Router
 def build_router():
     router = Router()
     for module in (host, docker, uptime_kuma, searchgram, jellyfin, files,
-                   google_workspace, maps, price_watches):
+                   google_workspace, maps, price_watches, groceries):
         module.register_routes(router)
     return router
 
@@ -95,6 +95,7 @@ class API(BaseHTTPRequestHandler):
 
 def run():
     register_actions()
+    groceries.setup()
     price_watches.start_background_tasks()
     google_workspace.start_oauth_server()
     ThreadingHTTPServer(("0.0.0.0", 8080), API).serve_forever()

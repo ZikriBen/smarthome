@@ -1,0 +1,108 @@
+{
+ "q": "ממרח חלבה",
+ "_source": "REAL data reconstructed from live NUC run 20261019-112140-nuc by tools/fixtures_from_run.py; pack sizes = price/unit_price; no secrets",
+ "results": [
+  {
+   "code": "P_7290011498511",
+   "name": "ממרח חלבה מלאה",
+   "price": {
+    "value": 13.9
+   },
+   "effectivePrice": null,
+   "promotionMsg": null,
+   "unitDescription": "350 גרם",
+   "sellingMethod": {
+    "code": "BY_UNIT"
+   },
+   "stock": {
+    "stockLevelStatus": {
+     "code": "inStock"
+    }
+   },
+   "purchasable": true,
+   "brand": {
+    "name": "שקד תבור"
+   },
+   "commercialCategoryGroup": null,
+   "commercialCategorySubGroup": null,
+   "commercialDepartment": null,
+   "pricePerUnit": null,
+   "unitForComparison": null
+  },
+  {
+   "code": "P_7290106770577",
+   "name": "ממרח חלבה",
+   "price": {
+    "value": 15.9
+   },
+   "effectivePrice": null,
+   "promotionMsg": null,
+   "unitDescription": "350 גרם",
+   "sellingMethod": {
+    "code": "BY_UNIT"
+   },
+   "stock": {
+    "stockLevelStatus": {
+     "code": "inStock"
+    }
+   },
+   "purchasable": true,
+   "brand": null,
+   "commercialCategoryGroup": null,
+   "commercialCategorySubGroup": null,
+   "commercialDepartment": null,
+   "pricePerUnit": null,
+   "unitForComparison": null
+  },
+  {
+   "code": "P_7290018249086",
+   "name": "ממרח בטעם חלווה פיסטוק",
+   "price": {
+    "value": 33.9
+   },
+   "effectivePrice": null,
+   "promotionMsg": null,
+   "unitDescription": "350 גרם",
+   "sellingMethod": {
+    "code": "BY_UNIT"
+   },
+   "stock": {
+    "stockLevelStatus": {
+     "code": "inStock"
+    }
+   },
+   "purchasable": true,
+   "brand": null,
+   "commercialCategoryGroup": null,
+   "commercialCategorySubGroup": null,
+   "commercialDepartment": null,
+   "pricePerUnit": null,
+   "unitForComparison": null
+  },
+  {
+   "code": "P_2190516",
+   "name": "צנצנת ממרח ריבת חלב",
+   "price": {
+    "value": 15.9
+   },
+   "effectivePrice": null,
+   "promotionMsg": null,
+   "unitDescription": "450 גרם",
+   "sellingMethod": {
+    "code": "BY_UNIT"
+   },
+   "stock": {
+    "stockLevelStatus": {
+     "code": "inStock"
+    }
+   },
+   "purchasable": true,
+   "brand": null,
+   "commercialCategoryGroup": null,
+   "commercialCategorySubGroup": null,
+   "commercialDepartment": null,
+   "pricePerUnit": null,
+   "unitForComparison": null
+  }
+ ]
+}

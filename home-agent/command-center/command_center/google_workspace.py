@@ -11,24 +11,39 @@ from email.message import EmailMessage
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from . import approvals, calendar_recurrence
-from .config import GOOGLE_CLIENT_SECRET, GOOGLE_REDIRECT_URI, GOOGLE_SCOPES, GOOGLE_TOKEN
+from .config import (GOOGLE_CLIENT_SECRET, GOOGLE_REDIRECT_URI, GOOGLE_SCOPES, GOOGLE_TASKS_SCOPES,
+                     GOOGLE_TASKS_TOKEN, GOOGLE_TOKEN)
 
 _auth_lock = threading.Lock()
 _pending_state = None
 _pending_code_verifier = None
+_pending_profile = "workspace"
+
+# One consent per profile, each with its own token file. "workspace" is the original
+# Calendar+Gmail grant and is unchanged; "tasks" only ever writes GOOGLE_TASKS_TOKEN.
+AUTH_PROFILES = {
+    "workspace": (GOOGLE_SCOPES, GOOGLE_TOKEN, "Google Calendar and Gmail are connected."),
+    "tasks": (GOOGLE_TASKS_SCOPES, GOOGLE_TASKS_TOKEN, "Google Tasks is connected."),
+}
 
 
-def google_flow():
+def _auth_profile(profile):
+    if profile not in AUTH_PROFILES:
+        raise ValueError("profile must be workspace or tasks")
+    return AUTH_PROFILES[profile]
+
+
+def google_flow(scopes=GOOGLE_SCOPES):
     from google_auth_oauthlib.flow import Flow
     if not GOOGLE_CLIENT_SECRET.is_file():
         raise ValueError("Google OAuth client is not configured")
     os.environ.setdefault("OAUTHLIB_INSECURE_TRANSPORT", "1")
     return Flow.from_client_secrets_file(
-        str(GOOGLE_CLIENT_SECRET), scopes=GOOGLE_SCOPES, redirect_uri=GOOGLE_REDIRECT_URI)
+        str(GOOGLE_CLIENT_SECRET), scopes=scopes, redirect_uri=GOOGLE_REDIRECT_URI)
 
 
-def save_google_token(credentials):
-    descriptor = os.open(GOOGLE_TOKEN, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+def save_google_token(credentials, path=GOOGLE_TOKEN):
+    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(descriptor, "w", encoding="utf-8") as token_file:
         os.fchmod(descriptor, 0o600)
         token_file.write(credentials.to_json())
@@ -52,19 +67,25 @@ def google_status():
     return {"client_configured": GOOGLE_CLIENT_SECRET.is_file(),
             "authorized": GOOGLE_TOKEN.is_file(),
             "scopes": ["calendar.readonly", "calendar.events.owned", "gmail.readonly",
-                       "gmail.send"]}
+                       "gmail.send"],
+            "tasks_authorized": GOOGLE_TASKS_TOKEN.is_file()}
 
 
-def google_auth_start():
-    global _pending_state, _pending_code_verifier
-    flow = google_flow()
+def google_auth_start(profile="workspace"):
+    global _pending_state, _pending_code_verifier, _pending_profile
+    scopes, _token, _message = _auth_profile(profile)
+    flow = google_flow(scopes)
     flow.code_verifier = secrets.token_urlsafe(64)
+    # The tasks grant must contain ONLY the tasks scope (oauthlib rejects a changed scope set).
     authorization_url, state = flow.authorization_url(
-        access_type="offline", prompt="consent", include_granted_scopes="true")
+        access_type="offline", prompt="consent",
+        include_granted_scopes="true" if profile == "workspace" else "false")
     with _auth_lock:
         _pending_state = state
         _pending_code_verifier = flow.code_verifier
-    return {"authorization_url": authorization_url, "redirect_uri": GOOGLE_REDIRECT_URI}
+        _pending_profile = profile
+    return {"authorization_url": authorization_url, "redirect_uri": GOOGLE_REDIRECT_URI,
+            "profile": profile}
 
 
 def google_calendars():
@@ -351,7 +372,8 @@ def propose_gmail_send(payload):
 
 def register_routes(router):
     router.get("/v1/google/status", lambda _p, _q: google_status())
-    router.post("/v1/google/auth/start", lambda _p, _q: google_auth_start())
+    router.post("/v1/google/auth/start", lambda p, _q: google_auth_start(
+        p.get("profile", "workspace")))
     router.post("/v1/google/calendar/list", lambda _p, _q: google_calendars())
     router.post("/v1/google/calendar/events", lambda p, _q: google_calendar_events(
         p.get("days", 7), p.get("max_results", 25)))
@@ -402,29 +424,32 @@ class GoogleOAuthCallback(BaseHTTPRequestHandler):
         pass
 
     def do_GET(self):
-        global _pending_state, _pending_code_verifier
+        global _pending_state, _pending_code_verifier, _pending_profile
         params = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
         if params.get("error"):
             return self._reply(400, "Google authorization was cancelled or denied. You can close this page.")
         code, state = params.get("code", [None])[0], params.get("state", [None])[0]
         with _auth_lock:
             valid_state, code_verifier = _pending_state, _pending_code_verifier
+            profile = _pending_profile
+        scopes, token_path, done_message = _auth_profile(profile)
         if not code or not state or not secrets.compare_digest(state, valid_state or ""):
             return self._reply(
                 400, "Invalid or expired Google authorization request. Start authorization again.")
         try:
-            flow = google_flow()
+            flow = google_flow(scopes)
             flow.code_verifier = code_verifier
             flow.fetch_token(authorization_response=GOOGLE_REDIRECT_URI + "?" +
                              urllib.parse.urlencode({"code": code, "state": state}))
-            save_google_token(flow.credentials)
+            save_google_token(flow.credentials, token_path)
             with _auth_lock:
                 _pending_state = None
                 _pending_code_verifier = None
+                _pending_profile = "workspace"
         except Exception as exc:
             print(f"[google-oauth] token exchange failed: {type(exc).__name__}: {exc}", flush=True)
             return self._reply(400, "Google authorization could not be completed. Return to the assistant and try again.")
-        return self._reply(200, "Google Calendar and Gmail are connected. You can close this page.")
+        return self._reply(200, done_message + " You can close this page.")
 
     def _reply(self, status, message):
         self.send_response(status)

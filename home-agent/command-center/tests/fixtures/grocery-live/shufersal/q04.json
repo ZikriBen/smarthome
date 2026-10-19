@@ -1,0 +1,606 @@
+{
+ "q": "חלב",
+ "_source": "REAL data reconstructed from live NUC run 20261019-112140-nuc by tools/fixtures_from_run.py; pack sizes = price/unit_price; no secrets (raw capture, whitelisted fields)",
+ "results": [
+  {
+   "code": "P_522319",
+   "name": "חלב טרי מהגולן 3%",
+   "url": "/%D7%A7%D7%98%D7%92%D7%95%D7%A8%D7%99%D7%95%D7%AA/%D7%A1%D7%95%D7%A4%D7%A8%D7%9E%D7%A8%D7%A7%D7%98/%D7%9E%D7%95%D7%A6%D7%A8%D7%99-%D7%97%D7%9C%D7%91-%D7%95%D7%91%D7%99%D7%A6%D7%99%D7%9D/%D7%9E%D7%95%D7%A6%D7%A8%D7%99-%D7%97%D7%9C%D7%91-%D7%95%D7%91%D7%99%D7%A6%D7%99%D7%9D/%D7%97%D7%9C%D7%91-%D7%98%D7%A8%D7%99/%D7%97%D7%9C%D7%91-%D7%98%D7%A8%D7%99-%D7%9E%D7%94%D7%92%D7%95%D7%9C%D7%9F-3%25/p/P_522319",
+   "purchasable": null,
+   "stock": {
+    "stockLevelStatus": {
+     "code": "inStock",
+     "type": "StockLevelStatus"
+    },
+    "stockLevel": null,
+    "stockThreshold": null,
+    "available": null,
+    "reserved": null,
+    "invMethod": null,
+    "inventoryManagement": null,
+    "inventoryOnTheWay": null,
+    "minimalThreshold1": null,
+    "minimalThreshold2": null,
+    "warehouse": null,
+    "productCode": null
+   },
+   "price": {
+    "currencyIso": "ILS",
+    "value": 7.35,
+    "priceType": "BUY",
+    "formattedValue": "7.35 ₪",
+    "minQuantity": null,
+    "maxQuantity": null
+   },
+   "sku": "522319",
+   "commercialDepartment": null,
+   "brand": {
+    "code": null,
+    "name": "מחלבות רמת הגולן"
+   },
+   "brandName": "מחלבות רמת הגולן",
+   "sellingMethod": {
+    "code": "BY_UNIT",
+    "type": "SellingMethodEnum"
+   },
+   "minOrderWeight": null,
+   "pricePerUnit": {
+    "currencyIso": "ILS",
+    "value": 0.74,
+    "priceType": "BUY",
+    "formattedValue": "0.74 ₪",
+    "minQuantity": null,
+    "maxQuantity": null
+   },
+   "valueForComparison": 100,
+   "unitForComparison": "מ\"ל",
+   "unitDescription": "1 ליטר",
+   "numberContentUnits": null,
+   "commercialCategoryGroup": null,
+   "commercialCategorySubGroup": null,
+   "promotionMsg": null,
+   "effectivePrice": null,
+   "weightIncrement": null
+  },
+  {
+   "code": "P_4131074",
+   "name": "חלב בקרטון 3% שומן",
+   "url": "/%D7%A7%D7%98%D7%92%D7%95%D7%A8%D7%99%D7%95%D7%AA/%D7%A1%D7%95%D7%A4%D7%A8%D7%9E%D7%A8%D7%A7%D7%98/%D7%9E%D7%95%D7%A6%D7%A8%D7%99-%D7%97%D7%9C%D7%91-%D7%95%D7%91%D7%99%D7%A6%D7%99%D7%9D/%D7%9E%D7%95%D7%A6%D7%A8%D7%99-%D7%97%D7%9C%D7%91-%D7%95%D7%91%D7%99%D7%A6%D7%99%D7%9D/%D7%97%D7%9C%D7%91-%D7%98%D7%A8%D7%99/%D7%97%D7%9C%D7%91-%D7%91%D7%A7%D7%A8%D7%98%D7%95%D7%9F-3%25-%D7%A9%D7%95%D7%9E%D7%9F/p/P_4131074",
+   "purchasable": null,
+   "stock": {
+    "stockLevelStatus": {
+     "code": "inStock",
+     "type": "StockLevelStatus"
+    },
+    "stockLevel": null,
+    "stockThreshold": null,
+    "available": null,
+    "reserved": null,
+    "invMethod": null,
+    "inventoryManagement": null,
+    "inventoryOnTheWay": null,
+    "minimalThreshold1": null,
+    "minimalThreshold2": null,
+    "warehouse": null,
+    "productCode": null
+   },
+   "price": {
+    "currencyIso": "ILS",
+    "value": 7.35,
+    "priceType": "BUY",
+    "formattedValue": "7.35 ₪",
+    "minQuantity": null,
+    "maxQuantity": null
+   },
+   "sku": "4131074",
+   "commercialDepartment": null,
+   "brand": {
+    "code": null,
+    "name": "תנובה"
+   },
+   "brandName": "תנובה",
+   "sellingMethod": {
+    "code": "BY_UNIT",
+    "type": "SellingMethodEnum"
+   },
+   "minOrderWeight": null,
+   "pricePerUnit": {
+    "currencyIso": "ILS",
+    "value": 0.74,
+    "priceType": "BUY",
+    "formattedValue": "0.74 ₪",
+    "minQuantity": null,
+    "maxQuantity": null
+   },
+   "valueForComparison": 100,
+   "unitForComparison": "מ\"ל",
+   "unitDescription": "1 ליטר",
+   "numberContentUnits": null,
+   "commercialCategoryGroup": null,
+   "commercialCategorySubGroup": null,
+   "promotionMsg": null,
+   "effectivePrice": null,
+   "weightIncrement": null
+  },
+  {
+   "code": "P_7290107932080",
+   "name": "חלב מועשר 3% בבקבוק",
+   "url": "/%D7%A7%D7%98%D7%92%D7%95%D7%A8%D7%99%D7%95%D7%AA/%D7%A1%D7%95%D7%A4%D7%A8%D7%9E%D7%A8%D7%A7%D7%98/%D7%9E%D7%95%D7%A6%D7%A8%D7%99-%D7%97%D7%9C%D7%91-%D7%95%D7%91%D7%99%D7%A6%D7%99%D7%9D/%D7%9E%D7%95%D7%A6%D7%A8%D7%99-%D7%97%D7%9C%D7%91-%D7%95%D7%91%D7%99%D7%A6%D7%99%D7%9D/%D7%97%D7%9C%D7%91-%D7%98%D7%A8%D7%99/%D7%97%D7%9C%D7%91-%D7%9E%D7%95%D7%A2%D7%A9%D7%A8-3%25-%D7%91%D7%91%D7%A7%D7%91%D7%95%D7%A7/p/P_7290107932080",
+   "purchasable": null,
+   "stock": {
+    "stockLevelStatus": {
+     "code": "inStock",
+     "type": "StockLevelStatus"
+    },
+    "stockLevel": null,
+    "stockThreshold": null,
+    "available": null,
+    "reserved": null,
+    "invMethod": null,
+    "inventoryManagement": null,
+    "inventoryOnTheWay": null,
+    "minimalThreshold1": null,
+    "minimalThreshold2": null,
+    "warehouse": null,
+    "productCode": null
+   },
+   "price": {
+    "currencyIso": "ILS",
+    "value": 9.3,
+    "priceType": "BUY",
+    "formattedValue": "9.30 ₪",
+    "minQuantity": null,
+    "maxQuantity": null
+   },
+   "sku": "7290107932080",
+   "commercialDepartment": null,
+   "brand": {
+    "code": null,
+    "name": "יטבתה"
+   },
+   "brandName": "יטבתה",
+   "sellingMethod": {
+    "code": "BY_UNIT",
+    "type": "SellingMethodEnum"
+   },
+   "minOrderWeight": null,
+   "pricePerUnit": {
+    "currencyIso": "ILS",
+    "value": 0.93,
+    "priceType": "BUY",
+    "formattedValue": "0.93 ₪",
+    "minQuantity": null,
+    "maxQuantity": null
+   },
+   "valueForComparison": 100,
+   "unitForComparison": "מ\"ל",
+   "unitDescription": "1 ליטר",
+   "numberContentUnits": null,
+   "commercialCategoryGroup": null,
+   "commercialCategorySubGroup": null,
+   "promotionMsg": null,
+   "effectivePrice": null,
+   "weightIncrement": null
+  },
+  {
+   "code": "P_7290110563462",
+   "name": "חלב נטול לקטוז 2%",
+   "url": "/%D7%A7%D7%98%D7%92%D7%95%D7%A8%D7%99%D7%95%D7%AA/%D7%A1%D7%95%D7%A4%D7%A8%D7%9E%D7%A8%D7%A7%D7%98/%D7%9E%D7%95%D7%A6%D7%A8%D7%99-%D7%97%D7%9C%D7%91-%D7%95%D7%91%D7%99%D7%A6%D7%99%D7%9D/%D7%9E%D7%95%D7%A6%D7%A8%D7%99-%D7%97%D7%9C%D7%91-%D7%95%D7%91%D7%99%D7%A6%D7%99%D7%9D/%D7%97%D7%9C%D7%91-%D7%98%D7%A8%D7%99/%D7%97%D7%9C%D7%91-%D7%A0%D7%98%D7%95%D7%9C-%D7%9C%D7%A7%D7%98%D7%95%D7%96-2%25/p/P_7290110563462",
+   "purchasable": null,
+   "stock": {
+    "stockLevelStatus": {
+     "code": "inStock",
+     "type": "StockLevelStatus"
+    },
+    "stockLevel": null,
+    "stockThreshold": null,
+    "available": null,
+    "reserved": null,
+    "invMethod": null,
+    "inventoryManagement": null,
+    "inventoryOnTheWay": null,
+    "minimalThreshold1": null,
+    "minimalThreshold2": null,
+    "warehouse": null,
+    "productCode": null
+   },
+   "price": {
+    "currencyIso": "ILS",
+    "value": 10.1,
+    "priceType": "BUY",
+    "formattedValue": "10.10 ₪",
+    "minQuantity": null,
+    "maxQuantity": null
+   },
+   "sku": "7290110563462",
+   "commercialDepartment": null,
+   "brand": {
+    "code": null,
+    "name": "יטבתה"
+   },
+   "brandName": "יטבתה",
+   "sellingMethod": {
+    "code": "BY_UNIT",
+    "type": "SellingMethodEnum"
+   },
+   "minOrderWeight": null,
+   "pricePerUnit": {
+    "currencyIso": "ILS",
+    "value": 1.01,
+    "priceType": "BUY",
+    "formattedValue": "1.01 ₪",
+    "minQuantity": null,
+    "maxQuantity": null
+   },
+   "valueForComparison": 100,
+   "unitForComparison": "מ\"ל",
+   "unitDescription": "1 ליטר",
+   "numberContentUnits": null,
+   "commercialCategoryGroup": null,
+   "commercialCategorySubGroup": null,
+   "promotionMsg": null,
+   "effectivePrice": null,
+   "weightIncrement": null
+  },
+  {
+   "code": "P_42435",
+   "name": "חלב מפוסטר 1% בקרטון",
+   "url": "/%D7%A7%D7%98%D7%92%D7%95%D7%A8%D7%99%D7%95%D7%AA/%D7%A1%D7%95%D7%A4%D7%A8%D7%9E%D7%A8%D7%A7%D7%98/%D7%9E%D7%95%D7%A6%D7%A8%D7%99-%D7%97%D7%9C%D7%91-%D7%95%D7%91%D7%99%D7%A6%D7%99%D7%9D/%D7%9E%D7%95%D7%A6%D7%A8%D7%99-%D7%97%D7%9C%D7%91-%D7%95%D7%91%D7%99%D7%A6%D7%99%D7%9D/%D7%97%D7%9C%D7%91-%D7%98%D7%A8%D7%99/%D7%97%D7%9C%D7%91-%D7%9E%D7%A4%D7%95%D7%A1%D7%98%D7%A8-1%25-%D7%91%D7%A7%D7%A8%D7%98%D7%95%D7%9F/p/P_42435",
+   "purchasable": null,
+   "stock": {
+    "stockLevelStatus": {
+     "code": "inStock",
+     "type": "StockLevelStatus"
+    },
+    "stockLevel": null,
+    "stockThreshold": null,
+    "available": null,
+    "reserved": null,
+    "invMethod": null,
+    "inventoryManagement": null,
+    "inventoryOnTheWay": null,
+    "minimalThreshold1": null,
+    "minimalThreshold2": null,
+    "warehouse": null,
+    "productCode": null
+   },
+   "price": {
+    "currencyIso": "ILS",
+    "value": 6.92,
+    "priceType": "BUY",
+    "formattedValue": "6.92 ₪",
+    "minQuantity": null,
+    "maxQuantity": null
+   },
+   "sku": "42435",
+   "commercialDepartment": null,
+   "brand": {
+    "code": null,
+    "name": "תנובה"
+   },
+   "brandName": "תנובה",
+   "sellingMethod": {
+    "code": "BY_UNIT",
+    "type": "SellingMethodEnum"
+   },
+   "minOrderWeight": null,
+   "pricePerUnit": {
+    "currencyIso": "ILS",
+    "value": 0.69,
+    "priceType": "BUY",
+    "formattedValue": "0.69 ₪",
+    "minQuantity": null,
+    "maxQuantity": null
+   },
+   "valueForComparison": 100,
+   "unitForComparison": "מ\"ל",
+   "unitDescription": "1 ליטר",
+   "numberContentUnits": null,
+   "commercialCategoryGroup": null,
+   "commercialCategorySubGroup": null,
+   "promotionMsg": null,
+   "effectivePrice": null,
+   "weightIncrement": null
+  },
+  {
+   "code": "P_7290116930695",
+   "name": "חלב נטול לקטוז 2% מהדרין",
+   "url": "/%D7%A7%D7%98%D7%92%D7%95%D7%A8%D7%99%D7%95%D7%AA/%D7%A1%D7%95%D7%A4%D7%A8%D7%9E%D7%A8%D7%A7%D7%98/%D7%9E%D7%95%D7%A6%D7%A8%D7%99-%D7%97%D7%9C%D7%91-%D7%95%D7%91%D7%99%D7%A6%D7%99%D7%9D/%D7%9E%D7%95%D7%A6%D7%A8%D7%99-%D7%97%D7%9C%D7%91-%D7%95%D7%91%D7%99%D7%A6%D7%99%D7%9D/%D7%97%D7%9C%D7%91-%D7%98%D7%A8%D7%99/%D7%97%D7%9C%D7%91-%D7%A0%D7%98%D7%95%D7%9C-%D7%9C%D7%A7%D7%98%D7%95%D7%96-2%25-%D7%9E%D7%94%D7%93%D7%A8%D7%99%D7%9F/p/P_7290116930695",
+   "purchasable": null,
+   "stock": {
+    "stockLevelStatus": {
+     "code": "inStock",
+     "type": "StockLevelStatus"
+    },
+    "stockLevel": null,
+    "stockThreshold": null,
+    "available": null,
+    "reserved": null,
+    "invMethod": null,
+    "inventoryManagement": null,
+    "inventoryOnTheWay": null,
+    "minimalThreshold1": null,
+    "minimalThreshold2": null,
+    "warehouse": null,
+    "productCode": null
+   },
+   "price": {
+    "currencyIso": "ILS",
+    "value": 8.9,
+    "priceType": "BUY",
+    "formattedValue": "8.90 ₪",
+    "minQuantity": null,
+    "maxQuantity": null
+   },
+   "sku": "7290116930695",
+   "commercialDepartment": null,
+   "brand": {
+    "code": null,
+    "name": "תנובה"
+   },
+   "brandName": "תנובה",
+   "sellingMethod": {
+    "code": "BY_UNIT",
+    "type": "SellingMethodEnum"
+   },
+   "minOrderWeight": null,
+   "pricePerUnit": {
+    "currencyIso": "ILS",
+    "value": 0.89,
+    "priceType": "BUY",
+    "formattedValue": "0.89 ₪",
+    "minQuantity": null,
+    "maxQuantity": null
+   },
+   "valueForComparison": 100,
+   "unitForComparison": "מ\"ל",
+   "unitDescription": "1 ליטר",
+   "numberContentUnits": null,
+   "commercialCategoryGroup": null,
+   "commercialCategorySubGroup": null,
+   "promotionMsg": null,
+   "effectivePrice": null,
+   "weightIncrement": null
+  },
+  {
+   "code": "P_40974",
+   "name": "חלב טרי 2% דל לקטוז",
+   "url": "/%D7%A7%D7%98%D7%92%D7%95%D7%A8%D7%99%D7%95%D7%AA/%D7%A1%D7%95%D7%A4%D7%A8%D7%9E%D7%A8%D7%A7%D7%98/%D7%9E%D7%95%D7%A6%D7%A8%D7%99-%D7%97%D7%9C%D7%91-%D7%95%D7%91%D7%99%D7%A6%D7%99%D7%9D/%D7%9E%D7%95%D7%A6%D7%A8%D7%99-%D7%97%D7%9C%D7%91-%D7%95%D7%91%D7%99%D7%A6%D7%99%D7%9D/%D7%97%D7%9C%D7%91-%D7%98%D7%A8%D7%99/%D7%97%D7%9C%D7%91-%D7%98%D7%A8%D7%99-2%25-%D7%93%D7%9C-%D7%9C%D7%A7%D7%98%D7%95%D7%96/p/P_40974",
+   "purchasable": null,
+   "stock": {
+    "stockLevelStatus": {
+     "code": "inStock",
+     "type": "StockLevelStatus"
+    },
+    "stockLevel": null,
+    "stockThreshold": null,
+    "available": null,
+    "reserved": null,
+    "invMethod": null,
+    "inventoryManagement": null,
+    "inventoryOnTheWay": null,
+    "minimalThreshold1": null,
+    "minimalThreshold2": null,
+    "warehouse": null,
+    "productCode": null
+   },
+   "price": {
+    "currencyIso": "ILS",
+    "value": 8.3,
+    "priceType": "BUY",
+    "formattedValue": "8.30 ₪",
+    "minQuantity": null,
+    "maxQuantity": null
+   },
+   "sku": "40974",
+   "commercialDepartment": null,
+   "brand": {
+    "code": null,
+    "name": "תנובה"
+   },
+   "brandName": "תנובה",
+   "sellingMethod": {
+    "code": "BY_UNIT",
+    "type": "SellingMethodEnum"
+   },
+   "minOrderWeight": null,
+   "pricePerUnit": {
+    "currencyIso": "ILS",
+    "value": 0.83,
+    "priceType": "BUY",
+    "formattedValue": "0.83 ₪",
+    "minQuantity": null,
+    "maxQuantity": null
+   },
+   "valueForComparison": 100,
+   "unitForComparison": "מ\"ל",
+   "unitDescription": "1 ליטר",
+   "numberContentUnits": null,
+   "commercialCategoryGroup": null,
+   "commercialCategorySubGroup": null,
+   "promotionMsg": null,
+   "effectivePrice": null,
+   "weightIncrement": null
+  },
+  {
+   "code": "P_56845",
+   "name": "חלב טרי הומוגני 3% קרטון",
+   "url": "/%D7%A7%D7%98%D7%92%D7%95%D7%A8%D7%99%D7%95%D7%AA/%D7%A1%D7%95%D7%A4%D7%A8%D7%9E%D7%A8%D7%A7%D7%98/%D7%9E%D7%95%D7%A6%D7%A8%D7%99-%D7%97%D7%9C%D7%91-%D7%95%D7%91%D7%99%D7%A6%D7%99%D7%9D/%D7%9E%D7%95%D7%A6%D7%A8%D7%99-%D7%97%D7%9C%D7%91-%D7%95%D7%91%D7%99%D7%A6%D7%99%D7%9D/%D7%97%D7%9C%D7%91-%D7%98%D7%A8%D7%99/%D7%97%D7%9C%D7%91-%D7%98%D7%A8%D7%99-%D7%94%D7%95%D7%9E%D7%95%D7%92%D7%A0%D7%99-3%25-%D7%A7%D7%A8%D7%98%D7%95%D7%9F/p/P_56845",
+   "purchasable": null,
+   "stock": {
+    "stockLevelStatus": {
+     "code": "inStock",
+     "type": "StockLevelStatus"
+    },
+    "stockLevel": null,
+    "stockThreshold": null,
+    "available": null,
+    "reserved": null,
+    "invMethod": null,
+    "inventoryManagement": null,
+    "inventoryOnTheWay": null,
+    "minimalThreshold1": null,
+    "minimalThreshold2": null,
+    "warehouse": null,
+    "productCode": null
+   },
+   "price": {
+    "currencyIso": "ILS",
+    "value": 11.02,
+    "priceType": "BUY",
+    "formattedValue": "11.02 ₪",
+    "minQuantity": null,
+    "maxQuantity": null
+   },
+   "sku": "56845",
+   "commercialDepartment": null,
+   "brand": {
+    "code": null,
+    "name": "תנובה"
+   },
+   "brandName": "תנובה",
+   "sellingMethod": {
+    "code": "BY_UNIT",
+    "type": "SellingMethodEnum"
+   },
+   "minOrderWeight": null,
+   "pricePerUnit": {
+    "currencyIso": "ILS",
+    "value": 0.73,
+    "priceType": "BUY",
+    "formattedValue": "0.73 ₪",
+    "minQuantity": null,
+    "maxQuantity": null
+   },
+   "valueForComparison": 100,
+   "unitForComparison": "מ\"ל",
+   "unitDescription": "1.5 ליטר",
+   "numberContentUnits": null,
+   "commercialCategoryGroup": null,
+   "commercialCategorySubGroup": null,
+   "promotionMsg": null,
+   "effectivePrice": null,
+   "weightIncrement": null
+  },
+  {
+   "code": "P_7290102398065",
+   "name": "חלב 3% בקרטון מהדרין",
+   "url": "/%D7%A7%D7%98%D7%92%D7%95%D7%A8%D7%99%D7%95%D7%AA/%D7%A1%D7%95%D7%A4%D7%A8%D7%9E%D7%A8%D7%A7%D7%98/%D7%9E%D7%95%D7%A6%D7%A8%D7%99-%D7%97%D7%9C%D7%91-%D7%95%D7%91%D7%99%D7%A6%D7%99%D7%9D/%D7%9E%D7%95%D7%A6%D7%A8%D7%99-%D7%97%D7%9C%D7%91-%D7%95%D7%91%D7%99%D7%A6%D7%99%D7%9D/%D7%97%D7%9C%D7%91-%D7%98%D7%A8%D7%99/%D7%97%D7%9C%D7%91-3%25-%D7%91%D7%A7%D7%A8%D7%98%D7%95%D7%9F-%D7%9E%D7%94%D7%93%D7%A8%D7%99%D7%9F/p/P_7290102398065",
+   "purchasable": null,
+   "stock": {
+    "stockLevelStatus": {
+     "code": "inStock",
+     "type": "StockLevelStatus"
+    },
+    "stockLevel": null,
+    "stockThreshold": null,
+    "available": null,
+    "reserved": null,
+    "invMethod": null,
+    "inventoryManagement": null,
+    "inventoryOnTheWay": null,
+    "minimalThreshold1": null,
+    "minimalThreshold2": null,
+    "warehouse": null,
+    "productCode": null
+   },
+   "price": {
+    "currencyIso": "ILS",
+    "value": 14.7,
+    "priceType": "BUY",
+    "formattedValue": "14.70 ₪",
+    "minQuantity": null,
+    "maxQuantity": null
+   },
+   "sku": "7290102398065",
+   "commercialDepartment": null,
+   "brand": {
+    "code": null,
+    "name": "טרה"
+   },
+   "brandName": "טרה",
+   "sellingMethod": {
+    "code": "BY_UNIT",
+    "type": "SellingMethodEnum"
+   },
+   "minOrderWeight": null,
+   "pricePerUnit": {
+    "currencyIso": "ILS",
+    "value": 0.74,
+    "priceType": "BUY",
+    "formattedValue": "0.74 ₪",
+    "minQuantity": null,
+    "maxQuantity": null
+   },
+   "valueForComparison": 100,
+   "unitForComparison": "מ\"ל",
+   "unitDescription": "2 ליטר",
+   "numberContentUnits": null,
+   "commercialCategoryGroup": null,
+   "commercialCategorySubGroup": null,
+   "promotionMsg": null,
+   "effectivePrice": null,
+   "weightIncrement": null
+  },
+  {
+   "code": "P_7290116936307",
+   "name": "חלב 3% שומן מהדרין",
+   "url": "/%D7%A7%D7%98%D7%92%D7%95%D7%A8%D7%99%D7%95%D7%AA/%D7%A1%D7%95%D7%A4%D7%A8%D7%9E%D7%A8%D7%A7%D7%98/%D7%9E%D7%95%D7%A6%D7%A8%D7%99-%D7%97%D7%9C%D7%91-%D7%95%D7%91%D7%99%D7%A6%D7%99%D7%9D/%D7%9E%D7%95%D7%A6%D7%A8%D7%99-%D7%97%D7%9C%D7%91-%D7%95%D7%91%D7%99%D7%A6%D7%99%D7%9D/%D7%97%D7%9C%D7%91-%D7%98%D7%A8%D7%99/%D7%97%D7%9C%D7%91-3%25-%D7%A9%D7%95%D7%9E%D7%9F-%D7%9E%D7%94%D7%93%D7%A8%D7%99%D7%9F/p/P_7290116936307",
+   "purchasable": null,
+   "stock": {
+    "stockLevelStatus": {
+     "code": "inStock",
+     "type": "StockLevelStatus"
+    },
+    "stockLevel": null,
+    "stockThreshold": null,
+    "available": null,
+    "reserved": null,
+    "invMethod": null,
+    "inventoryManagement": null,
+    "inventoryOnTheWay": null,
+    "minimalThreshold1": null,
+    "minimalThreshold2": null,
+    "warehouse": null,
+    "productCode": null
+   },
+   "price": {
+    "currencyIso": "ILS",
+    "value": 14.7,
+    "priceType": "BUY",
+    "formattedValue": "14.70 ₪",
+    "minQuantity": null,
+    "maxQuantity": null
+   },
+   "sku": "7290116936307",
+   "commercialDepartment": null,
+   "brand": {
+    "code": null,
+    "name": "תנובה"
+   },
+   "brandName": "תנובה",
+   "sellingMethod": {
+    "code": "BY_UNIT",
+    "type": "SellingMethodEnum"
+   },
+   "minOrderWeight": null,
+   "pricePerUnit": {
+    "currencyIso": "ILS",
+    "value": 0.74,
+    "priceType": "BUY",
+    "formattedValue": "0.74 ₪",
+    "minQuantity": null,
+    "maxQuantity": null
+   },
+   "valueForComparison": 100,
+   "unitForComparison": "מ\"ל",
+   "unitDescription": "2 ליטר",
+   "numberContentUnits": null,
+   "commercialCategoryGroup": null,
+   "commercialCategorySubGroup": null,
+   "promotionMsg": null,
+   "effectivePrice": null,
+   "weightIncrement": null
+  }
+ ]
+}

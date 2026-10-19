@@ -1,0 +1,108 @@
+{
+ "q": "חומץ",
+ "_source": "REAL data reconstructed from live NUC run 20261019-112140-nuc by tools/fixtures_from_run.py; pack sizes = price/unit_price; no secrets",
+ "results": [
+  {
+   "code": "P_209012",
+   "name": "חומץ 5%",
+   "price": {
+    "value": 6.9
+   },
+   "effectivePrice": null,
+   "promotionMsg": null,
+   "unitDescription": "1 ליטר",
+   "sellingMethod": {
+    "code": "BY_UNIT"
+   },
+   "stock": {
+    "stockLevelStatus": {
+     "code": "inStock"
+    }
+   },
+   "purchasable": true,
+   "brand": {
+    "name": "יכין"
+   },
+   "commercialCategoryGroup": null,
+   "commercialCategorySubGroup": null,
+   "commercialDepartment": null,
+   "pricePerUnit": null,
+   "unitForComparison": null
+  },
+  {
+   "code": "P_272726",
+   "name": "חומץ 5%",
+   "price": {
+    "value": 7.9
+   },
+   "effectivePrice": null,
+   "promotionMsg": null,
+   "unitDescription": "1 ליטר",
+   "sellingMethod": {
+    "code": "BY_UNIT"
+   },
+   "stock": {
+    "stockLevelStatus": {
+     "code": "inStock"
+    }
+   },
+   "purchasable": true,
+   "brand": null,
+   "commercialCategoryGroup": null,
+   "commercialCategorySubGroup": null,
+   "commercialDepartment": null,
+   "pricePerUnit": null,
+   "unitForComparison": null
+  },
+  {
+   "code": "P_4607002994328",
+   "name": "חומץ 9%",
+   "price": {
+    "value": 10.9
+   },
+   "effectivePrice": null,
+   "promotionMsg": null,
+   "unitDescription": "1 ליטר",
+   "sellingMethod": {
+    "code": "BY_UNIT"
+   },
+   "stock": {
+    "stockLevelStatus": {
+     "code": "inStock"
+    }
+   },
+   "purchasable": true,
+   "brand": null,
+   "commercialCategoryGroup": null,
+   "commercialCategorySubGroup": null,
+   "commercialDepartment": null,
+   "pricePerUnit": null,
+   "unitForComparison": null
+  },
+  {
+   "code": "P_7290010970261",
+   "name": "חומץ תפוחי עץ",
+   "price": {
+    "value": 15.5
+   },
+   "effectivePrice": null,
+   "promotionMsg": null,
+   "unitDescription": "500 מ\"ל",
+   "sellingMethod": {
+    "code": "BY_UNIT"
+   },
+   "stock": {
+    "stockLevelStatus": {
+     "code": "inStock"
+    }
+   },
+   "purchasable": true,
+   "brand": null,
+   "commercialCategoryGroup": null,
+   "commercialCategorySubGroup": null,
+   "commercialDepartment": null,
+   "pricePerUnit": null,
+   "unitForComparison": null
+  }
+ ]
+}

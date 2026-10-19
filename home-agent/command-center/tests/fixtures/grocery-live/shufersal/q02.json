@@ -1,0 +1,108 @@
+{
+ "q": "פלפל אדום",
+ "_source": "REAL data reconstructed from live NUC run 20261019-112140-nuc by tools/fixtures_from_run.py; pack sizes = price/unit_price; no secrets",
+ "results": [
+  {
+   "code": "P_91",
+   "name": "פלפל אדום",
+   "price": {
+    "value": 10.9
+   },
+   "effectivePrice": null,
+   "promotionMsg": null,
+   "unitDescription": null,
+   "sellingMethod": {
+    "code": "BY_WEIGHT"
+   },
+   "stock": {
+    "stockLevelStatus": {
+     "code": "inStock"
+    }
+   },
+   "purchasable": true,
+   "brand": {
+    "name": "קטיף"
+   },
+   "commercialCategoryGroup": null,
+   "commercialCategorySubGroup": null,
+   "commercialDepartment": null,
+   "pricePerUnit": null,
+   "unitForComparison": null
+  },
+  {
+   "code": "P_9137057",
+   "name": "מארז פלפל אדום אורגני",
+   "price": {
+    "value": 24.9
+   },
+   "effectivePrice": null,
+   "promotionMsg": null,
+   "unitDescription": "650 גרם",
+   "sellingMethod": {
+    "code": "BY_UNIT"
+   },
+   "stock": {
+    "stockLevelStatus": {
+     "code": "inStock"
+    }
+   },
+   "purchasable": true,
+   "brand": null,
+   "commercialCategoryGroup": null,
+   "commercialCategorySubGroup": null,
+   "commercialDepartment": null,
+   "pricePerUnit": null,
+   "unitForComparison": null
+  },
+  {
+   "code": "P_619",
+   "name": "פלפל חריף",
+   "price": {
+    "value": 12.9
+   },
+   "effectivePrice": null,
+   "promotionMsg": null,
+   "unitDescription": null,
+   "sellingMethod": {
+    "code": "BY_WEIGHT"
+   },
+   "stock": {
+    "stockLevelStatus": {
+     "code": "inStock"
+    }
+   },
+   "purchasable": true,
+   "brand": null,
+   "commercialCategoryGroup": null,
+   "commercialCategorySubGroup": null,
+   "commercialDepartment": null,
+   "pricePerUnit": null,
+   "unitForComparison": null
+  },
+  {
+   "code": "P_7290013090454",
+   "name": "פלפל חריף אדום אורגני",
+   "price": {
+    "value": 12.9
+   },
+   "effectivePrice": null,
+   "promotionMsg": null,
+   "unitDescription": "80 גרם",
+   "sellingMethod": {
+    "code": "BY_UNIT"
+   },
+   "stock": {
+    "stockLevelStatus": {
+     "code": "inStock"
+    }
+   },
+   "purchasable": true,
+   "brand": null,
+   "commercialCategoryGroup": null,
+   "commercialCategorySubGroup": null,
+   "commercialDepartment": null,
+   "pricePerUnit": null,
+   "unitForComparison": null
+  }
+ ]
+}

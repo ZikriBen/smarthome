@@ -28,3 +28,9 @@ GOOGLE_SCOPES = [
     "https://www.googleapis.com/auth/gmail.readonly",
     "https://www.googleapis.com/auth/gmail.send",
 ]
+# Google Tasks (grocery list) uses its OWN token so Calendar/Gmail never depend on the
+# tasks scope: a missing or revoked Tasks grant can't break their refresh.
+GOOGLE_TASKS_TOKEN = Path("/data/google-tasks-token.json")
+GOOGLE_TASKS_SCOPES = ["https://www.googleapis.com/auth/tasks"]
+GROCERY_TASKLIST = os.environ.get("GROCERY_TASKLIST", "קניות")
+GROCERY_LIST_BACKEND = os.environ.get("GROCERY_LIST_BACKEND", "tasks")  # tasks | local

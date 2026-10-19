@@ -1,0 +1,108 @@
+{
+ "q": "מלפפון",
+ "_source": "REAL data reconstructed from live NUC run 20261019-112140-nuc by tools/fixtures_from_run.py; pack sizes = price/unit_price; no secrets",
+ "results": [
+  {
+   "code": "P_46",
+   "name": "מלפפון",
+   "price": {
+    "value": 7.9
+   },
+   "effectivePrice": null,
+   "promotionMsg": null,
+   "unitDescription": null,
+   "sellingMethod": {
+    "code": "BY_WEIGHT"
+   },
+   "stock": {
+    "stockLevelStatus": {
+     "code": "inStock"
+    }
+   },
+   "purchasable": true,
+   "brand": {
+    "name": "קטיף"
+   },
+   "commercialCategoryGroup": null,
+   "commercialCategorySubGroup": null,
+   "commercialDepartment": null,
+   "pricePerUnit": null,
+   "unitForComparison": null
+  },
+  {
+   "code": "P_2057468",
+   "name": "מלפפון בחומץ בינוני10-12",
+   "price": {
+    "value": 10.5
+   },
+   "effectivePrice": null,
+   "promotionMsg": null,
+   "unitDescription": "540 גרם",
+   "sellingMethod": {
+    "code": "BY_UNIT"
+   },
+   "stock": {
+    "stockLevelStatus": {
+     "code": "inStock"
+    }
+   },
+   "purchasable": true,
+   "brand": null,
+   "commercialCategoryGroup": null,
+   "commercialCategorySubGroup": null,
+   "commercialDepartment": null,
+   "pricePerUnit": null,
+   "unitForComparison": null
+  },
+  {
+   "code": "P_9136982",
+   "name": "מארז מלפפון אורגני",
+   "price": {
+    "value": 17.9
+   },
+   "effectivePrice": null,
+   "promotionMsg": null,
+   "unitDescription": "500 גרם",
+   "sellingMethod": {
+    "code": "BY_UNIT"
+   },
+   "stock": {
+    "stockLevelStatus": {
+     "code": "inStock"
+    }
+   },
+   "purchasable": true,
+   "brand": null,
+   "commercialCategoryGroup": null,
+   "commercialCategorySubGroup": null,
+   "commercialDepartment": null,
+   "pricePerUnit": null,
+   "unitForComparison": null
+  },
+  {
+   "code": "P_7296073733546",
+   "name": "תחליב רחצה בתוספת מלפפון",
+   "price": {
+    "value": 18.9
+   },
+   "effectivePrice": null,
+   "promotionMsg": null,
+   "unitDescription": "750 מ\"ל",
+   "sellingMethod": {
+    "code": "BY_UNIT"
+   },
+   "stock": {
+    "stockLevelStatus": {
+     "code": "inStock"
+    }
+   },
+   "purchasable": true,
+   "brand": null,
+   "commercialCategoryGroup": null,
+   "commercialCategorySubGroup": null,
+   "commercialDepartment": null,
+   "pricePerUnit": null,
+   "unitForComparison": null
+  }
+ ]
+}

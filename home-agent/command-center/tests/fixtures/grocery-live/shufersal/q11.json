@@ -1,0 +1,108 @@
+{
+ "q": "שיבולת שועל",
+ "_source": "REAL data reconstructed from live NUC run 20261019-112140-nuc by tools/fixtures_from_run.py; pack sizes = price/unit_price; no secrets",
+ "results": [
+  {
+   "code": "P_7290014095960",
+   "name": "שיבולת שועל עבה",
+   "price": {
+    "value": 5.9
+   },
+   "effectivePrice": null,
+   "promotionMsg": null,
+   "unitDescription": "400 גרם",
+   "sellingMethod": {
+    "code": "BY_UNIT"
+   },
+   "stock": {
+    "stockLevelStatus": {
+     "code": "inStock"
+    }
+   },
+   "purchasable": true,
+   "brand": {
+    "name": "שקדיה"
+   },
+   "commercialCategoryGroup": null,
+   "commercialCategorySubGroup": null,
+   "commercialDepartment": null,
+   "pricePerUnit": null,
+   "unitForComparison": null
+  },
+  {
+   "code": "P_5000108478119",
+   "name": "קוואקר שיבולת שועל",
+   "price": {
+    "value": 13.9
+   },
+   "effectivePrice": null,
+   "promotionMsg": null,
+   "unitDescription": "500 גרם",
+   "sellingMethod": {
+    "code": "BY_UNIT"
+   },
+   "stock": {
+    "stockLevelStatus": {
+     "code": "inStock"
+    }
+   },
+   "purchasable": true,
+   "brand": null,
+   "commercialCategoryGroup": null,
+   "commercialCategorySubGroup": null,
+   "commercialDepartment": null,
+   "pricePerUnit": null,
+   "unitForComparison": null
+  },
+  {
+   "code": "P_7290014095861",
+   "name": "שבולת שועל דקה",
+   "price": {
+    "value": 5.9
+   },
+   "effectivePrice": null,
+   "promotionMsg": null,
+   "unitDescription": "400 גרם",
+   "sellingMethod": {
+    "code": "BY_UNIT"
+   },
+   "stock": {
+    "stockLevelStatus": {
+     "code": "inStock"
+    }
+   },
+   "purchasable": true,
+   "brand": null,
+   "commercialCategoryGroup": null,
+   "commercialCategorySubGroup": null,
+   "commercialDepartment": null,
+   "pricePerUnit": null,
+   "unitForComparison": null
+  },
+  {
+   "code": "P_7290017894089",
+   "name": "קמח שיבולת שועל",
+   "price": {
+    "value": 21.9
+   },
+   "effectivePrice": null,
+   "promotionMsg": null,
+   "unitDescription": "500 גרם",
+   "sellingMethod": {
+    "code": "BY_UNIT"
+   },
+   "stock": {
+    "stockLevelStatus": {
+     "code": "inStock"
+    }
+   },
+   "purchasable": true,
+   "brand": null,
+   "commercialCategoryGroup": null,
+   "commercialCategorySubGroup": null,
+   "commercialDepartment": null,
+   "pricePerUnit": null,
+   "unitForComparison": null
+  }
+ ]
+}

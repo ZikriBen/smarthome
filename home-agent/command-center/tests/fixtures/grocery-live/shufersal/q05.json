@@ -1,0 +1,108 @@
+{
+ "q": "ממרח שוקולד",
+ "_source": "REAL data reconstructed from live NUC run 20261019-112140-nuc by tools/fixtures_from_run.py; pack sizes = price/unit_price; no secrets",
+ "results": [
+  {
+   "code": "P_416021",
+   "name": "ממרח השחר העולה",
+   "price": {
+    "value": 13.9
+   },
+   "effectivePrice": null,
+   "promotionMsg": null,
+   "unitDescription": "500 גרם",
+   "sellingMethod": {
+    "code": "BY_UNIT"
+   },
+   "stock": {
+    "stockLevelStatus": {
+     "code": "inStock"
+    }
+   },
+   "purchasable": true,
+   "brand": {
+    "name": "השחר"
+   },
+   "commercialCategoryGroup": null,
+   "commercialCategorySubGroup": null,
+   "commercialDepartment": null,
+   "pricePerUnit": null,
+   "unitForComparison": null
+  },
+  {
+   "code": "P_416045",
+   "name": "ממרח השחר העולה",
+   "price": {
+    "value": 28.5
+   },
+   "effectivePrice": null,
+   "promotionMsg": null,
+   "unitDescription": "1 ק\"ג",
+   "sellingMethod": {
+    "code": "BY_UNIT"
+   },
+   "stock": {
+    "stockLevelStatus": {
+     "code": "inStock"
+    }
+   },
+   "purchasable": true,
+   "brand": null,
+   "commercialCategoryGroup": null,
+   "commercialCategorySubGroup": null,
+   "commercialDepartment": null,
+   "pricePerUnit": null,
+   "unitForComparison": null
+  },
+  {
+   "code": "P_7296073724148",
+   "name": "ממרח אגוזי לוז וקקאו",
+   "price": {
+    "value": 10.0
+   },
+   "effectivePrice": null,
+   "promotionMsg": null,
+   "unitDescription": "350 גרם",
+   "sellingMethod": {
+    "code": "BY_UNIT"
+   },
+   "stock": {
+    "stockLevelStatus": {
+     "code": "inStock"
+    }
+   },
+   "purchasable": true,
+   "brand": null,
+   "commercialCategoryGroup": null,
+   "commercialCategorySubGroup": null,
+   "commercialDepartment": null,
+   "pricePerUnit": null,
+   "unitForComparison": null
+  },
+  {
+   "code": "P_416618",
+   "name": "ממרח בטעם שוקולד בד\"ץ",
+   "price": {
+    "value": 12.9
+   },
+   "effectivePrice": null,
+   "promotionMsg": null,
+   "unitDescription": "400 גרם",
+   "sellingMethod": {
+    "code": "BY_UNIT"
+   },
+   "stock": {
+    "stockLevelStatus": {
+     "code": "inStock"
+    }
+   },
+   "purchasable": true,
+   "brand": null,
+   "commercialCategoryGroup": null,
+   "commercialCategorySubGroup": null,
+   "commercialDepartment": null,
+   "pricePerUnit": null,
+   "unitForComparison": null
+  }
+ ]
+}

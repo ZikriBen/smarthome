@@ -1,0 +1,108 @@
+{
+ "q": "קולה זירו",
+ "_source": "REAL data reconstructed from live NUC run 20261019-112140-nuc by tools/fixtures_from_run.py; pack sizes = price/unit_price; no secrets",
+ "results": [
+  {
+   "code": "P_7290110115869",
+   "name": "קוקה קולה זירו",
+   "price": {
+    "value": 8.5
+   },
+   "effectivePrice": null,
+   "promotionMsg": null,
+   "unitDescription": "1.5 ליטר",
+   "sellingMethod": {
+    "code": "BY_UNIT"
+   },
+   "stock": {
+    "stockLevelStatus": {
+     "code": "inStock"
+    }
+   },
+   "purchasable": true,
+   "brand": {
+    "name": "קוקה קולה"
+   },
+   "commercialCategoryGroup": null,
+   "commercialCategorySubGroup": null,
+   "commercialDepartment": null,
+   "pricePerUnit": null,
+   "unitForComparison": null
+  },
+  {
+   "code": "P_7290110115234",
+   "name": "קולה זירו נטול קפאין",
+   "price": {
+    "value": 8.5
+   },
+   "effectivePrice": null,
+   "promotionMsg": null,
+   "unitDescription": "1.5 ליטר",
+   "sellingMethod": {
+    "code": "BY_UNIT"
+   },
+   "stock": {
+    "stockLevelStatus": {
+     "code": "inStock"
+    }
+   },
+   "purchasable": true,
+   "brand": null,
+   "commercialCategoryGroup": null,
+   "commercialCategorySubGroup": null,
+   "commercialDepartment": null,
+   "pricePerUnit": null,
+   "unitForComparison": null
+  },
+  {
+   "code": "P_7290110115241",
+   "name": "קוקה קולה זירו לימון",
+   "price": {
+    "value": 8.5
+   },
+   "effectivePrice": null,
+   "promotionMsg": null,
+   "unitDescription": "1.5 ליטר",
+   "sellingMethod": {
+    "code": "BY_UNIT"
+   },
+   "stock": {
+    "stockLevelStatus": {
+     "code": "inStock"
+    }
+   },
+   "purchasable": true,
+   "brand": null,
+   "commercialCategoryGroup": null,
+   "commercialCategorySubGroup": null,
+   "commercialDepartment": null,
+   "pricePerUnit": null,
+   "unitForComparison": null
+  },
+  {
+   "code": "P_7290013585387",
+   "name": "קולה זירו",
+   "price": {
+    "value": 7.5
+   },
+   "effectivePrice": null,
+   "promotionMsg": null,
+   "unitDescription": "1 ליטר",
+   "sellingMethod": {
+    "code": "BY_UNIT"
+   },
+   "stock": {
+    "stockLevelStatus": {
+     "code": "inStock"
+    }
+   },
+   "purchasable": true,
+   "brand": null,
+   "commercialCategoryGroup": null,
+   "commercialCategorySubGroup": null,
+   "commercialDepartment": null,
+   "pricePerUnit": null,
+   "unitForComparison": null
+  }
+ ]
+}

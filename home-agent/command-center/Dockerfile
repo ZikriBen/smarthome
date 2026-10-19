@@ -3,6 +3,9 @@ WORKDIR /app
 COPY app.py /app/app.py
 COPY mcp-server.py /app/mcp-server.py
 COPY command_center /app/command_center
+# Vendored grocery POC (stdlib + requests); learned defaults/state live in /data/grocery.
+COPY grocery /app/grocery
+COPY grocery-defaults.yaml /app/grocery-defaults.yaml
 COPY mcp-requirements.txt /app/mcp-requirements.txt
 RUN pip install --no-cache-dir -r /app/mcp-requirements.txt
 # Docker's Unix socket is root-owned on the host. This service is therefore

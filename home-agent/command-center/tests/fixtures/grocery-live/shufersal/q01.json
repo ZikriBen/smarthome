@@ -1,0 +1,108 @@
+{
+ "q": "ביצים",
+ "_source": "REAL data reconstructed from live NUC run 20261019-112140-nuc by tools/fixtures_from_run.py; pack sizes = price/unit_price; no secrets",
+ "results": [
+  {
+   "code": "P_1201602",
+   "name": "ביצים ארוזות L",
+   "price": {
+    "value": 21.36
+   },
+   "effectivePrice": null,
+   "promotionMsg": null,
+   "unitDescription": "18 יח'",
+   "sellingMethod": {
+    "code": "BY_UNIT"
+   },
+   "stock": {
+    "stockLevelStatus": {
+     "code": "inStock"
+    }
+   },
+   "purchasable": true,
+   "brand": {
+    "name": "לסר"
+   },
+   "commercialCategoryGroup": null,
+   "commercialCategorySubGroup": null,
+   "commercialDepartment": null,
+   "pricePerUnit": null,
+   "unitForComparison": null
+  },
+  {
+   "code": "P_1201572",
+   "name": "ביצים ארוזות XL",
+   "price": {
+    "value": 15.48
+   },
+   "effectivePrice": null,
+   "promotionMsg": null,
+   "unitDescription": "12 יח'",
+   "sellingMethod": {
+    "code": "BY_UNIT"
+   },
+   "stock": {
+    "stockLevelStatus": {
+     "code": "inStock"
+    }
+   },
+   "purchasable": true,
+   "brand": null,
+   "commercialCategoryGroup": null,
+   "commercialCategorySubGroup": null,
+   "commercialDepartment": null,
+   "pricePerUnit": null,
+   "unitForComparison": null
+  },
+  {
+   "code": "P_1201619",
+   "name": "ביצים ארוזות M",
+   "price": {
+    "value": 19.69
+   },
+   "effectivePrice": null,
+   "promotionMsg": null,
+   "unitDescription": "18 יח'",
+   "sellingMethod": {
+    "code": "BY_UNIT"
+   },
+   "stock": {
+    "stockLevelStatus": {
+     "code": "inStock"
+    }
+   },
+   "purchasable": true,
+   "brand": null,
+   "commercialCategoryGroup": null,
+   "commercialCategorySubGroup": null,
+   "commercialDepartment": null,
+   "pricePerUnit": null,
+   "unitForComparison": null
+  },
+  {
+   "code": "P_1201855",
+   "name": "ביצים אומגה 3 L",
+   "price": {
+    "value": 23.9
+   },
+   "effectivePrice": null,
+   "promotionMsg": null,
+   "unitDescription": "12 יח'",
+   "sellingMethod": {
+    "code": "BY_UNIT"
+   },
+   "stock": {
+    "stockLevelStatus": {
+     "code": "inStock"
+    }
+   },
+   "purchasable": true,
+   "brand": null,
+   "commercialCategoryGroup": null,
+   "commercialCategorySubGroup": null,
+   "commercialDepartment": null,
+   "pricePerUnit": null,
+   "unitForComparison": null
+  }
+ ]
+}

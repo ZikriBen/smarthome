@@ -1,0 +1,17 @@
+{
+ "_source": "REAL data reconstructed from live NUC run 20261019-112140-nuc by tools/fixtures_from_run.py; pack sizes = price/unit_price; no secrets",
+ "_store": null,
+ "ביצים": "q01.json",
+ "פלפל אדום": "q02.json",
+ "מלפפון": "q03.json",
+ "חלב": "q04.json",
+ "ממרח שוקולד": "q05.json",
+ "ממרח חלבה": "q06.json",
+ "אבקת מרק עוף": "q07.json",
+ "פיתות": "q08.json",
+ "חומץ": "q09.json",
+ "רדיד אלומיניום": "q10.json",
+ "שיבולת שועל": "q11.json",
+ "קולה זירו": "q12.json",
+ "סוכר לבן": "q13.json"
+}
