@@ -88,6 +88,8 @@ class GroceryRouteTests(unittest.TestCase):
         urls_in_msg = re.findall(r"\]\((https://[^)]+)\)", st["message"])
         self.assertEqual(urls_in_msg, [links["rami_levy"], links["shufersal"]])   # exact, unmodified
         self.assertIn("🛒 13 פריטים", st["message"])
+        self.assertIn(";101,0.75;", links["rami_levy"])          # weighed: exact kg (5 × 0.15)
+        self.assertNotIn("בדוק בעגלה", st["message"])
         lines = db.run_lines(conn(), started["run_id"])
         self.assertEqual(len(lines), 26)
         self.assertEqual(sum(l["in_link"] for l in lines if l["site"] == "rami_levy"), 13)

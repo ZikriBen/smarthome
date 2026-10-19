@@ -261,7 +261,7 @@ def compare_compact(results: Dict[str, List[Pick]], names: Dict[str, str]) -> st
 SHORT = {"rami_levy": "רמי", "shufersal": "שופרסל"}
 LINK_TEXT = {"rami_levy": ("פתח עגלה ברמי לוי", "מחליף את העגלה בדפדפן"),
              "shufersal": ("פתח רשימה בשופרסל", "לחץ \"הוסף לסל\"; מוסיף לעגלה הקיימת")}
-WEIGHT_QTY_CONFIRMED = {"shufersal"}       # Rami weighed qty semantics not yet confirmed by Ben
+WEIGHT_QTY_CONFIRMED = {"shufersal", "rami_levy"}   # kg in links: Shufersal P_91:0.5, Rami 101,0.75 (Ben 19.10)
 DIFF_MIN = 1.0
 MIXED_MIN = 15.0
 MAX_DIFFS = 8

@@ -109,6 +109,10 @@ def has_word(word: str, text: str) -> bool:
     return re.search(r"(?<![\w])" + w + r"(?![\w])", N.norm_text(text)) is not None
 
 
+FRACTIONAL_KG_SITES = {"rami_levy"}   # weighed qty = exact kg (2 decimals, min MIN_KG), no site step
+MIN_KG = 0.1
+
+
 def resolve_qty(item: Item, p: Product, produce_defaults: dict) -> (float, List[str]):
     """Final cart quantity for the chosen product + explanatory flags. See README 'Quantities'."""
     flags = []
@@ -125,9 +129,14 @@ def resolve_qty(item: Item, p: Product, produce_defaults: dict) -> (float, List[
             flags.append(f"{item.qty:g} יח' ≈ {kg:g} ק\"ג (משקל יחידה {uw:g})")
         else:
             kg = item.qty
-        q = N.round_qty(kg, True, p.step)
+        if p.site in FRACTIONAL_KG_SITES:
+            # Rami Levy basket link takes any kg amount (Ben verified 101,1 and 101,0.75 on 19.10.2026)
+            q = max(MIN_KG, round(kg, 2))
+        else:
+            q = N.round_qty(kg, True, p.step)
         if abs(q - kg) > 1e-9:
-            flags.append(f"כמות עוגלה ל-{q:g} ק\"ג (צעד {p.step or 0.5:g})")
+            flags.append(f"כמות עוגלה ל-{q:g} ק\"ג" + ("" if p.site in FRACTIONAL_KG_SITES
+                                                           else f" (צעד {p.step or 0.5:g})"))
         return q, flags
     if item.qty is None:
         n = produce_defaults.get("units", 5) if item.produce else 1
