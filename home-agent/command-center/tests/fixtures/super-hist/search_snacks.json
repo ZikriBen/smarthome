@@ -1,72 +1,114 @@
 {
- "_comment": "SYNTHETIC fixture (hand-written, fake products) matching the /search-results/ JSON shape (served as text/html)",
- "results": 46,
- "text": "נמצאו 46 תוצאות",
+ "_comment": "Search JSON. KEYS/TYPES copied from the real /search-results/ response (live run 2026-10-20; served as text/html). VALUES SYNTHETIC. weight/out_of_stock/in_cart are booleans; bgfnribbon_text and special are false when absent. The by-weight item (weight true + weight_unit_price_text) is an assumption: none was observed live.",
+ "text": "מעבר לכל ה (46) תוצאות",
+ "results": "46",
+ "button_cart": "הוספה לסל",
+ "text_loading": "טוען...",
+ "button_more_details": "פרטים נוספים",
+ "search_input": "חטיף",
+ "out_of_stock_text": "אזל מהמלאי",
+ "gtag_code": [
+  {
+   "name": "search",
+   "params": {
+    "search_term": "חטיף"
+   }
+  }
+ ],
+ "system_analytics_code": [
+  {
+   "name": "search",
+   "params": {
+    "search_term": "חטיף"
+   }
+  }
+ ],
+ "fbq_code": [
+  null
+ ],
  "data": [
   {
+   "bgfnribbon_text": "2 ב-10",
    "product_id": "900404",
    "name": "חטיף תפוחי אדמה 50 גרם - חברה לדוגמה",
    "price": "₪7.90",
+   "price_number": "7.9000",
    "special": "₪5.90",
-   "price_number": 7.9,
-   "in_cart": false,
+   "tax": "₪5.90",
    "minimum": "1",
-   "weight": "0",
+   "rating": 0,
    "out_of_stock": false,
+   "weight": false,
+   "weight_unit_price_text": "",
+   "in_cart": false,
    "href": "https://super-hist.co.il/index.php?route=product/product&product_id=900404",
-   "thumb": "https://super-hist.co.il/image/cache/fake-900404-200x200.jpg",
-   "bgfnribbon_text": "2 ב-10"
+   "thumb": "https://super-hist.co.il/image/cache/fake-900404-200x200.jpg"
   },
   {
+   "bgfnribbon_text": false,
    "product_id": "900101",
    "name": "חלב טרי 3% 1 ליטר - מחלבה לדוגמה",
    "price": "₪7.10",
+   "price_number": "7.1000",
    "special": "₪6.20",
-   "price_number": 7.1,
-   "in_cart": true,
+   "tax": "₪6.20",
    "minimum": "1",
-   "weight": "0",
+   "rating": 0,
    "out_of_stock": false,
+   "weight": false,
+   "weight_unit_price_text": "",
+   "in_cart": true,
    "href": "https://super-hist.co.il/index.php?route=product/product&product_id=900101",
    "thumb": "https://super-hist.co.il/image/cache/fake-900101-200x200.jpg"
   },
   {
+   "bgfnribbon_text": false,
    "product_id": "900505",
    "name": "חטיף תירס 80 גרם",
    "price": "₪4.50",
-   "special": "",
-   "price_number": 4.5,
-   "in_cart": false,
+   "price_number": "4.5000",
+   "special": false,
+   "tax": "₪4.50",
    "minimum": "1",
-   "weight": "0",
+   "rating": 0,
    "out_of_stock": true,
+   "weight": false,
+   "weight_unit_price_text": "",
+   "in_cart": false,
    "href": "https://super-hist.co.il/index.php?route=product/product&product_id=900505",
    "thumb": "https://super-hist.co.il/image/cache/fake-900505-200x200.jpg"
   },
   {
+   "bgfnribbon_text": false,
    "product_id": "900303",
    "name": "עגבניות שרי במשקל",
    "price": "₪9.90",
-   "special": "",
-   "price_number": 9.9,
-   "in_cart": false,
+   "price_number": "9.9000",
+   "special": false,
+   "tax": "₪9.90",
    "minimum": "0.5",
-   "weight": "1",
+   "rating": 0,
    "out_of_stock": false,
+   "weight": true,
+   "weight_unit_price_text": "₪19.80 לק\"ג",
+   "in_cart": false,
    "href": "https://super-hist.co.il/index.php?route=product/product&product_id=900303",
-   "thumb": "https://super-hist.co.il/image/cache/fake-900303-200x200.jpg",
-   "weight_unit_price_text": "₪19.80 לק\"ג"
+   "thumb": "https://super-hist.co.il/image/cache/fake-900303-200x200.jpg"
   },
   {
+   "bgfnribbon_text": false,
    "product_id": "900606",
    "name": "חטיף אורז 100 גרם",
    "price": "₪8.40",
-   "special": "",
-   "price_number": 8.4,
-   "in_cart": false,
+   "price_number": "8.4000",
+   "special": false,
+   "tax": "₪8.40",
    "minimum": "1",
-   "weight": "0",
+   "rating": 0,
    "out_of_stock": false,
+   "weight": false,
+   "weight_unit_price_text": "",
+   "in_cart": false,
    "href": "https://super-hist.co.il/index.php?route=product/product&product_id=900606",
    "thumb": "https://super-hist.co.il/image/cache/fake-900606-200x200.jpg"
   }

@@ -1,35 +1,126 @@
-<!-- SYNTHETIC fixture (hand-written, fake data) matching the istores/OpenCart cart page structure:
-     div.cart_product[data-product_id][data-cart-id], .product-description a, .price_span ins/del,
-     input[name=quantity], .sub_total / .final_sum.total -> .total_text. Header (name/phone/address) omitted. -->
-<html><head><title>עגלת קניות | הסופר החברתי</title></head><body>
-<div id="cart-page" class="cart-page container">
-  <div class="cart_products_list">
-    <div class="cart_product flex items-center" data-product_id="900101" data-cart-id="7001">
-      <div class="image"><img src="https://super-hist.co.il/image/cache/fake-milk-100x100.jpg" alt=""></div>
-      <div class="product-description"><a href="https://super-hist.co.il/index.php?route=product/product&amp;product_id=900101">חלב טרי 3% 1 ליטר - מחלבה לדוגמה</a>
-        <span class="unit_text">יח׳</span></div>
-      <div class="price_span"><ins>₪6.20</ins> <del>₪7.10</del></div>
-      <div class="quantity_box"><button class="minus">-</button>
-        <input type="text" name="quantity" value="2" class="form-control"><button class="plus">+</button></div>
-      <a class="remove" onclick="cart.remove('7001','900101');">הסר</a>
+<!-- Cart page fixture. STRUCTURE copied from the real super-hist.co.il cart page in the approved live run
+     (2026-10-20 23:26 IDT): markup of one line and of the totals, verbatim apart from whitespace. Every VALUE
+     is SYNTHETIC (fake product ids, cart ids, names, prices, image URLs). The page header/footer (name, phone,
+     address, scripts, analytics) is not included. The by-weight line (qty 0.5) is an assumption: no by-weight
+     product was in the cart during the live run. -->
+<html><head><title>עגלת קניות | הסופר החברתי</title></head><body class="checkout-cart">
+<div id="checkout-cart" class="container">
+<div class="cart-items">
+<div class="cart_product product-item py-4 md:px-4 border-b border-gray-200 md:border-none" data-product_id="900101"   data-cart-id="7001"  >
+    <div class="product_row product-1">
+        <div class="grid grid-cols-2 md:grid-cols-5 md:my-3 md:gap-4 relative">
+            <div class="remove_item">
+                <i class="fal fa-times" onclick="cart.remove('7001', '900101');"></i>
+            </div>
+            <div class="product-thumb justify-center sm:justify-start">
+                <a href="https://super-hist.co.il/index.php?route=product/product&amp;product_id=900101"><img src="https://super-hist.co.il/image/cache/fake-900101.jpg" alt="חלב טרי 3% 1 ליטר - מחלבה לדוגמה" title="חלב טרי 3% 1 ליטר - מחלבה לדוגמה" class="img-fluid" /></a>
+            </div>
+            <div class="md:col-span-2 product-description px-2 flex-col justify-center">
+                <a href="https://super-hist.co.il/index.php?route=product/product&amp;product_id=900101">חלב טרי 3% 1 ליטר - מחלבה לדוגמה</a>
+            </div>
+            <!-- Cart product price section -->
+            <div class="product-price hidden md:flex col-span-1 items-center justify-center">
+                <div class="flex justify-center flex-col price_span">
+                <del>₪7.10</del>
+                <ins>₪6.20</ins>
+                </div>
+            </div>
+            <!-- Cart product quantity section -->
+            <div class="qty_column col-span-4 md:col-span-1 flex flex-row justify-center md:justify-start">
+                <div class="quantity buttons_added relative">
+                    <i class="fas fa-check" style="display: none"></i>
+                    <i data-action="minus" class="fas fa-minus quantity_key "></i>
+                    <input type="number" class="quantity_field form-control"  name="quantity" value="2">
+                    <i data-action="plus" class="fas fa-plus quantity_key "></i>
+                </div>
+                <div class="flex md:hidden justify-end items-center text-center flex-wrap price_span">
+                <del class="w-full flex justify-end">₪7.10</del>
+                <ins>₪6.20</ins>
+                </div>
+            </div>
+        </div>
     </div>
-    <div class="cart_product flex items-center" data-product_id="900202" data-cart-id="7002">
-      <div class="product-description"><a href="https://super-hist.co.il/index.php?route=product/product&amp;product_id=900202">לחם מחיטה מלאה 750 גרם - מאפייה לדוגמה</a></div>
-      <div class="price_span">₪12.90</div>
-      <div class="quantity_box"><input type="text" name="quantity" value="1"></div>
-      <a class="remove" onclick="cart.remove('7002','900202');">הסר</a>
+</div>
+<div class="cart_product product-item py-4 md:px-4 border-b border-gray-200 md:border-none" data-product_id="900202"   data-cart-id="7002"  >
+    <div class="product_row product-2">
+        <div class="grid grid-cols-2 md:grid-cols-5 md:my-3 md:gap-4 relative">
+            <div class="remove_item">
+                <i class="fal fa-times" onclick="cart.remove('7002', '900202');"></i>
+            </div>
+            <div class="product-thumb justify-center sm:justify-start">
+                <a href="https://super-hist.co.il/index.php?route=product/product&amp;product_id=900202"><img src="https://super-hist.co.il/image/cache/fake-900202.jpg" alt="לחם מחיטה מלאה 750 גרם - מאפייה לדוגמה" title="לחם מחיטה מלאה 750 גרם - מאפייה לדוגמה" class="img-fluid" /></a>
+            </div>
+            <div class="md:col-span-2 product-description px-2 flex-col justify-center">
+                <a href="https://super-hist.co.il/index.php?route=product/product&amp;product_id=900202">לחם מחיטה מלאה 750 גרם - מאפייה לדוגמה</a>
+            </div>
+            <!-- Cart product price section -->
+            <div class="product-price hidden md:flex col-span-1 items-center justify-center">
+                <div class="flex justify-center flex-col price_span">
+                ₪12.90
+                </div>
+            </div>
+            <!-- Cart product quantity section -->
+            <div class="qty_column col-span-4 md:col-span-1 flex flex-row justify-center md:justify-start">
+                <div class="quantity buttons_added relative">
+                    <i class="fas fa-check" style="display: none"></i>
+                    <i data-action="minus" class="fas fa-minus quantity_key "></i>
+                    <input type="number" class="quantity_field form-control"  name="quantity" value="1">
+                    <i data-action="plus" class="fas fa-plus quantity_key "></i>
+                </div>
+                <div class="flex md:hidden justify-end items-center text-center flex-wrap price_span">
+                ₪12.90
+                </div>
+            </div>
+        </div>
     </div>
-    <div class="cart_product flex items-center" data-product_id="900303" data-cart-id="7003">
-      <div class="product-description"><a href="https://super-hist.co.il/index.php?route=product/product&amp;product_id=900303">עגבניות &quot;שרי&quot; במשקל</a></div>
-      <div class="price_span"><ins>₪9.90</ins></div>
-      <div class="quantity_box"><input type="text" name="quantity" value="0.5"></div>
-      <a class="remove" onclick="cart.remove('7003','900303');">הסר</a>
+</div>
+<div class="cart_product product-item py-4 md:px-4 border-b border-gray-200 md:border-none" data-product_id="900303"   data-cart-id="7003"  >
+    <div class="product_row product-3">
+        <div class="grid grid-cols-2 md:grid-cols-5 md:my-3 md:gap-4 relative">
+            <div class="remove_item">
+                <i class="fal fa-times" onclick="cart.remove('7003', '900303');"></i>
+            </div>
+            <div class="product-thumb justify-center sm:justify-start">
+                <a href="https://super-hist.co.il/index.php?route=product/product&amp;product_id=900303"><img src="https://super-hist.co.il/image/cache/fake-900303.jpg" alt="עגבניות &quot;שרי&quot; במשקל" title="עגבניות &quot;שרי&quot; במשקל" class="img-fluid" /></a>
+            </div>
+            <div class="md:col-span-2 product-description px-2 flex-col justify-center">
+                <a href="https://super-hist.co.il/index.php?route=product/product&amp;product_id=900303">עגבניות &quot;שרי&quot; במשקל</a>
+            </div>
+            <!-- Cart product price section -->
+            <div class="product-price hidden md:flex col-span-1 items-center justify-center">
+                <div class="flex justify-center flex-col price_span">
+                ₪9.90
+                </div>
+            </div>
+            <!-- Cart product quantity section -->
+            <div class="qty_column col-span-4 md:col-span-1 flex flex-row justify-center md:justify-start">
+                <div class="quantity buttons_added relative">
+                    <i class="fas fa-check" style="display: none"></i>
+                    <i data-action="minus" class="fas fa-minus quantity_key "></i>
+                    <input type="number" class="quantity_field form-control"  name="quantity" value="0.5">
+                    <i data-action="plus" class="fas fa-plus quantity_key "></i>
+                </div>
+                <div class="flex md:hidden justify-end items-center text-center flex-wrap price_span">
+                ₪9.90
+                </div>
+            </div>
+        </div>
     </div>
-  </div>
-  <h3 class="order-summary">סיכום הזמנה</h3>
-  <div class="totals">
-    <div class="sub_total"><span class="title">סכום ביניים</span> <span class="total_text">₪30.25</span></div>
-    <div class="final_sum total"><span class="title">סה"כ לתשלום</span> <span class="total_text">₪30.25</span></div>
-  </div>
+</div>
+</div>
+<div class="totals_row">
+<div class="total_sum flex justify-between   sub_total ">
+    <span class="total_title relative">
+        סכום
+    </span>
+    <span class="total_text" dir="ltr">₪30.25</span>
+</div>
+<div class="total_sum flex justify-between  final_sum total ">
+    <span class="total_title relative">
+        סה"כ
+    </span>
+    <span class="total_text" dir="ltr">₪30.25</span>
+</div>
+</div>
 </div>
 </body></html>

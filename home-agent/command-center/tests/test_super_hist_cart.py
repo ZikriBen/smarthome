@@ -34,18 +34,29 @@ REAL_BASE = sh.BASE
 
 
 def render_cart(lines):
-    """Same structure as the synthetic fixture, generated from the fake site's state."""
+    """The real line/totals markup (as in cart_full.html: self-closing <img />, the price repeated for mobile),
+    generated from the fake site's state."""
     rows = []
     for ln in lines:
-        rows.append(f'<div class="cart_product flex" data-product_id="{ln["pid"]}" data-cart-id="{ln["cid"]}">'
-                    f'<div class="product-description"><a href="#">{ln["name"]}</a></div>'
-                    f'<div class="price_span"><ins>₪{ln["price"]:.2f}</ins></div>'
-                    f'<input type="text" name="quantity" value="{ln["qty"]}"></div>')
+        pid, cid = ln["pid"], ln["cid"]
+        rows.append(f'<div class="cart_product product-item py-4" data-product_id="{pid}"   data-cart-id="{cid}"  >'
+                    f'<div class="product_row"><div class="grid"><div class="remove_item">'
+                    f'<i class="fal fa-times" onclick="cart.remove(\'{cid}\', \'{pid}\');"></i></div>'
+                    f'<div class="product-thumb"><a href="#"><img src="x.jpg" alt="" class="img-fluid" /></a></div>'
+                    f'<div class="md:col-span-2 product-description px-2"><a href="#">{ln["name"]}</a></div>'
+                    f'<div class="product-price"><div class="flex price_span"><del>₪{ln["price"] + 1:.2f}</del>'
+                    f'<ins>₪{ln["price"]:.2f}</ins></div></div>'
+                    f'<div class="qty_column"><div class="quantity buttons_added"><i data-action="minus"></i>'
+                    f'<input type="number" class="quantity_field form-control"  name="quantity" value="{ln["qty"]}">'
+                    f'<i data-action="plus"></i></div><div class="flex md:hidden price_span"><del>₪{ln["price"] + 1:.2f}</del>'
+                    f'<ins>₪{ln["price"]:.2f}</ins></div></div></div></div></div>')
     total = sum(ln["price"] * ln["qty"] for ln in lines)
-    totals = (f'<div class="sub_total"><span>סכום ביניים</span> <span class="total_text">₪{total:.2f}</span></div>'
-              f'<div class="final_sum total"><span>סה"כ</span> <span class="total_text">₪{total:.2f}</span></div>'
+    totals = (f'<div class="total_sum flex sub_total "><span class="total_title">סכום</span>'
+              f'<span class="total_text" dir="ltr">₪{total:.2f}</span></div>'
+              f'<div class="total_sum flex final_sum total "><span class="total_title">סה"כ</span>'
+              f'<span class="total_text" dir="ltr">₪{total:.2f}</span></div>'
               if lines else '<p class="empty-cart">עגלת הקניות שלך ריקה!</p>')
-    return f'<div id="cart-page"><div class="cart_products_list">{"".join(rows)}</div>{totals}</div>'
+    return f'<div id="checkout-cart"><div class="cart-items">{"".join(rows)}</div>{totals}</div>'
 
 
 class Base(unittest.TestCase):
@@ -117,7 +128,10 @@ class FakeSite(Base):
             return 200, {}, render_cart(self.lines)
         if route == "common/cart/info":
             total = sum(ln["price"] * ln["qty"] for ln in self.lines)
-            return 200, {}, f'<span class="hidden_total">{len(self.lines)} פריטים - ₪{total:.2f}</span>'
+            units = sum(ln["qty"] for ln in self.lines)
+            return 200, {}, (f'<div class="cart-items"><input type="hidden" class="hidden_total" '
+                             f'value="{units} פריט\\ים - ₪{total:.2f}"><input type="hidden" '
+                             f'class="hidden_total_for_small_cart" value="{units}"></div>')
         if route == "/search-results/":
             return 200, {"Content-Type": "text/html"}, SEARCH
         if route == "checkout/cart/add":
@@ -170,11 +184,25 @@ class Parsing(unittest.TestCase):
         self.assertIn('"שרי"', tomato["name"])                                        # entities unescaped
         self.assertEqual((cart["subtotal"], cart["total"]), (30.25, 30.25))
 
+    def test_self_closing_tags_do_not_close_a_line(self):
+        # Regression from the live run: <img ... /> made html.parser report </img>, which unwound the stack
+        # and closed every line before its quantity was read (all 22 real lines failed closed).
+        page = ('<div class="cart_product" data-product_id="1" data-cart-id="2"><a><img src="x" /></a><br/>'
+                '</span><div class="product-description"><a>שם</a></div><div class="price_span"><ins>₪3.00</ins></div>'
+                '<input type="number" name="quantity" value="4"></div>')
+        line = sh.parse_cart(page)["lines"][0]
+        self.assertEqual((line["name"], line["quantity"], line["unit_price"]), ("שם", 4, 3.0))
+
+    def test_unit_price_times_qty_is_the_total(self):
+        cart = sh.parse_cart(CART_FULL)   # the real site shows the UNIT price per line (verified live)
+        self.assertAlmostEqual(sum(l["unit_price"] * l["quantity"] for l in cart["lines"]), cart["total"])
+
     def test_empty_cart_and_mini_cart(self):
         cart = sh.parse_cart(CART_EMPTY)
         self.assertEqual((cart["count"], cart["lines"], cart["total"]), (0, [], None))
         self.assertEqual(sh.parse_cart_info(INFO_EMPTY), (0, 0.0))
-        self.assertEqual(sh.parse_cart_info(INFO_3), (3, 30.25))
+        self.assertEqual(sh.parse_cart_info(INFO_3), (3, 30.25))   # hidden <input value=…>
+        self.assertEqual(sh.parse_cart_info('<span class="hidden_total">2 פריטים - ₪4.00</span>'), (2, 4.0))
 
     def test_unknown_page_and_broken_lines_fail_closed(self):
         with self.assertRaises(sh.SiteChanged):
@@ -195,6 +223,8 @@ class Parsing(unittest.TestCase):
         self.assertTrue(by["900505"]["out_of_stock"])
         self.assertTrue(by["900303"]["weighted"])
         self.assertEqual((by["900606"]["price"], by["900606"]["on_sale"]), (8.40, False))
+        self.assertIsNone(by["900606"]["promo"])            # bgfnribbon_text: false -> no promo (not "False")
+        self.assertFalse(by["900404"]["weighted"])          # weight: false (bool) on packaged products
         self.assertTrue(all(p["url"].startswith("https://super-hist.co.il/") for p in found["products"]))
         self.assertEqual(sh.parse_search((FX / "search_empty.json").read_text())["products"], [])
         with self.assertRaises(sh.SiteChanged):

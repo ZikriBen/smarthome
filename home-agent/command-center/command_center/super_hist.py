@@ -453,9 +453,10 @@ def _pid(value):
 # --------------------------------------------------------------------------- parsing (pure)
 
 class _CartParser(html.parser.HTMLParser):
-    """Lines: div.cart_product[data-product_id][data-cart-id]; name .product-description a; unit price
-    .price_span ins (sale) / del (shelf) or the span text; qty input[name=quantity]. Totals: .sub_total /
-    .final_sum.total -> .total_text."""
+    """Lines: div.cart_product[data-product_id][data-cart-id]; name .product-description a; UNIT price
+    .price_span ins (sale) / del (shelf) or the span text (verified live: sum(unit x qty) == the cart total;
+    the page repeats .price_span for mobile, the first number wins); qty input[name=quantity]. Totals:
+    .sub_total / .final_sum.total -> .total_text."""
 
     VOID = {"input", "img", "br", "hr", "meta", "link", "source", "wbr", "area", "base", "col", "embed"}
 
@@ -485,6 +486,10 @@ class _CartParser(html.parser.HTMLParser):
         self.stack.append((tag, classes, mark))
 
     def handle_endtag(self, tag):
+        # Stray / self-closing end tags (the real page writes <img ... />, which html.parser reports as an end
+        # tag too) must not unwind the stack: only close an element that is actually open.
+        if tag in self.VOID or not any(t == tag for t, _c, _m in self.stack):
+            return
         while self.stack:
             t, _classes, mark = self.stack.pop()
             if mark == "line" and self.line is not None:
@@ -533,11 +538,21 @@ def parse_cart(page):
 
 
 def parse_cart_info(fragment):
-    """common/cart/info fragment: .hidden_total 'N פריטים - ₪X' -> (N, X)."""
-    m = re.search(r"class=[\"'][^\"']*\bhidden_total\b[^\"']*[\"'][^>]*>([^<]*)<", fragment or "")
-    if not m:
+    """common/cart/info fragment: <input type="hidden" class="hidden_total" value="N פריט\\ים - ₪X"> -> (N, X).
+    N counts UNITS (sum of quantities), not lines (live 2026-10-20: 30 for 22 lines)."""
+    text = None
+    for tag in re.finditer(r"<[^>]*\bclass=[\"'][^\"']*\bhidden_total\b[^\"']*[\"'][^>]*>", fragment or ""):
+        value = re.search(r"\bvalue=[\"']([^\"']*)[\"']", tag.group(0))   # <input class="hidden_total" value=…>
+        if value:
+            text = value.group(1)
+        else:                                                              # <span class="hidden_total">…</span>
+            after = re.match(r"([^<]*)<", (fragment or "")[tag.end():])
+            text = after.group(1) if after else None
+        if text and text.strip():
+            break
+    if not text or not text.strip():
         raise SiteChanged("סיכום העגלה הקטן באתר השתנה.")
-    text = html.unescape(m.group(1))
+    text = html.unescape(text)
     count = re.match(r"\s*(\d+)", text)
     return (int(count.group(1)) if count else None), _money(text.split("-", 1)[-1] if "-" in text else None)
 
@@ -561,12 +576,17 @@ def parse_search(body):
         shelf = _money(item.get("price"))
         special = _money(item.get("special")) if item.get("special") not in (None, "", False, "0") else None
         minimum = _qty(item.get("minimum") or 1)
+        # Live 2026-10-20: `weight` is a boolean flag (false on every packaged product seen; no by-weight
+        # product came up yet), next to `weight_unit_price_text` ('' when not by weight). Either one, or a
+        # fractional minimum, marks a by-weight product.
         weighted = (bool(str(item.get("weight_unit_price_text") or "").strip()) or _truthy(item.get("weight"))
                     or not isinstance(minimum, int))
         out.append({"product_id": str(item["product_id"]), "name": _clean(html.unescape(str(item.get("name") or "")), 120),
                     "price": special if special is not None else shelf, "shelf_price": shelf,
                     "on_sale": special is not None and shelf is not None and special < shelf,
-                    "promo": _clean(item.get("bgfnribbon_text"), 60) or None,
+                    # bgfnribbon_text is `false` (bool) when there is no ribbon
+                    "promo": _clean(item["bgfnribbon_text"], 60) or None
+                    if isinstance(item.get("bgfnribbon_text"), str) else None,
                     "in_cart": _truthy(item.get("in_cart")), "out_of_stock": _truthy(item.get("out_of_stock")),
                     "minimum": minimum if isinstance(minimum, int) and minimum > 0 else 1,
                     "weighted": weighted, "url": _product_url(item.get("href"))})
@@ -785,6 +805,10 @@ def propose_remove(payload, _query=None):
 # --------------------------------------------------------------------------- approved write (the only writer)
 
 def _check_write_response(op, body, qty_after):
+    """Live 2026-10-20: add -> {success: <html str>, cart_id, product_id, price, total: 'N פריט\\ים - ₪X',
+    total_for_small_cart, current_product_quantity:int}; edit -> {success: true, cart_id, total, ...} (its total
+    lagged the real cart); remove -> {total, total_for_small_cart, countProducts (units), product_id, ...}.
+    The re-read cart, not these totals, is what decides success."""
     data = _json(body)
     if data is None:
         return "האתר לא החזיר JSON צפוי"
