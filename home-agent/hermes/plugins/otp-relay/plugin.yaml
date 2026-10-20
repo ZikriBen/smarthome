@@ -1,0 +1,6 @@
+name: otp-relay
+version: 1.0.0
+description: "Consumes one-time SMS codes from Ben's forward bot (#OTP <site> <code>) before auth and the agent, and stores them in the shared OTP inbox for the Command Center. Everything from the forward bot is dropped from the conversation."
+author: "home-agent"
+provides_hooks:
+  - pre_gateway_dispatch

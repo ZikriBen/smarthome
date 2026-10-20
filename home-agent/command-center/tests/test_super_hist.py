@@ -25,6 +25,7 @@ class Base(unittest.TestCase):
         root = Path(self.tmp.name)
         sh.DATA_DIR, sh.VAT_ID_FILE, sh.COOKIES_FILE = root, root / "vat_id", root / "cookies.txt"
         sh.VAT_ID_FILE.write_text(VAT + "\n")
+        sh.INBOX_DB = root / "no-inbox" / "codes.sqlite"  # relay off unless a test turns it on
         sh._jar = None
         sh._state.update(phase="idle", sent_at=0.0, attempts=0, logged_in_at=0.0)
         self.clock = [1_000_000.0]

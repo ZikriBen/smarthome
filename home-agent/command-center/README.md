@@ -20,6 +20,10 @@ integrations; Hermes never receives the Docker socket, host mounts, or a shell.
   Ben pastes in chat (`super_hist_login_start` -> `super_hist_login_code`). The ID
   number lives only in the root-only file `data/super_hist/vat_id`; the session
   cookie jar is `data/super_hist/cookies.txt` (0600). No automatic resend.
+  Auto-relay: Hermes's `otp-relay` plugin (hermes/plugins/otp-relay) takes
+  `#OTP <site> <code>` from Ben's forward bot before auth/the agent and writes it to
+  `hermes/otp/codes.sqlite` (mounted here as /otp-inbox; 10 min TTL, max 5 rows,
+  single use). The login waits ~45s for it, else Ben pastes the code.
 - Price checks run on their configured interval (minimum 60 minutes), retain the
   last known good price, and record a deduplicated alert when the target is met.
 
@@ -62,6 +66,7 @@ command_center/
   price_watches.py        public price reads and watches
   searchgram.py           SearchGram and downloader workflow
   super_hist.py           הסופר החברתי SMS-code login (session kept server-side)
+  otp_inbox.py            shared one-time-code inbox (copy in hermes/plugins/otp-relay)
   uptime_kuma.py          read-only monitor status
   mcp_tools/             MCP registrations grouped by the same domains
 ```

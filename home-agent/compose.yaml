@@ -22,6 +22,10 @@ services:
       HERMES_UID: 1000
       HERMES_GID: 1000
       SEARXNG_URL: http://searxng:8080
+      # otp-relay plugin (hermes/plugins/otp-relay): numeric user id of Ben's SMS forward bot. Empty = inert.
+      # Its messages are consumed before auth/the agent; only `#OTP <site> <code>` lands in hermes/otp/.
+      OTP_FORWARD_BOT_ID: ${OTP_FORWARD_BOT_ID:-}
+      OTP_FORWARD_CHAT_ID: ${OTP_FORWARD_CHAT_ID:-}
 
     # Hermes state (sessions, memories, logs). config.yaml and SOUL.md are tracked in git.
     volumes:
@@ -88,6 +92,8 @@ services:
       - ./google:/google:ro
       # Incoming Telegram documents are an import-only, read-only source.
       - ./hermes/cache/documents:/attachments:ro
+      # One-time-code inbox written by Hermes's otp-relay plugin; read + single-use delete here.
+      - ./hermes/otp:/otp-inbox
       # This is the sole assistant-writable filesystem area. It is disposable
       # and deliberately not mounted into Hermes itself.
       - ./workspace:/workspace

@@ -8,6 +8,10 @@ hermes/*
 !hermes/cc_approvals.py
 !hermes/tests/
 hermes/tests/__pycache__/
+!hermes/plugins/
+hermes/plugins/*
+!hermes/plugins/otp-relay/
+hermes/plugins/otp-relay/__pycache__/
 
 # OAuth client configuration and refreshed user tokens are server-only.
 google/

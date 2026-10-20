@@ -20,6 +20,8 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
+from . import otp_inbox
+
 BASE = "https://super-hist.co.il"
 LOGIN_PAGE = BASE + "/login/"
 SMS_URL = BASE + "/index.php?route=account/login/sms"
@@ -37,6 +39,12 @@ RESEND_COOLDOWN = 60       # the site's own resend timer
 CODE_WINDOW = 10 * 60      # a pending login is abandoned after this
 MAX_CODE_ATTEMPTS = 3
 CODE_RE = re.compile(r"\d{6}")
+# Telegram auto-relay (Hermes otp-relay plugin -> shared inbox). Disabled when the inbox dir is not mounted.
+INBOX_DB = Path(os.environ.get("OTP_INBOX_DB", "/otp-inbox/codes.sqlite"))
+AUTO_WAIT = 45             # seconds start_login waits for a relayed code before asking Ben to paste
+MAX_WAIT = 60
+POLL = 2.0
+SITE = "super_hist"
 
 _lock = threading.Lock()
 _state = {"phase": "idle", "sent_at": 0.0, "attempts": 0, "logged_in_at": 0.0}
@@ -141,8 +149,52 @@ def _result(status, text, **extra):
     return out
 
 
-def start_login(_payload=None, _query=None):
-    """Ask the site to SMS a one-time code to the phone(s) on the membership. Never resends automatically."""
+def _inbox_enabled():
+    return INBOX_DB.parent.is_dir()
+
+
+def _wait_for_relayed_code(seconds):
+    """Poll the shared inbox for a code relayed after this login's SMS was requested (single use)."""
+    deadline = _now() + max(0, min(int(seconds), MAX_WAIT))
+    since = _state["sent_at"] - 5
+    while True:
+        try:
+            code = otp_inbox.take(INBOX_DB, SITE, since=since, now=_now())
+        except Exception:
+            code = None
+        if code or _now() >= deadline:
+            return code
+        _sleep(POLL)
+
+
+def _auto_submit(seconds):
+    code = _wait_for_relayed_code(seconds)
+    if not code:
+        return None
+    result = submit_code({"code": code})
+    del code
+    result["auto"] = True
+    if result["status"] == "logged_in":
+        result["text"] = "קיבלתי את הקוד אוטומטית מה-SMS. " + result["text"]
+    return result
+
+
+def start_login(payload=None, _query=None):
+    """Ask the site to SMS a one-time code; with the relay inbox mounted, wait up to `wait_seconds` for the code
+    to arrive by itself and submit it. Never resends automatically."""
+    result = _start_login_locked()
+    if result["status"] != "code_sent" or not _inbox_enabled():
+        return result
+    wait = (payload or {}).get("wait_seconds", AUTO_WAIT)
+    auto = _auto_submit(wait) if str(wait).isdigit() and int(wait) > 0 else None
+    if auto is not None:
+        return auto
+    result["text"] += " הקוד לא הגיע אוטומטית; תדביק אותו כאן."
+    result["auto_relay"] = "no_code_yet"
+    return result
+
+
+def _start_login_locked():
     with _lock:
         vat_id = _read_vat_id()
         if not vat_id:
@@ -186,7 +238,14 @@ def start_login(_payload=None, _query=None):
 
 def submit_code(payload, _query=None):
     """Submit the 6-digit code Ben pasted. Used once; never stored or logged."""
-    code = re.sub(r"[\s\-]", "", str((payload or {}).get("code", "")))
+    code = re.sub(r"[\s\-]", "", str((payload or {}).get("code") or ""))
+    if not code and _inbox_enabled():
+        # No pasted code: take one the relay delivered (waits up to wait_seconds, default 30).
+        if _state["phase"] != "code_sent":
+            return _result("no_pending_login", "אין התחברות שמחכה לקוד. צריך להתחיל התחברות מחדש.")
+        wait = (payload or {}).get("wait_seconds", 30)
+        auto = _auto_submit(wait if str(wait).isdigit() else 30)
+        return auto or _result("no_relayed_code", "לא הגיע קוד אוטומטי. תדביק את הקוד מה-SMS.")
     if not CODE_RE.fullmatch(code):
         return _result("invalid_code", "הקוד צריך להיות 6 ספרות.")
     with _lock:
@@ -226,10 +285,11 @@ def status(_payload=None, _query=None):
             _save_cookies()
         elif _state["phase"] == "logged_in":
             _state["phase"] = "idle"
+        relay = _inbox_enabled()
         text = ("מחובר לסופר החברתי." if logged_in else
                 "ממתין לקוד מ-SMS." if pending else "לא מחובר לסופר החברתי.")
         return _result("logged_in" if logged_in else ("code_sent" if pending else "logged_out"), text,
-                       configured=configured, pending_code=pending)
+                       configured=configured, pending_code=pending, auto_relay=relay)
 
 
 def logout(_payload=None, _query=None):

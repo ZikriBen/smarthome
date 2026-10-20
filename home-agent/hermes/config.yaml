@@ -21,6 +21,8 @@ platform_toolsets:
 mcp_servers:
   command_center:
     url: http://command-center-mcp:8000/mcp
+    # super_hist_login_start may wait ~45s for a relayed SMS code on top of the site's 10s request spacing.
+    timeout: 180
     # This server has no legitimate reason to ask Hermes to invoke a model.
     sampling:
       enabled: false
@@ -100,6 +102,10 @@ platforms:
       chat_id: '<TELEGRAM_HOME_CHANNEL>'
       name: <HOME_CHANNEL_NAME>
       user_id: '<TELEGRAM_HOME_CHANNEL>'
+# Local plugins (hermes/plugins/<name>); opt-in list.
+plugins:
+  enabled:
+    - otp-relay
 onboarding:
   seen:
     profile_build_offered: true
