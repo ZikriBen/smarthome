@@ -1,0 +1,39 @@
+<!-- trimmed from https://super-hist.co.il/login/ fetched from the NUC 2026-10-20 (forms only) -->
+<html><head><title>מועדון לקוחות | הסופר החברתי מבית ההסתדרות</title></head><body>
+<form class="form-login flex flex-wrap hidden" id="login-sms-validate">
+                    <input type="hidden" name="form_type" value="sms">
+                    <div class="w-full text-center mt-6">
+                        <h6><b>כניסה עם קוד חד פעמי</b></h6>
+                    </div>
+                    <div class="form-group mt-6 w-full md-style-input-parent"><div style="left:0px; right:0px;" class="md-bg-holder"></div>
+                        <label for="code" class="placeholder">קוד</label>
+                        <input type="text" class="form-control" id="code" name="code" inputmode="numeric" pattern="\d{6}" maxlength="6" autocomplete="one-time-code" required="">
+                    </div>
+                    <div class="button_holder mt-6 w-full">
+                        <button id="button-validate" class="btn btn-theme w-full">
+                            התחברות
+                        </button>
+
+                        <button type="button" id="button-resend" class="btn btn-theme w-full mt-4" disabled="">
+                            שליחה מחדש
+                        </button>
+
+                        <div class="mt-2 w-full text-center" id="resend-timer-wrapper" style="display:none">
+                            <small id="resend-timer-text"></small>
+                        </div>
+
+                    </div>
+                </form>
+                <form class="form-login flex flex-wrap " id="login-sms-form">
+                    <input type="hidden" name="form_type" value="sms">
+                                                                                <div class="form-group mt-6 w-full md-style-input-parent"><div style="left:0px; right:0px;" class="md-bg-holder"></div>
+                        <label for="sms-vat-id" class="placeholder">תעודת זהות</label>
+                        <input id="sms-vat-id" name="vat_id" value="" class="form-control" type="text">
+                    </div>
+                                                                                                                                                                <div class="button_holder mt-6 w-full">
+                        <button id="button-sms" class="btn btn-theme w-full">
+                            התחברות
+                        </button>
+                    </div>
+                </form>
+</body></html>

@@ -16,6 +16,10 @@ integrations; Hermes never receives the Docker socket, host mounts, or a shell.
 - Groceries: the working list lives in Google Tasks ("קניות", own token
   `data/google-tasks-token.json`, scope `tasks` only); `data/grocery/state/current_list.json`
   is a cache used when Tasks is unavailable. Price runs are read-only.
+- הסופר החברתי (super-hist.co.il): server-side login with a one-time SMS code that
+  Ben pastes in chat (`super_hist_login_start` -> `super_hist_login_code`). The ID
+  number lives only in the root-only file `data/super_hist/vat_id`; the session
+  cookie jar is `data/super_hist/cookies.txt` (0600). No automatic resend.
 - Price checks run on their configured interval (minimum 60 minutes), retain the
   last known good price, and record a deduplicated alert when the target is met.
 
@@ -57,6 +61,7 @@ command_center/
   maps.py                 public place search
   price_watches.py        public price reads and watches
   searchgram.py           SearchGram and downloader workflow
+  super_hist.py           הסופר החברתי SMS-code login (session kept server-side)
   uptime_kuma.py          read-only monitor status
   mcp_tools/             MCP registrations grouped by the same domains
 ```

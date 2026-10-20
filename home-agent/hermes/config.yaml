@@ -66,6 +66,10 @@ mcp_servers:
         - grocery_preferences
         - grocery_cart
         - grocery_cart_status
+        - super_hist_status
+        - super_hist_login_start
+        - super_hist_login_code
+        - super_hist_logout
 
 browser:
   # "off" = built-in browser_* tools on local Chromium (default auto-picks the Browser Use CLI,
