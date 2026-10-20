@@ -1,0 +1,17 @@
+{
+ "_source": "REAL raw POST /api/catalog responses, store 331, live NUC read-only run 2026-10-20 ~08:00 IL; no secrets",
+ "_store": "331",
+ "_endpoint": "catalog",
+ "ביצים": "q01.json",
+ "ביצים 30": "q02.json",
+ "גבינה לבנה": "q03.json",
+ "חלב": "q04.json",
+ "יין לקידוש": "q05.json",
+ "יין לקידוש קדם": "q06.json",
+ "יין קדם": "q07.json",
+ "ממרח חלבה": "q08.json",
+ "ממרח שוקולד": "q09.json",
+ "פטריות": "q10.json",
+ "שמנת מתוקה": "q11.json",
+ "תבנית ביצים": "q12.json"
+}

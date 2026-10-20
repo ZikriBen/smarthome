@@ -258,7 +258,15 @@ class VendoredGuardTests(unittest.TestCase):
         src = {p.relative_to(root).as_posix(): p.read_text(encoding="utf-8") for p in root.rglob("*.py")}
         self.assertNotIn("rami_login.py", src)
         for name, text in src.items():
-            self.assertNotIn('"POST"', text, name)
+            # the ONLY POST allowed is Rami Levy's read-only search (the site's own results page: /api/catalog)
+            posts = [ln for ln in text.splitlines() if '"POST"' in ln]
+            if name == "sites/rami_levy.py":
+                self.assertEqual(len(posts), 1, posts)
+                self.assertIn("CATALOG_URL", posts[0])
+            else:
+                self.assertEqual(posts, [], name)
+        from grocery.sites import rami_levy as RL
+        self.assertTrue(RL.CATALOG_URL.endswith("/api/catalog?"))
         from grocery.sites.rami_levy import RamiLevyAdapter
         from grocery.sites.shufersal import ShufersalAdapter
         for cls in (RamiLevyAdapter, ShufersalAdapter):

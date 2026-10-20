@@ -1,7 +1,12 @@
 """Rami Levy Online adapter.
 
-Search  GET https://www.rami-levy.co.il/api/search?q=&store=&size=   (public, verified 2026-10-19;
-        size=40 verified live on the NUC 2026-10-19 — store 331 then still shows only the 12-pack of eggs)
+Search  POST https://www.rami-levy.co.il/api/catalog {"q","store","from":0,"size"} — what the site's own search
+        results page calls (bundle: t.params.store = logged-in user's store_id, else the cart store, guest 331).
+        The old autocomplete GET /api/search?q=&store=&size= is kept as mode "search" (GROCERY_RAMI_SEARCH=search):
+        live 2026-10-20 it returned only a hair cream for "יין לקידוש קדם" at 331 and nothing at 9001, while
+        /api/catalog returned 90 / 65 real results (incl. "מיץ ענבים גאולה קדם רויאל" ₪26.60 at 9001).
+Store   Default store = $GROCERY_STORE or 1333. 331 is only the site's guest default
+        (cart/getStoreId → storeId || 331).
 Cart    PHASE 2, DISABLED by default. GET customer state (current cart) -> merge ->
         POST /api/v2/cart (REPLACE semantics: body = whole cart) -> diff -> checkout link.
         Never checks out, never pays.
@@ -28,6 +33,17 @@ from .base import SiteAdapter
 WEB_ORIGIN = "https://www.rami-levy.co.il"
 API_ORIGIN = "https://www-api.rami-levy.co.il"
 SEARCH_URL = WEB_ORIGIN + "/api/search"
+CATALOG_URL = WEB_ORIGIN + "/api/catalog?"
+DEFAULT_STORE = "9001"
+GUEST_STORE = "331"              # the site's anonymous default
+
+
+def default_store() -> str:
+    return str(os.environ.get("GROCERY_STORE") or DEFAULT_STORE)
+
+
+def search_mode() -> str:
+    return "search" if os.environ.get("GROCERY_RAMI_SEARCH", "").strip() == "search" else "catalog"
 CART_URL = WEB_ORIGIN + "/api/v2/cart"
 CUSTOMER_URL = API_ORIGIN + "/api/v2/site/clubs/customer/{uid}"
 CHECKOUT_URL = "https://www.rami-levy.co.il/he/dashboard/checkout"
@@ -138,14 +154,20 @@ def supply_at(customer_cart: Optional[dict], days: int = 2, now: Optional[dt.dat
 
 
 class RamiLevySearcher:
-    def __init__(self, client: Client, store: str, size: int = 10, user_agent: str = CHROME_UA):
+    def __init__(self, client: Client, store: str, size: int = 10, user_agent: str = CHROME_UA,
+                 mode: Optional[str] = None):
         self.client, self.store, self.size, self.ua = client, str(store), size, user_agent
+        self.mode = mode or search_mode()
 
     def search(self, term: str, size: Optional[int] = None):
-        qs = urllib.parse.urlencode({"q": term, "store": self.store, "size": size or self.size})
         headers = {"user-agent": self.ua, "accept": "application/json, text/plain, */*",
                    "accept-language": "he-IL,he;q=0.9,en;q=0.8", "locale": "he", "referer": WEB_ORIGIN + "/"}
-        data = self.client.request_json("GET", f"{SEARCH_URL}?{qs}", headers)
+        if self.mode == "catalog":
+            body = {"from": 0, "size": int(size or self.size), "q": term, "store": self.store}
+            data = self.client.request_json("POST", CATALOG_URL, dict(headers, origin=WEB_ORIGIN, **{"content-type": "application/json"}), body=body)
+        else:
+            qs = urllib.parse.urlencode({"q": term, "store": self.store, "size": size or self.size})
+            data = self.client.request_json("GET", f"{SEARCH_URL}?{qs}", headers)
         return (data or {}).get("data") or []
 
 
@@ -156,8 +178,8 @@ class RamiLevyAdapter(SiteAdapter):
     block_msg = CLOUDFLARE_MSG
     fixture_results_key = "data"
 
-    def __init__(self, searcher=None, store: Optional[str] = "331"):
-        super().__init__(searcher, str(store or "331"))
+    def __init__(self, searcher=None, store: Optional[str] = None):
+        super().__init__(searcher, str(store or default_store()))
 
     def make_live_searcher(self, client, size: int = 10):
         return RamiLevySearcher(client, self.store, size)

@@ -48,6 +48,12 @@ def load_items(args, defaults) -> (List[Item], Optional[str]):
 
 def make_adapter(site: str, args, store: Optional[str], fixtures_dir: Optional[str], log):
     cls = get_adapter_class(site)
+    if fixtures_dir and store is None:     # offline: reproduce the store the fixtures were captured in
+        try:
+            with open(os.path.join(fixtures_dir, "index.json"), encoding="utf-8") as f:
+                store = json.load(f).get("_store") or None
+        except (OSError, ValueError):
+            store = None
     adapter = cls(store=store)
     if fixtures_dir:
         adapter.searcher = FixtureSearcher(fixtures_dir, log, results_key=cls.fixture_results_key)
@@ -320,7 +326,7 @@ def build_parser() -> argparse.ArgumentParser:
         p.add_argument("--text", help='free text, e.g. "חלב, 2 מלפפון, חצי קילו עגבניות"')
         p.add_argument("--text-file", help="file with free text (commas/newlines)")
         p.add_argument("--defaults", default=DEFAULT_DEFAULTS, help="defaults.yaml (+ defaults.user.yaml next to it)")
-        p.add_argument("--store", help="Rami Levy store id (default: list file, $GROCERY_STORE, else 331)")
+        p.add_argument("--store", help="Rami Levy store id (default: list file, $GROCERY_STORE, else 9001)")
         p.add_argument("--size", type=int, default=10, help="results per search (default 10)")
         p.add_argument("--delay", type=float, default=1.5, help="seconds between requests (default 1.5 + jitter)")
         p.add_argument("--crawl-delay", type=float, default=None,
