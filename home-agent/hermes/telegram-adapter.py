@@ -158,7 +158,14 @@ from plugins.platforms.telegram.telegram_network import (
 from utils import env_float, env_int
 
 _TELEGRAM_IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
-_COMMAND_CENTER_APPROVAL_MARKER = re.compile(r"\s*\[\[CC_APPROVAL:([0-9a-f]{12,64})\]\]\s*$")
+# Command Center approvals: markers, chat-reply parser and the idempotent button/chat state machine live
+# in a stdlib-only sibling module so they are unit-testable without telegram/gateway (tests/test_cc_approvals.py).
+try:
+    from plugins.platforms.telegram import cc_approvals as _cca
+except ImportError:  # running from a source checkout
+    sys.path.insert(0, str(_Path(__file__).resolve().parent))
+    import cc_approvals as _cca  # type: ignore[no-redef]
+_COMMAND_CENTER_URL = "http://command-center:8080"
 # Max seconds a send/edit may sleep inline on a flood-control RetryAfter; longer penalties fail
 # closed with ``flood_control:{wait}`` so the caller's retry machinery owns the wait.
 # Longer server penalties fail closed with a ``flood_control:{wait}`` SendResult so the caller's retry
@@ -3666,16 +3673,13 @@ class TelegramAdapter(BasePlatformAdapter):
         # than exposing it to the user.  This lives in the adapter that Hermes
         # dynamically loads (rather than a sitecustomize monkeypatch), so both the
         # normal and hot-reloaded plugin paths use the same behavior.
-        approval_match = _COMMAND_CENTER_APPROVAL_MARKER.search(content or "")
-        if approval_match:
-            approval_id = approval_match.group(1)
-            clean_content = content[:approval_match.start()].rstrip()
-            result = await self.send(chat_id, clean_content, reply_to, metadata)
+        approval_ids = _cca.marker_ids(content)
+        if approval_ids:
+            # Every marker (a reply may carry several), wherever it sits; none is ever shown raw.
+            result = await self.send(chat_id, _cca.strip_markers(content), reply_to, metadata)
             if not result.success:
                 return result
-            prompt_result = await self._send_command_center_approval_prompt(chat_id, approval_id, metadata)
-            if not prompt_result.success:
-                logger.warning("[%s] Command Center approval controls failed: %s", self.name, prompt_result.error)
+            await self._send_command_center_approval_prompts(chat_id, approval_ids, result.message_id, metadata)
             return result
         if not self._bot:
             live = self._replacement_telegram_adapter()
@@ -3883,6 +3887,14 @@ class TelegramAdapter(BasePlatformAdapter):
         Telegram caps a message at 4096 UTF-16 codeunits. Streaming replies that outgrow it must NOT be truncated
         silently nor fail (the consumer would re-send a duplicate): edit with the first chunk, send the rest as
         continuations, and return the final chunk's id as the next edit target."""
+        approval_ids = _cca.marker_ids(content)
+        if approval_ids:
+            # A streamed reply carries the marker in its edits: never show it, render controls once (final).
+            result = await self.edit_message(
+                chat_id, message_id, _cca.strip_markers(content), finalize=finalize, metadata=metadata)
+            if finalize and result.success:
+                await self._send_command_center_approval_prompts(chat_id, approval_ids, message_id, metadata)
+            return result
         if not self._bot:
             return SendResult(success=False, error="Not connected")
         # Shared per-chat budget (#116312): an interim (preview) edit is SKIPPED when the slot is busy —
@@ -4211,19 +4223,81 @@ class TelegramAdapter(BasePlatformAdapter):
             chat_id, thread_id, metadata, reply_to_message_id=reply_to_id, reply_to_mode=reply_to_mode))
         return await self._send_message_with_thread_fallback(**kwargs)
 
-    async def _send_command_center_approval_prompt(
-        self, chat_id: str, approval_id: str, metadata: Optional[Dict[str, Any]],
-    ) -> SendResult:
-        """Send the controls for a pending Command Center proposal."""
-        def build():
-            keyboard = InlineKeyboardMarkup([[
-                InlineKeyboardButton("✅ Approve", callback_data=f"cc:a:{approval_id}"),
-                InlineKeyboardButton("❌ Deny", callback_data=f"cc:d:{approval_id}"),
-            ]])
-            return "⚠️ *Approval required*", keyboard, None
-        return await self._send_prompt(
-            "send_command_center_approval", chat_id, metadata, build,
-            thread_id=self._metadata_thread_id(metadata), reply_to_mode=self._reply_to_mode)
+    # ------------------------------------------------------------------ Command Center approvals
+    def _cc_controller(self):
+        """Lazily built approval controller (registry under the Hermes data volume)."""
+        ctl = getattr(self, "_cc_ctl", None)
+        if ctl is None:
+            home = os.environ.get("HERMES_HOME") or "/opt/data"
+            registry = _cca.Registry(os.path.join(home, "cc_approvals.db"))
+            ctl = self._cc_ctl = _cca.ApprovalController(registry, _CommandCenterClient(), _TelegramApprovalUI(self))
+        return ctl
+
+    async def _send_command_center_approval_prompts(
+        self, chat_id: str, approval_ids: List[str], carrier_message_id: Optional[str],
+        metadata: Optional[Dict[str, Any]],
+    ) -> None:
+        """One prompt per proposal (or one grouped prompt for many), each saying WHAT it approves."""
+        try:
+            ctl = self._cc_controller()
+            ids = ctl.wanted(approval_ids)
+            if not ids or not self._bot:
+                return
+            infos = [await ctl.summary_for(ident) for ident in ids]
+            thread_id = self._metadata_thread_id(metadata)
+            if ctl.plan(ids) == "batch":
+                batch_id = os.urandom(6).hex()
+                summaries = [str(i.get("summary") or _cca.short_id(ident)) for ident, i in zip(ids, infos)]
+                keyboard = InlineKeyboardMarkup([[
+                    InlineKeyboardButton(f"✅ אשר הכל ({len(ids)})", callback_data=f"cc:ba:{batch_id}"),
+                    InlineKeyboardButton("❌ דחה הכל", callback_data=f"cc:bd:{batch_id}")]])
+                msg = await self._send_control_message(
+                    chat_id, _cca.batch_prompt_text(summaries, batch_id), parse_mode=None, reply_markup=keyboard,
+                    thread_id=thread_id, metadata=metadata, reply_to_mode=self._reply_to_mode)
+                for ident, info in zip(ids, infos):
+                    ctl.register(chat_id, ident, msg.message_id, carrier_message_id, info, batch_id=batch_id)
+            else:
+                for n, (ident, info) in enumerate(zip(ids, infos), 1):
+                    label = n if len(ids) > 1 else None
+                    keyboard = InlineKeyboardMarkup([[
+                        InlineKeyboardButton("✅ אשר", callback_data=f"cc:a:{ident}"),
+                        InlineKeyboardButton("❌ דחה", callback_data=f"cc:d:{ident}")]])
+                    msg = await self._send_control_message(
+                        chat_id, _cca.prompt_text(str(info.get("summary") or ""), ident, label), parse_mode=None,
+                        reply_markup=keyboard, thread_id=thread_id, metadata=metadata,
+                        reply_to_mode=self._reply_to_mode)
+                    ctl.register(chat_id, ident, msg.message_id, carrier_message_id, info, label=label)
+            now = time.time()
+            expiries = [float(i.get("expires_at") or 0) or now + ctl.ttl for i in infos]
+            delay = max(5.0, min(expiries) - now + 2)
+            self._cc_track(asyncio.get_running_loop().create_task(self._cc_expire_later(delay)))
+        except Exception as e:
+            logger.warning("[%s] Command Center approval controls failed: %s", self.name, _redact_telegram_error_text(e))
+
+    def _cc_track(self, task) -> None:
+        tracked = getattr(self, "_background_tasks", None)
+        if isinstance(tracked, set):
+            tracked.add(task)
+            task.add_done_callback(tracked.discard)
+
+    async def _cc_expire_later(self, delay: float) -> None:
+        await asyncio.sleep(delay)
+        with contextlib.suppress(Exception):
+            await self._cc_controller().expire_due()
+
+    async def _cc_consume_chat_decision(self, msg) -> bool:
+        """True when ``msg`` was a chat approve/deny for a pending prompt (then it never reaches the LLM)."""
+        try:
+            reply = getattr(msg, "reply_to_message", None)
+            result = await self._cc_controller().on_text(
+                str(msg.chat_id), msg.text or "", getattr(reply, "message_id", None),
+                getattr(getattr(msg, "from_user", None), "first_name", None) or "User")
+            if result.handled:
+                logger.info("[%s] Command Center approval decided from chat (%d id(s))", self.name, len(result.decided))
+            return result.handled
+        except Exception as e:  # never lose a user message because of the approval layer
+            logger.warning("[%s] chat approval check failed: %s", self.name, _redact_telegram_error_text(e))
+            return False
 
     async def _send_prompt(self, what: str, chat_id: str, metadata: Optional[Dict[str, Any]], build, *,
                            parse_mode: Any = None, thread_id: Any = None, reply_to_mode: Any = None) -> SendResult:
@@ -4757,45 +4831,27 @@ class TelegramAdapter(BasePlatformAdapter):
                 return
 
     async def _handle_command_center_approval_callback(self, query, data: str, cb: Dict[str, Any]) -> None:
-        """``cc:<a|d>:<id>`` — resolve a Command Center approval over its internal API."""
+        """``cc:<a|d>:<id>`` or ``cc:<ba|bd>:<batch>`` — same state machine as a chat reply (first wins)."""
         if not await self._callback_authorized(query, cb, _UNAUTHORIZED):
             return
         parts = data.split(":", 2)
-        if len(parts) != 3 or parts[1] not in {"a", "d"}:
+        if len(parts) != 3 or parts[1] not in {"a", "d", "ba", "bd"} or not re.fullmatch(r"[0-9a-f]{12,64}", parts[2]):
             await query.answer(text="Invalid approval data.")
             return
-        token = os.environ.get("COMMAND_CENTER_CALLBACK_TOKEN", "")
-        if not token:
+        if not os.environ.get("COMMAND_CENTER_CALLBACK_TOKEN", ""):
             await query.answer(text="Approval controls are not configured.")
             return
-        action = "approve" if parts[1] == "a" else "deny"
-        approval_id = parts[2]
-
-        def resolve():
-            request = urllib.request.Request(
-                f"http://command-center:8080/v1/approvals/{approval_id}/{action}",
-                method="POST", headers={"X-Command-Center-Callback": token}, data=b"")
-            with urllib.request.urlopen(request, timeout=15) as response:
-                return json.loads(response.read().decode("utf-8"))
-
-        try:
-            result = await asyncio.to_thread(resolve)
-            status = str(result.get("status", ""))
-        except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, ValueError) as exc:
-            logger.warning("[%s] Command Center approval callback failed: %s", self.name, _redact_telegram_error_text(exc))
-            await query.answer(text="Could not contact Command Center. Try again.")
+        decision = "approve" if parts[1] in {"a", "ba"} else "deny"
+        actor = getattr(query.from_user, "first_name", None) or "User"
+        ctl = self._cc_controller()
+        if parts[1] in {"ba", "bd"}:
+            await query.answer(text="⏳")  # a batch may take a while; the message is edited with the outcome
+            await ctl.on_batch_button(parts[2], decision, actor)
             return
-        user_display = getattr(query.from_user, "first_name", "User")
-        if status == "executed":
-            label = "✅ Approved and executed"
-        elif status == "denied":
-            label = "❌ Denied"
-        elif status == "expired":
-            label = "⌛ Approval expired"
-        else:
-            label = "⚠️ Approval is no longer pending"
-        await query.answer(text=label)
-        await self._edit_md_quiet(query, f"{label} by {user_display}")
+        message = getattr(query, "message", None)
+        toast = await ctl.on_button(
+            parts[2], decision, actor, chat_id=cb.get("chat_id"), message_id=getattr(message, "message_id", None))
+        await query.answer(text=toast[:190])
 
     async def _claim_callback_state(self, query, cb: Dict[str, Any], state: dict, key, denial: str, resolved: str, *, pop: bool = True):
         """Auth-gate a button tap, then claim its pending entry; None (after answering) when refused or expired."""
@@ -6521,6 +6577,9 @@ class TelegramAdapter(BasePlatformAdapter):
         if not self._is_user_authorized_from_message(msg):
             self._log_blocked_user(msg)
             return
+        # "מאשר" / "לא" / a reply to an approval prompt resolves it here, exactly like the button.
+        if await self._cc_consume_chat_decision(msg):
+            return
         if not self._gate_or_observe(msg, update, MessageType.TEXT):
             return
         await self._ensure_forum_commands(update.message)
@@ -7389,3 +7448,57 @@ def __getattr__(name):  # PEP 562 — lazy so no import cycles
     warn_once(__name__, name, *target)
     return getattr(importlib.import_module(target[0]), target[1])
 # ---- END PLUGIN-COMPAT ----
+
+
+
+class _CommandCenterClient:
+    """Async wrapper over the Command Center approval API, authenticated by the narrow callback token."""
+
+    @staticmethod
+    def _call(method: str, path: str, body: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        token = os.environ.get("COMMAND_CENTER_CALLBACK_TOKEN", "")
+        if not token:
+            raise RuntimeError("approval controls are not configured")
+        data = json.dumps(body).encode("utf-8") if body is not None else None
+        request = urllib.request.Request(
+            f"{_COMMAND_CENTER_URL}{path}", method=method, data=data,
+            headers={"X-Command-Center-Callback": token, "Content-Type": "application/json"})
+        with urllib.request.urlopen(request, timeout=15) as response:
+            return json.loads(response.read().decode("utf-8"))
+
+    async def get(self, approval_id: str) -> Dict[str, Any]:
+        return await asyncio.to_thread(self._call, "GET", f"/v1/approvals/{approval_id}")
+
+    async def decide(self, approval_id: str, decision: str, via: str, actor: str) -> Dict[str, Any]:
+        try:
+            return await asyncio.to_thread(
+                self._call, "POST", f"/v1/approvals/{approval_id}/{decision}", {"via": via, "actor": actor})
+        except urllib.error.HTTPError as exc:
+            # 4xx/5xx is an answer (the decision did not happen there), not a transport failure.
+            return {"approval_id": approval_id, "status": "failed", "error": f"Command Center HTTP {exc.code}"}
+
+
+class _TelegramApprovalUI:
+    """Plain-text control messages (no MarkdownV2 escaping of event titles/subjects)."""
+
+    def __init__(self, adapter):
+        self.adapter = adapter
+
+    async def edit_prompt(self, chat_id, message_id, text: str) -> None:
+        bot = getattr(self.adapter, "_bot", None)
+        if bot is None or chat_id in (None, "?") or message_id is None:
+            return
+        with contextlib.suppress(Exception):
+            await bot.edit_message_text(
+                chat_id=normalize_telegram_chat_id(str(chat_id)), message_id=int(message_id), text=text,
+                reply_markup=None)
+
+    async def send_control(self, chat_id, text: str, reply_to) -> None:
+        if getattr(self.adapter, "_bot", None) is None or not text:
+            return
+        kwargs: Dict[str, Any] = {"chat_id": normalize_telegram_chat_id(str(chat_id)), "text": text}
+        if reply_to is not None:
+            kwargs["reply_to_message_id"] = int(reply_to)
+        with contextlib.suppress(Exception):
+            await self.adapter._send_message_with_thread_fallback(**kwargs)
+

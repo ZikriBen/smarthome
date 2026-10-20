@@ -4,6 +4,10 @@ hermes/*
 !hermes/SOUL.md
 !hermes/Dockerfile
 !hermes/entrypoint-network-guard.sh
+!hermes/telegram-adapter.py
+!hermes/cc_approvals.py
+!hermes/tests/
+hermes/tests/__pycache__/
 
 # OAuth client configuration and refreshed user tokens are server-only.
 google/
