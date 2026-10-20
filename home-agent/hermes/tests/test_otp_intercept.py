@@ -121,6 +121,17 @@ class InterceptTests(unittest.TestCase):
             self.deliver(message(f"#OTP super_hist {SMS}"))
         self.assertEqual(self.seen, [])
 
+    def test_real_super_hist_sms_through_the_adapter(self):
+        os.environ["OTP_RELAY_DEBUG_SHAPE"] = "1"
+        real = "735104 הוא קוד הכניסה החד פעמי לאתר\n@super-hist.co.il #735104"   # fake digits
+        with self.assertLogs(level=logging.INFO) as logs:
+            self.deliver(message(f"#OTP super_hist {real}"))
+        out = "\n".join(logs.output)
+        self.assertEqual(self.seen, [])
+        self.assertEqual(self.take(), "735104")
+        self.assertIn("matches=2 unique=1 webotp=1", out)
+        self.assertIsNone(re.search(r"\d", re.sub(r"(len|lines|matches|unique|webotp)=-?\d+", "", out)), out)
+
     def test_debug_shape_masks_digits(self):
         os.environ["OTP_RELAY_DEBUG_SHAPE"] = "1"
         with self.assertLogs(level=logging.INFO) as logs:
@@ -129,7 +140,7 @@ class InterceptTests(unittest.TestCase):
         self.assertIn("lines=2 matches=1", out)
         self.assertIn("******", out)
         # no digit anywhere in the log except the len/lines/matches counters
-        self.assertIsNone(re.search(r"\d", re.sub(r"(len|lines|matches)=-?\d+", "", out)), out)
+        self.assertIsNone(re.search(r"\d", re.sub(r"(len|lines|matches|unique|webotp)=-?\d+", "", out)), out)
         self.assertEqual(self.take(), "482913")
 
 

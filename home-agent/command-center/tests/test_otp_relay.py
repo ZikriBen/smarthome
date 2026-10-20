@@ -274,12 +274,58 @@ class RawSmsParsingTests(unittest.TestCase):
         self.assertEqual(code, "482913")
         self.assertNoLeak(logs, "482913", "1234567")
 
-    def test_two_codes_rejected(self):
-        for body in ("482913 או 111222", "482913\n482913"):
+    def test_two_distinct_codes_rejected(self):
+        for body in ("482913 או 111222", "482913\n111222", "קוד 482913, קוד קודם 111222 בוטל"):
             code, logs = self.relay(body)
             self.assertIsNone(code, body)
-            self.assertIn("2 candidate codes, need exactly one", logs)
+            self.assertIn("several distinct codes, need exactly one", logs)
             self.assertNoLeak(logs, "482913", "111222")
+
+    def test_same_code_repeated_is_one_code(self):
+        code, logs = self.relay("482913\nשוב: 482913")
+        self.assertEqual(code, "482913")
+        self.assertNoLeak(logs, "482913")
+
+    # The real Super-Hist SMS (live 2026-10-20, masked shape): "****** הוא קוד הכניסה החד פעמי לאתר⏎
+    # @super-hist.co.il #******", i.e. the same code in the text and in the WebOTP line. Digits here are fake.
+    REAL = "735104 הוא קוד הכניסה החד פעמי לאתר\n@super-hist.co.il #735104"
+
+    def test_real_super_hist_sms_shape(self):
+        code, logs = self.relay(self.REAL)
+        self.assertEqual(code, "735104")
+        self.assertIn("stored code for super_hist", logs)
+        self.assertNotIn("735104", logs)
+        self.assertNotIn("הוא קוד הכניסה", logs)
+
+    def test_real_shape_with_crlf_and_trailing_space(self):
+        code, _ = self.relay("735104 הוא קוד הכניסה החד פעמי לאתר\r\n@super-hist.co.il #735104 \r")
+        self.assertEqual(code, "735104")
+
+    def test_webotp_only(self):
+        code, logs = self.relay("@super-hist.co.il #735104")
+        self.assertEqual(code, "735104")
+        code, _ = self.relay("כניסה לאתר\n@super-hist.co.il #735104")
+        self.assertEqual(code, "735104")
+
+    def test_webotp_wins_over_a_different_code_in_text(self):
+        code, logs = self.relay("111222 הוא קוד הכניסה החד פעמי לאתר\n@super-hist.co.il #735104")
+        self.assertEqual(code, "735104")
+        self.assertIn("WebOTP line used; the text has another, different code", logs)
+        self.assertNoLeak(logs, "735104", "111222")
+
+    def test_conflicting_webotp_lines_rejected(self):
+        code, logs = self.relay("@super-hist.co.il #735104\n@super-hist.co.il #111222")
+        self.assertIsNone(code)
+        self.assertIn("conflicting WebOTP lines", logs)
+        self.assertNoLeak(logs, "735104", "111222")
+
+    def test_webotp_line_must_be_exact(self):
+        # another domain, not at line start, or 7 digits: not a WebOTP line (falls back to the text rules)
+        for body in ("@evil.example #735104 x\n111222", "x @super-hist.co.il #735104\n111222"):
+            code, _ = self.relay(body)
+            self.assertIsNone(code, body)
+        code, _ = self.relay("@super-hist.co.il #7351049")
+        self.assertIsNone(code)
 
     def test_no_code_rejected(self):
         code, logs = self.relay("ברוכים הבאים לסופר החברתי")
@@ -326,7 +372,8 @@ class DebugShapeTests(RawSmsParsingTests):
 
     def test_shape_on_masks_every_digit(self):
         os.environ["OTP_RELAY_DEBUG_SHAPE"] = "1"
-        for body, matches in ((SMS, 1), ("482913 או 111222", 2), ("ללא קוד", 0)):
+        for body, matches in ((SMS, 1), ("482913 או 111222", 2), ("ללא קוד", 0),
+                              (RawSmsParsingTests.REAL, 2)):
             with self.assertLogs(PLUGIN.logger, logging.INFO) as cm:
                 PLUGIN.on_pre_gateway_dispatch(event=event(f"#OTP super_hist {body}"))
             shape = [r.getMessage() for r in cm.records if "shape" in r.getMessage()]
@@ -334,7 +381,7 @@ class DebugShapeTests(RawSmsParsingTests):
             full = "\n".join(r.getMessage() for r in cm.records)
             self.assertIn(f"matches={matches}", shape[0])
             # no digit at all may appear except the counters (len/lines/matches, candidate count)
-            stripped = re.sub(r"(len|lines|matches)=-?\d+|\d+ candidate codes", "", full)
+            stripped = re.sub(r"(len|lines|matches|unique|webotp)=-?\d+", "", full)
             self.assertIsNone(re.search(r"\d", stripped), (body, stripped))
             inbox.take(self.db, "super_hist")
 
@@ -344,9 +391,21 @@ class DebugShapeTests(RawSmsParsingTests):
         with self.assertLogs(PLUGIN.logger, logging.INFO) as cm:
             PLUGIN.on_pre_gateway_dispatch(event=event(text))
         shape = next(r.getMessage() for r in cm.records if "shape" in r.getMessage())
-        self.assertIn(f"len={len(text)} lines=2 matches=1", shape)
+        self.assertIn(f"len={len(text)} lines=2 matches=1 unique=1 webotp=0", shape)
         self.assertIn("******", shape)
         self.assertIn("⏎", shape)
+
+
+    def test_shape_of_the_real_sms(self):
+        os.environ["OTP_RELAY_DEBUG_SHAPE"] = "1"
+        text = f"#OTP super_hist {RawSmsParsingTests.REAL}"
+        with self.assertLogs(PLUGIN.logger, logging.INFO) as cm:
+            PLUGIN.on_pre_gateway_dispatch(event=event(text))
+        full = "\n".join(r.getMessage() for r in cm.records)
+        self.assertIn(f"len={len(text)} lines=2 matches=2 unique=1 webotp=1", full)
+        self.assertIn("'#OTP super_hist ****** הוא קוד הכניסה החד פעמי לאתר⏎@super-hist.co.il #******'", full)
+        self.assertIsNone(re.search(r"\d", re.sub(r"(len|lines|matches|unique|webotp)=-?\d+", "", full)), full)
+        self.assertEqual(inbox.take(self.db, "super_hist"), "735104")
 
 
 class AutoLoginTests(Base):
@@ -423,6 +482,58 @@ class AutoLoginTests(Base):
         self.relay_at = (self.clock[0], "000000")
         out = sh.start_login({}, {})
         self.assertEqual((out["status"], out["attempts_left"], out["auto"]), ("wrong_code", 2, True))
+
+    def slow_sms_post(self, post_seconds, store_after=None, code="482913"):
+        """The SMS POST takes `post_seconds`; the relayed code lands `store_after` seconds into it."""
+        replies = self.ok_send()
+
+        def send(method, url, form=None, ajax=False, follow=True):
+            self.calls.append((method, url, dict(form or {})))
+            if url == sh.SMS_URL:
+                if store_after is not None:
+                    inbox.put(sh.INBOX_DB, "super_hist", code, ref="mid", now=self.clock[0] + store_after)
+                self.clock[0] += post_seconds
+            return replies.pop(0) if replies else self.replies.pop(0)
+        sh._send = send
+
+    def test_code_stored_while_sms_post_in_flight_is_used(self):
+        # The live run: the SMS can land before the (slow) SMS POST returns. The guard is login start.
+        self.slow_sms_post(post_seconds=8, store_after=2)
+        self.replies = [(200, {}, '{"redirect": "/account/"}'), (200, {}, "account")]
+        start = self.clock[0]
+        out = sh.start_login({}, {})
+        self.assertEqual((out["status"], out.get("auto")), ("logged_in", True))
+        self.assertLess(sh._state["started_at"], sh._state["sent_at"])
+        self.assertEqual(sh._state["started_at"], start)
+        self.assertEqual(inbox.pending(sh.INBOX_DB), [])
+
+    def test_inbox_not_cleared_at_start(self):
+        inbox.put(sh.INBOX_DB, "super_hist", "482913", ref="early", now=self.clock[0] + 1)  # lands right after start
+        self.slow_sms_post(post_seconds=1)
+        self.replies = [(200, {}, '{"redirect": "/account/"}'), (200, {}, "account")]
+        out = sh.start_login({}, {})
+        self.assertEqual(out["status"], "logged_in")
+        self.assertEqual(self.calls[2][2]["code"], "482913")
+
+    def test_code_stored_after_start_returned_is_used_by_login_code(self):
+        self.slow_sms_post(post_seconds=1)
+        out = sh.start_login({"wait_seconds": 2}, {})
+        self.assertEqual(out["status"], "code_sent")
+        self.clock[0] += 120   # Ben's phone was slow; still within TTL and the 10-min window
+        inbox.put(sh.INBOX_DB, "super_hist", "482913", ref="late", now=self.clock[0])
+        self.replies = [(200, {}, '{"redirect": "/account/"}'), (200, {}, "account")]
+        out = sh.submit_code({"code": ""}, {})
+        self.assertEqual((out["status"], out.get("auto")), ("logged_in", True))
+        self.assertEqual(inbox.pending(sh.INBOX_DB), [])
+
+    def test_code_from_just_before_start_is_stale(self):
+        inbox.put(sh.INBOX_DB, "super_hist", "111111", ref="old", now=self.clock[0] - 1)
+        self.slow_sms_post(post_seconds=1)
+        out = sh.start_login({"wait_seconds": 4}, {})
+        self.assertEqual(out["status"], "code_sent")
+        self.assertEqual(len(self.calls), 2)          # never submitted the stale code
+        self.replies = []
+        self.assertEqual(sh.submit_code({"code": "", "wait_seconds": 2}, {})["status"], "no_relayed_code")
 
     def test_wait_is_capped(self):
         self.replies = self.ok_send()

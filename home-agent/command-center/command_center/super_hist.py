@@ -47,7 +47,7 @@ POLL = 2.0
 SITE = "super_hist"
 
 _lock = threading.Lock()
-_state = {"phase": "idle", "sent_at": 0.0, "attempts": 0, "logged_in_at": 0.0}
+_state = {"phase": "idle", "sent_at": 0.0, "started_at": 0.0, "attempts": 0, "logged_in_at": 0.0}
 _last_request = [0.0]
 _jar = None
 _sleep = time.sleep          # tests replace these two
@@ -154,9 +154,12 @@ def _inbox_enabled():
 
 
 def _wait_for_relayed_code(seconds):
-    """Poll the shared inbox for a code relayed after this login's SMS was requested (single use)."""
+    """Poll the shared inbox for a code relayed after this login began (single use). The stale-code guard is
+    the moment start_login began, BEFORE the SMS request: a fast SMS can land while the POST is still in flight
+    or while start_login is still waiting. The inbox is never cleared at start; older codes are just ignored
+    (and expire by TTL)."""
     deadline = _now() + max(0, min(int(seconds), MAX_WAIT))
-    since = _state["sent_at"] - 5
+    since = _state.get("started_at") or _state["sent_at"]
     while True:
         try:
             code = otp_inbox.take(INBOX_DB, SITE, since=since, now=_now())
@@ -204,6 +207,7 @@ def _start_login_locked():
             left = int(RESEND_COOLDOWN - (now - _state["sent_at"]))
             return _result("cooldown", f"קוד כבר נשלח לפני פחות מדקה. אפשר לבקש שוב בעוד {left} שניות.",
                            retry_after_seconds=left)
+        started_at = now   # before any request to the site; the relay accepts codes stored from here on
         try:
             if _state["phase"] == "logged_in" and _is_logged_in():
                 return _result("already_logged_in", "כבר מחובר לסופר החברתי.")
@@ -216,7 +220,7 @@ def _start_login_locked():
             return _result("site_error", str(exc))
         data = _json(body) or {}
         if data.get("success"):
-            _state.update(phase="code_sent", sent_at=_now(), attempts=0)
+            _state.update(phase="code_sent", sent_at=_now(), started_at=started_at, attempts=0)
             _save_cookies()
             return _result("code_sent", _clean(data.get("message")) or "נשלח קוד חד פעמי ב-SMS.",
                            expires_in_seconds=CODE_WINDOW)
@@ -300,7 +304,7 @@ def logout(_payload=None, _query=None):
             COOKIES_FILE.unlink()
         except FileNotFoundError:
             pass
-        _state.update(phase="idle", sent_at=0.0, attempts=0, logged_in_at=0.0)
+        _state.update(phase="idle", sent_at=0.0, started_at=0.0, attempts=0, logged_in_at=0.0)
         return _result("logged_out", "ניתקתי את החיבור השמור לסופר החברתי.")
 
 
