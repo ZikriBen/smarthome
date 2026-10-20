@@ -9,7 +9,10 @@ The code is used once and never stored or logged. Only status/metadata leaves th
 Politeness: at most one request to the site every MIN_INTERVAL seconds; no automatic resend or retry.
 """
 
+import html
+import html.parser
 import http.cookiejar
+import importlib
 import json
 import os
 import re
@@ -46,8 +49,31 @@ MAX_WAIT = 60
 POLL = 2.0
 SITE = "super_hist"
 
+# --------------------------------------------------------------------------- URL policy (enforced in _send)
+# Every request to the site goes through _send, and _send refuses anything outside this allowlist BEFORE it
+# touches the network (redirect targets included). Checkout, payment, orders, coupons, shipping and
+# cart/clear can never be reached, not even with a GET.
+SEARCH_PATH = "/search-results/"
+CART_URL = BASE + "/index.php?route=checkout/cart"
+CART_INFO_URL = BASE + "/index.php?route=common/cart/info"
+CART_ADD_URL = BASE + "/index.php?route=checkout/cart/add"
+CART_REMOVE_URL = BASE + "/index.php?route=checkout/cart/remove"
+CART_EDIT_URL = BASE + "/index.php?route=checkout/cart/edit"
+SEARCH_URL = BASE + SEARCH_PATH
+CART_ROUTES = {"checkout/cart", "checkout/cart/add", "checkout/cart/remove", "checkout/cart/edit"}
+GET_ROUTES = {"account/account", "checkout/cart", "common/cart/info"}
+POST_ROUTES = {"account/login/sms", "account/login/sms_validate",
+               "checkout/cart/add", "checkout/cart/remove", "checkout/cart/edit"}
+GET_PATHS = {"/", "/login/"}
+POST_PATHS = {SEARCH_PATH}
+BLOCKED_WORDS = re.compile(
+    r"checkout|cart/clear|coupon|voucher|payment|order|confirm|shipping|success|/pay|=pay|register|guest", re.I)
+# Bot-challenge / captcha markers (Cloudflare interstitial, reCAPTCHA/hCaptcha/Turnstile widgets).
+CHALLENGE_RE = re.compile(r"cf_chl_|challenge-platform|cf-challenge|Just a moment\.\.\.|Attention Required|"
+                          r"class=[\"'][^\"']*\b(?:g-recaptcha|h-captcha|cf-turnstile)\b", re.I)
+
 _lock = threading.Lock()
-_state = {"phase": "idle", "sent_at": 0.0, "started_at": 0.0, "attempts": 0, "logged_in_at": 0.0}
+_state = {"phase": "idle", "sent_at": 0.0, "started_at": 0.0, "attempts": 0, "logged_in_at": 0.0, "checked_at": 0.0}
 _last_request = [0.0]
 _jar = None
 _sleep = time.sleep          # tests replace these two
@@ -58,9 +84,47 @@ class SiteError(RuntimeError):
     pass
 
 
+class PolicyError(SiteError):
+    """A request the URL policy forbids. Raised before anything is sent."""
+
+
+def _route(query):
+    return (urllib.parse.parse_qs(query).get("route") or [""])[0]
+
+
+def check_url(method, url):
+    """Raise PolicyError unless (method, url) is an allowlisted request to the site. Pure; no I/O."""
+    base = urllib.parse.urlsplit(BASE)
+    u = urllib.parse.urlsplit(url)
+    if u.scheme != base.scheme or u.hostname != base.hostname or u.port != base.port or u.username or u.password:
+        raise PolicyError("בקשה לאתר אחר נחסמה")
+    route = _route(u.query)
+    whole = urllib.parse.unquote(u.path + "?" + u.query).lower()
+    # The exact allowlisted cart routes are the only place the word "checkout" may appear.
+    scrubbed = whole.replace("route=" + route, "", 1) if route in CART_ROUTES and u.path == "/index.php" else whole
+    if BLOCKED_WORDS.search(scrubbed):
+        raise PolicyError("נתיב חסום (קופה/תשלום/הזמנה/קופון/משלוח) לא נשלח")
+    if method == "GET":
+        ok = (u.path in GET_PATHS and not u.query) or (u.path == "/index.php" and route in GET_ROUTES)
+    elif method == "POST":
+        ok = (u.path in POST_PATHS and not u.query) or (u.path == "/index.php" and route in POST_ROUTES)
+    else:
+        ok = False
+    if not ok:
+        raise PolicyError(f"בקשה שאינה ברשימה המותרת נחסמה ({method})")
+
+
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, *_args, **_kwargs):
         return None
+
+
+class _PolicyRedirect(urllib.request.HTTPRedirectHandler):
+    """Follow a redirect only to an allowlisted GET; anything else (e.g. to checkout) stops the request."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        check_url("GET", urllib.parse.urljoin(req.full_url, newurl))
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
 
 
 def _cookie_jar():
@@ -90,18 +154,20 @@ def _throttle():
     _last_request[0] = _now()
 
 
-def _send(method, url, form=None, ajax=False, follow=True):
-    """One HTTP request with the shared cookie jar. Returns (status, headers, text). Never raises on HTTP status."""
+def _send(method, url, form=None, ajax=False, follow=True, referer=None):
+    """One HTTP request with the shared cookie jar. Returns (status, headers, text). Never raises on HTTP status.
+    The URL policy is checked first (PolicyError, nothing sent), then the shared >=MIN_INTERVAL throttle."""
+    check_url(method, url)
     _throttle()
     data = urllib.parse.urlencode(form).encode() if form is not None else None
     headers = {"User-Agent": UA, "Accept-Language": "he-IL,he;q=0.9"}
     if ajax:
-        headers.update({"X-Requested-With": "XMLHttpRequest", "Referer": LOGIN_PAGE, "Origin": BASE,
-                        "Accept": "application/json, text/javascript, */*; q=0.01",
-                        "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8"})
+        headers.update({"X-Requested-With": "XMLHttpRequest", "Referer": referer or LOGIN_PAGE, "Origin": BASE,
+                        "Accept": "application/json, text/javascript, */*; q=0.01"})
+        if data is not None:
+            headers["Content-Type"] = "application/x-www-form-urlencoded; charset=UTF-8"
     handlers = [urllib.request.HTTPCookieProcessor(_cookie_jar())]
-    if not follow:
-        handlers.append(_NoRedirect())
+    handlers.append(_PolicyRedirect() if follow else _NoRedirect())
     opener = urllib.request.build_opener(*handlers)
     request = urllib.request.Request(url, data=data, method=method, headers=headers)
     try:
@@ -109,6 +175,8 @@ def _send(method, url, form=None, ajax=False, follow=True):
             return response.status, dict(response.headers), response.read(3_000_000).decode("utf-8", "replace")
     except urllib.error.HTTPError as exc:
         return exc.code, dict(exc.headers or {}), exc.read(200_000).decode("utf-8", "replace")
+    except PolicyError:
+        raise
     except (urllib.error.URLError, TimeoutError, OSError) as exc:
         raise SiteError(f"האתר לא זמין כרגע ({type(exc).__name__})") from None
 
@@ -264,7 +332,7 @@ def submit_code(payload, _query=None):
         except SiteError as exc:
             return _result("site_error", str(exc))
         if ok:
-            _state.update(phase="logged_in", logged_in_at=_now(), attempts=0)
+            _state.update(phase="logged_in", logged_in_at=_now(), attempts=0, checked_at=_now())
             _save_cookies()
             return _result("logged_in", "מחובר לסופר החברתי.")
         _state["attempts"] += 1
@@ -285,7 +353,7 @@ def status(_payload=None, _query=None):
         except SiteError as exc:
             return _result("site_error", str(exc), configured=configured, pending_code=pending)
         if logged_in:
-            _state["phase"] = "logged_in"
+            _state.update(phase="logged_in", checked_at=_now())
             _save_cookies()
         elif _state["phase"] == "logged_in":
             _state["phase"] = "idle"
@@ -304,8 +372,488 @@ def logout(_payload=None, _query=None):
             COOKIES_FILE.unlink()
         except FileNotFoundError:
             pass
-        _state.update(phase="idle", sent_at=0.0, started_at=0.0, attempts=0, logged_in_at=0.0)
+        _state.update(phase="idle", sent_at=0.0, started_at=0.0, attempts=0, logged_in_at=0.0, checked_at=0.0)
+        _catalog.clear()
         return _result("logged_out", "ניתקתי את החיבור השמור לסופר החברתי.")
+
+
+# =========================================================================== cart (view / search / writes)
+# The cart is ACCOUNT-level: it is the same cart Ben sees on the site and in the app, so every write is
+# visible there immediately and Ben may be editing it in parallel. Hence:
+#   * reads never write; writes only run as an approved Command Center action (approvals.register_action);
+#   * the write handler re-reads the cart first and refuses if the line changed since the proposal;
+#   * after a write the cart is read again and the real quantity is reported (no blind success);
+#   * a POST is never retried; 403/429/challenge stops all cart traffic (BLOCK_SECONDS);
+#   * an expired session returns login_required — never an automatic login (an SMS needs Ben).
+# Semantics: add(product, N) = "make sure the cart has at least N" (not in cart -> add N; fewer than N ->
+# set_qty N; N or more -> nothing to do). set_qty(product, N) = exactly N (N >= 1). remove = drop the line.
+
+CART_ACTION = "super_hist_cart_write"
+LOGIN_CHECK_TTL = 120        # seconds a successful account-page check is trusted
+BLOCK_SECONDS = 24 * 3600    # stop all cart traffic after a 403/429/challenge (in memory; a restart clears it)
+CATALOG_TTL = 30 * 60        # product facts remembered from a search, for proposals
+MAX_QTY = 20
+MAX_TERM = 60
+SEARCH_LIMIT = 10
+_catalog = {}                # product_id -> (ts, product dict) from recent searches / cart reads
+_blocked_until = [0.0]
+
+
+class LoginRequired(SiteError):
+    pass
+
+
+class SiteBlocked(SiteError):
+    pass
+
+
+class SiteChanged(SiteError):
+    pass
+
+
+class CartChanged(SiteError):
+    pass
+
+
+def _approvals():
+    # Imported lazily: approvals opens the Command Center database; tests inject a private one.
+    return importlib.import_module(".approvals", __package__)
+
+
+def _money(value):
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return round(float(value), 2)
+    m = re.search(r"\d[\d,]*(?:\.\d+)?", str(value or "").replace("\u200f", "").replace("\u200e", ""))
+    return round(float(m.group(0).replace(",", "")), 2) if m else None
+
+
+def _fmt(amount):
+    return "?" if amount is None else f"₪{amount:.2f}"
+
+
+def _truthy(value):
+    return str(value).strip().lower() in ("1", "true", "yes", "on")
+
+
+def _qty(value):
+    try:
+        number = float(str(value).strip() or "0")
+    except ValueError:
+        return None
+    return int(number) if number.is_integer() else number
+
+
+def _pid(value):
+    value = str(value or "").strip()
+    if not re.fullmatch(r"\d{1,10}", value):
+        raise ValueError("product_id חייב להיות מספר מוצר מהחיפוש או מהעגלה")
+    return value
+
+
+# --------------------------------------------------------------------------- parsing (pure)
+
+class _CartParser(html.parser.HTMLParser):
+    """Lines: div.cart_product[data-product_id][data-cart-id]; name .product-description a; unit price
+    .price_span ins (sale) / del (shelf) or the span text; qty input[name=quantity]. Totals: .sub_total /
+    .final_sum.total -> .total_text."""
+
+    VOID = {"input", "img", "br", "hr", "meta", "link", "source", "wbr", "area", "base", "col", "embed"}
+
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.stack, self.lines, self.totals = [], [], {}
+        self.line = None
+
+    def _in(self, cls):
+        return any(cls in classes for _tag, classes, _mark in self.stack)
+
+    def handle_starttag(self, tag, attrs):
+        a = dict(attrs)
+        classes = set((a.get("class") or "").split())
+        mark = None
+        if "cart_product" in classes and a.get("data-product_id"):
+            self.line = {"product_id": a.get("data-product_id"), "cart_id": a.get("data-cart-id"),
+                         "name": "", "price_text": "", "sale_text": "", "shelf_text": "", "qty_text": None}
+            mark = "line"
+        if self.line is not None and tag == "input" and a.get("name") == "quantity":
+            self.line["qty_text"] = a.get("value")
+        if tag in self.VOID:
+            return
+        for key in ("sub_total", "final_sum"):
+            if key in classes:
+                mark = mark or key
+        self.stack.append((tag, classes, mark))
+
+    def handle_endtag(self, tag):
+        while self.stack:
+            t, _classes, mark = self.stack.pop()
+            if mark == "line" and self.line is not None:
+                self.lines.append(self.line)
+                self.line = None
+            if t == tag:
+                break
+
+    def handle_data(self, data):
+        if self.line is not None:
+            if self._in("product-description") and self.stack and self.stack[-1][0] == "a":
+                self.line["name"] += data
+            elif self._in("price_span"):
+                tag = self.stack[-1][0] if self.stack else ""
+                key = "sale_text" if tag == "ins" else "shelf_text" if tag == "del" else "price_text"
+                self.line[key] += data
+        if self._in("total_text"):
+            for key in ("final_sum", "sub_total"):
+                if any(mark == key for _t, _c, mark in self.stack):
+                    self.totals[key] = self.totals.get(key, "") + data
+                    break
+
+
+def parse_cart(page):
+    """Cart page HTML -> {"lines": [...], "subtotal", "total", "count"}. Raises SiteChanged when the page has
+    no cart markers at all (theme change / not a cart page)."""
+    parser = _CartParser()
+    parser.feed(page or "")
+    parser.close()
+    lines = []
+    for raw in parser.lines:
+        qty = _qty(raw["qty_text"])
+        sale, shelf, plain = _money(raw["sale_text"]), _money(raw["shelf_text"]), _money(raw["price_text"])
+        lines.append({"product_id": str(raw["product_id"]), "cart_id": str(raw["cart_id"] or ""),
+                      "name": _clean(html.unescape(raw["name"]), 120), "quantity": qty,
+                      "unit_price": sale if sale is not None else plain if plain is not None else shelf,
+                      "shelf_price": shelf, "weighted": qty is None or not isinstance(qty, int)})
+    subtotal, total = _money(parser.totals.get("sub_total")), _money(parser.totals.get("final_sum"))
+    if any(not line["cart_id"] or line["quantity"] is None for line in lines):
+        raise SiteChanged("מבנה שורות העגלה באתר השתנה; לא כותב כלום עד שיבדקו את הקוד.")
+    if not lines and total is None and subtotal is None and "cart_product" not in (page or ""):
+        if not re.search(r"route=checkout/cart|id=[\"']cart|class=[\"'][^\"']*\bcart", page or ""):
+            raise SiteChanged("זה לא נראה כמו דף העגלה של האתר.")
+    return {"lines": lines, "subtotal": subtotal, "total": total if total is not None else subtotal,
+            "count": len(lines)}
+
+
+def parse_cart_info(fragment):
+    """common/cart/info fragment: .hidden_total 'N פריטים - ₪X' -> (N, X)."""
+    m = re.search(r"class=[\"'][^\"']*\bhidden_total\b[^\"']*[\"'][^>]*>([^<]*)<", fragment or "")
+    if not m:
+        raise SiteChanged("סיכום העגלה הקטן באתר השתנה.")
+    text = html.unescape(m.group(1))
+    count = re.match(r"\s*(\d+)", text)
+    return (int(count.group(1)) if count else None), _money(text.split("-", 1)[-1] if "-" in text else None)
+
+
+def _product_url(href):
+    """Only on-site https links are handed back."""
+    u = urllib.parse.urlsplit(str(href or ""))
+    return str(href) if u.scheme == "https" and u.hostname == "super-hist.co.il" else None
+
+
+def parse_search(body):
+    """POST /search-results/ JSON (sent as text/html) -> normalized products. Effective price = special when
+    present (price_number is the SHELF price, never the price paid)."""
+    data = _json(body)
+    if data is None or not isinstance(data.get("data", []), list):
+        raise SiteChanged("תשובת החיפוש באתר השתנתה (לא JSON צפוי).")
+    out = []
+    for item in data.get("data") or []:
+        if not isinstance(item, dict) or not str(item.get("product_id", "")).isdigit():
+            continue
+        shelf = _money(item.get("price"))
+        special = _money(item.get("special")) if item.get("special") not in (None, "", False, "0") else None
+        minimum = _qty(item.get("minimum") or 1)
+        weighted = (bool(str(item.get("weight_unit_price_text") or "").strip()) or _truthy(item.get("weight"))
+                    or not isinstance(minimum, int))
+        out.append({"product_id": str(item["product_id"]), "name": _clean(html.unescape(str(item.get("name") or "")), 120),
+                    "price": special if special is not None else shelf, "shelf_price": shelf,
+                    "on_sale": special is not None and shelf is not None and special < shelf,
+                    "promo": _clean(item.get("bgfnribbon_text"), 60) or None,
+                    "in_cart": _truthy(item.get("in_cart")), "out_of_stock": _truthy(item.get("out_of_stock")),
+                    "minimum": minimum if isinstance(minimum, int) and minimum > 0 else 1,
+                    "weighted": weighted, "url": _product_url(item.get("href"))})
+    results = data.get("results")
+    return {"results": int(results) if str(results or "").isdigit() else len(out), "products": out}
+
+
+# --------------------------------------------------------------------------- transport for cart calls
+
+def _cart_send(method, url, form=None, referer=None):
+    """One cart-side request: breaker, policy+throttle (via _send), no redirects, stop on block/challenge."""
+    if _now() < _blocked_until[0]:
+        raise SiteBlocked("האתר חסם/ביקש אימות קודם; עצרתי את כל פעולות העגלה לזמן מה. לא לנסות שוב עכשיו.")
+    status, headers, body = _send(method, url, form=form, ajax=True, follow=False, referer=referer or CART_URL)
+    if status in (403, 429) or CHALLENGE_RE.search(body or ""):
+        _blocked_until[0] = _now() + BLOCK_SECONDS
+        raise SiteBlocked(f"האתר חסם את הבקשה (HTTP {status} / אימות אנושי). עצרתי בלי לנסות שוב.")
+    if status in (301, 302, 303, 307, 308):
+        location = (headers.get("Location") or headers.get("location") or "").lower()
+        if "login" in location or "account" in location:
+            _expire_session()
+            raise LoginRequired("login")
+        raise SiteChanged(f"האתר הפנה לדף אחר (HTTP {status}); לא המשכתי.")
+    if status != 200:
+        raise SiteError(f"האתר החזיר HTTP {status}.")
+    return body
+
+
+def _expire_session():
+    if _state["phase"] == "logged_in":
+        _state["phase"] = "idle"
+    _state["checked_at"] = 0.0
+
+
+def _require_login(fresh=False):
+    """Trust a recent successful check; otherwise one read-only account-page request. Never logs in."""
+    if not fresh and _state.get("checked_at") and _now() - _state["checked_at"] < LOGIN_CHECK_TTL:
+        return
+    if _now() < _blocked_until[0]:
+        raise SiteBlocked("האתר חסם/ביקש אימות קודם; עצרתי את כל פעולות העגלה לזמן מה.")
+    if not COOKIES_FILE.exists() and not len(_cookie_jar()):
+        _expire_session()
+        raise LoginRequired("login")
+    status, _headers, body = _send("GET", ACCOUNT_URL, follow=False)
+    if status in (403, 429) or CHALLENGE_RE.search(body or ""):
+        _blocked_until[0] = _now() + BLOCK_SECONDS
+        raise SiteBlocked(f"האתר חסם את הבקשה (HTTP {status} / אימות אנושי). עצרתי בלי לנסות שוב.")
+    if status != 200:
+        _expire_session()
+        raise LoginRequired("login")
+    _state.update(phase="logged_in", checked_at=_now())
+
+
+def _read_cart(check_mini=True):
+    cart = parse_cart(_cart_send("GET", CART_URL, referer=BASE + "/"))
+    if not cart["lines"] and check_mini:
+        # Canary: an "empty" parse must agree with the mini-cart; otherwise the theme changed under us.
+        count, _total = parse_cart_info(_cart_send("GET", CART_INFO_URL))
+        if count:
+            raise SiteChanged(f"דף העגלה נקרא כריק אבל האתר מדווח {count} פריטים; כנראה המבנה השתנה.")
+    now = _now()
+    for line in cart["lines"]:
+        known = _catalog.get(line["product_id"], (0, {}))[1]
+        _catalog[line["product_id"]] = (now, dict(known, product_id=line["product_id"], name=line["name"] or known.get("name", ""),
+                                                  price=known.get("price", line["unit_price"])))
+    return cart
+
+
+def _line(cart, product_id):
+    return next((line for line in cart["lines"] if line["product_id"] == product_id), None)
+
+
+def _error_result(exc):
+    if isinstance(exc, LoginRequired):
+        return _result("login_required", "החיבור לסופר החברתי פג. צריך להתחבר מחדש (SMS) — רק אם בן מאשר; "
+                       "לא התחברתי אוטומטית.")
+    if isinstance(exc, PolicyError):
+        return _result("blocked_by_policy", str(exc))
+    if isinstance(exc, SiteBlocked):
+        return _result("site_blocked", str(exc))
+    if isinstance(exc, SiteChanged):
+        return _result("site_changed", str(exc))
+    return _result("site_error", str(exc)[:200])
+
+
+def _public_cart(cart):
+    return {"count": cart["count"], "subtotal": cart["subtotal"], "total": cart["total"],
+            "lines": [{k: line[k] for k in ("product_id", "name", "quantity", "unit_price", "shelf_price", "weighted")}
+                      for line in cart["lines"]]}
+
+
+# --------------------------------------------------------------------------- read-only tools
+
+def cart_view(_payload=None, _query=None):
+    """Read-only: the account cart's lines, quantities and total (1–3 requests)."""
+    with _lock:
+        try:
+            _require_login()
+            cart = _read_cart()
+        except SiteError as exc:
+            return _error_result(exc)
+    text = (f"בעגלה בסופר החברתי {cart['count']} שורות, סה״כ {_fmt(cart['total'])}." if cart["count"]
+            else "העגלה בסופר החברתי ריקה.")
+    return _result("ok", text, cart=_public_cart(cart),
+                   cart_url=CART_URL, note="העגלה משותפת לאתר ולאפליקציה; התשלום רק אצל בן.")
+
+
+def search(payload, _query=None):
+    """Read-only product search (one request). Products are remembered for CATALOG_TTL for proposals."""
+    term = " ".join(str((payload or {}).get("term") or (payload or {}).get("query") or "").split())
+    if not term or len(term) > MAX_TERM:
+        return _result("invalid", f"צריך מונח חיפוש (עד {MAX_TERM} תווים).")
+    with _lock:
+        try:
+            _require_login()
+            found = parse_search(_cart_send("POST", SEARCH_URL, {"search": term, "screen_break_points": "desktop"},
+                                            referer=BASE + "/"))
+        except SiteError as exc:
+            return _error_result(exc)
+    now = _now()
+    for product in found["products"]:
+        _catalog[product["product_id"]] = (now, product)
+    products = found["products"][:SEARCH_LIMIT]
+    return _result("ok", f"נמצאו {found['results']} תוצאות; מוצגות {len(products)}.", term=term,
+                   results=found["results"], products=products)
+
+
+# --------------------------------------------------------------------------- proposals (no site writes)
+
+def _known_product(product_id):
+    ts, product = _catalog.get(product_id, (0, None))
+    return product if product and _now() - ts <= CATALOG_TTL else None
+
+
+def _summary(op, name, unit_price, before, after, cart):
+    total = cart["total"]
+    expected = None
+    if total is not None and unit_price is not None:
+        expected = round(total + unit_price * (after - before), 2)
+    verb = {"add": "הוספה לעגלה", "set_qty": "עדכון כמות בעגלה", "remove": "הסרה מהעגלה"}[op]
+    line = (f"הסופר החברתי: {verb} ״{_clip(name, 45)}״ · {_fmt(unit_price)} ליח׳ · כמות {before}→{after} · "
+            f"סה״כ עגלה {_fmt(total)}→≈{_fmt(expected)} (העגלה משותפת לאפליקציה)")
+    return line, expected
+
+
+def _clip(text, limit):
+    text = " ".join(str(text or "").split())
+    return text if len(text) <= limit else text[: limit - 1] + "…"
+
+
+def _propose(op, payload):
+    try:
+        product_id = _pid((payload or {}).get("product_id"))
+    except ValueError as exc:
+        return _result("invalid", str(exc))
+    qty = (payload or {}).get("quantity", 1 if op == "add" else None)
+    if op != "remove":
+        if not str(qty).isdigit() or not 1 <= int(qty) <= MAX_QTY:
+            return _result("invalid", f"כמות צריכה להיות מספר שלם בין 1 ל-{MAX_QTY}"
+                           + (" (להסרה: super_hist_cart_remove)." if str(qty) == "0" else "."))
+        qty = int(qty)
+    with _lock:
+        try:
+            _require_login()
+            cart = _read_cart()
+        except SiteError as exc:
+            return _error_result(exc)
+    line = _line(cart, product_id)
+    product = _known_product(product_id) or {}
+    before = line["quantity"] if line else 0
+    if op == "add":
+        if line is None and not product:
+            return _result("search_first", "לא מכיר את המוצר הזה; צריך קודם super_hist_search כדי לראות שם ומחיר.")
+        if product.get("out_of_stock") and line is None:
+            return _result("out_of_stock", f"״{product.get('name')}״ אזל באתר; לא הצעתי הוספה.")
+        if before and before >= qty:
+            return _result("already_in_cart", f"״{line['name']}״ כבר בעגלה בכמות {before}; לא צריך שינוי.",
+                           quantity=before)
+        if before:
+            op = "set_qty"    # never a blind add on an existing line: add on the site INCREASES the quantity
+        minimum = int(product.get("minimum") or 1)
+        if line is None and qty < minimum:
+            return _result("invalid", f"כמות מינימלית למוצר הזה היא {minimum}.")
+    if line is None and op in ("set_qty", "remove"):
+        return _result("not_in_cart", "המוצר לא נמצא בעגלה כרגע; לא הצעתי שינוי.")
+    if product.get("weighted") or (line and line["weighted"]):
+        if op != "remove":
+            return _result("weighted_unsupported", "מוצר במשקל: עוד לא אומת איך האתר מקבל כמות במשקל, אז לא כותב. "
+                           "לבדיקה ידנית באתר.")
+    after = 0 if op == "remove" else qty
+    if after == before:
+        return _result("no_change", f"הכמות כבר {before}; לא צריך שינוי.")
+    name = (line or {}).get("name") or product.get("name") or f"מוצר {product_id}"
+    unit_price = product.get("price") if product.get("price") is not None else (line or {}).get("unit_price")
+    summary, expected = _summary(op, name, unit_price, before, after, cart)
+    proposal = {"op": op, "product_id": product_id, "cart_id": (line or {}).get("cart_id"), "name": name,
+                "unit_price": unit_price, "qty_before": before, "qty_after": after,
+                "total_before": cart["total"], "expected_total": expected, "summary": summary}
+    ident = _approvals().create(CART_ACTION, proposal)
+    return _result("pending_approval", summary, approval_id=ident, proposal={k: v for k, v in proposal.items()
+                                                                          if k != "cart_id"})
+
+
+def propose_add(payload, _query=None):
+    return _propose("add", payload)
+
+
+def propose_set_qty(payload, _query=None):
+    return _propose("set_qty", payload)
+
+
+def propose_remove(payload, _query=None):
+    return _propose("remove", payload)
+
+
+# --------------------------------------------------------------------------- approved write (the only writer)
+
+def _check_write_response(op, body, qty_after):
+    data = _json(body)
+    if data is None:
+        return "האתר לא החזיר JSON צפוי"
+    if data.get("error"):
+        return _clean(data.get("error") if isinstance(data.get("error"), str) else json.dumps(data["error"],
+                                                                                          ensure_ascii=False))
+    if op == "add":
+        if not data.get("success"):
+            return "האתר לא אישר את ההוספה"
+        current = data.get("current_product_quantity")
+        if current is not None and _qty(current) != qty_after:
+            return f"האתר דיווח כמות {current} במקום {qty_after}"
+    if op == "remove" and "total" not in data and "countProducts" not in data:
+        return "תשובת ההסרה לא כוללת סיכום עגלה"
+    return None
+
+
+def apply_write(payload):
+    """Approved action handler. Re-reads the cart, refuses if the line changed since the proposal, sends ONE
+    write POST (never retried), then re-reads the cart and verifies. Raises on any failure (the approval is
+    marked failed with the reason; on a partial failure the reason says what the cart now holds)."""
+    p = payload if isinstance(payload, dict) else {}
+    op, product_id = p.get("op"), _pid(p.get("product_id"))
+    before, after = _qty(p.get("qty_before") or 0), _qty(p.get("qty_after") or 0)
+    if op not in ("add", "set_qty", "remove") or before is None or after is None or not 0 <= after <= MAX_QTY:
+        raise ValueError("הצעת עגלה לא תקינה")
+    with _lock:
+        try:
+            _require_login(fresh=True)
+            cart = _read_cart()
+        except LoginRequired:
+            raise LoginRequired("החיבור לסופר החברתי פג; לא שיניתי כלום. צריך להתחבר מחדש (SMS) ולהציע שוב.") from None
+        line = _line(cart, product_id)
+        now_qty = line["quantity"] if line else 0
+        if now_qty != before:
+            raise CartChanged(f"העגלה השתנתה מאז ההצעה (כמות {now_qty} במקום {before}). לא שיניתי כלום; להציע שוב.")
+        if line is None and op != "add":
+            raise CartChanged("המוצר כבר לא בעגלה. לא שיניתי כלום.")
+        if op == "add" and line is None:
+            url, form = CART_ADD_URL, {"product_id": product_id, "quantity": str(after)}
+        elif op == "remove":
+            url, form = CART_REMOVE_URL, {"key": line["cart_id"], "product_id": product_id}
+        else:  # set_qty, or add onto an existing line
+            url, form = CART_EDIT_URL, {"data[0][key]": line["cart_id"], "data[0][quantity]": str(after)}
+        sent_error = None
+        try:
+            body = _cart_send("POST", url, form)
+            problem = _check_write_response("add" if url == CART_ADD_URL else op, body, after)
+        except SiteBlocked as exc:
+            raise SiteBlocked(f"{exc} ייתכן שהעגלה השתנתה — לבדוק באתר או ב-super_hist_cart_view אחרי ההמתנה.") from None
+        except SiteError as exc:   # the POST may or may not have reached the site
+            sent_error, problem = exc, str(exc)
+        try:
+            final = _read_cart()
+        except SiteError as exc:
+            raise SiteError(f"{'הכתיבה נשלחה' if sent_error is None else 'ייתכן שהכתיבה נשלחה'}, אבל לא הצלחתי "
+                            f"לקרוא שוב את העגלה ({exc}). ייתכן שהעגלה השתנתה — לבדוק עם super_hist_cart_view.") from None
+        got = _line(final, product_id)
+        got_qty = got["quantity"] if got else 0
+        if got_qty != after:
+            raise CartChanged(f"ייתכן שהעגלה השתנתה: ביקשתי כמות {after} ובפועל {got_qty}"
+                              + (f" ({problem})" if problem else "") + f". סה״כ עגלה עכשיו {_fmt(final['total'])}.")
+    return {"status": "done", "op": op, "product_id": product_id, "name": p.get("name"),
+            "quantity": got_qty, "total": final["total"], "count": final["count"],
+            "note": problem}
+
+
+def register_actions():
+    _approvals().register_action(CART_ACTION, apply_write)
 
 
 def register_routes(router):
@@ -313,3 +861,8 @@ def register_routes(router):
     router.post("/v1/super-hist/login/code", submit_code)
     router.get("/v1/super-hist/status", status)
     router.post("/v1/super-hist/logout", logout)
+    router.get("/v1/super-hist/cart", cart_view)
+    router.post("/v1/super-hist/search", search)
+    router.post("/v1/proposals/super-hist-cart/add", propose_add, 202)
+    router.post("/v1/proposals/super-hist-cart/set-qty", propose_set_qty, 202)
+    router.post("/v1/proposals/super-hist-cart/remove", propose_remove, 202)

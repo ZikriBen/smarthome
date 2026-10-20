@@ -1,0 +1,74 @@
+{
+ "_comment": "SYNTHETIC fixture (hand-written, fake products) matching the /search-results/ JSON shape (served as text/html)",
+ "results": 46,
+ "text": "נמצאו 46 תוצאות",
+ "data": [
+  {
+   "product_id": "900404",
+   "name": "חטיף תפוחי אדמה 50 גרם - חברה לדוגמה",
+   "price": "₪7.90",
+   "special": "₪5.90",
+   "price_number": 7.9,
+   "in_cart": false,
+   "minimum": "1",
+   "weight": "0",
+   "out_of_stock": false,
+   "href": "https://super-hist.co.il/index.php?route=product/product&product_id=900404",
+   "thumb": "https://super-hist.co.il/image/cache/fake-900404-200x200.jpg",
+   "bgfnribbon_text": "2 ב-10"
+  },
+  {
+   "product_id": "900101",
+   "name": "חלב טרי 3% 1 ליטר - מחלבה לדוגמה",
+   "price": "₪7.10",
+   "special": "₪6.20",
+   "price_number": 7.1,
+   "in_cart": true,
+   "minimum": "1",
+   "weight": "0",
+   "out_of_stock": false,
+   "href": "https://super-hist.co.il/index.php?route=product/product&product_id=900101",
+   "thumb": "https://super-hist.co.il/image/cache/fake-900101-200x200.jpg"
+  },
+  {
+   "product_id": "900505",
+   "name": "חטיף תירס 80 גרם",
+   "price": "₪4.50",
+   "special": "",
+   "price_number": 4.5,
+   "in_cart": false,
+   "minimum": "1",
+   "weight": "0",
+   "out_of_stock": true,
+   "href": "https://super-hist.co.il/index.php?route=product/product&product_id=900505",
+   "thumb": "https://super-hist.co.il/image/cache/fake-900505-200x200.jpg"
+  },
+  {
+   "product_id": "900303",
+   "name": "עגבניות שרי במשקל",
+   "price": "₪9.90",
+   "special": "",
+   "price_number": 9.9,
+   "in_cart": false,
+   "minimum": "0.5",
+   "weight": "1",
+   "out_of_stock": false,
+   "href": "https://super-hist.co.il/index.php?route=product/product&product_id=900303",
+   "thumb": "https://super-hist.co.il/image/cache/fake-900303-200x200.jpg",
+   "weight_unit_price_text": "₪19.80 לק\"ג"
+  },
+  {
+   "product_id": "900606",
+   "name": "חטיף אורז 100 גרם",
+   "price": "₪8.40",
+   "special": "",
+   "price_number": 8.4,
+   "in_cart": false,
+   "minimum": "1",
+   "weight": "0",
+   "out_of_stock": false,
+   "href": "https://super-hist.co.il/index.php?route=product/product&product_id=900606",
+   "thumb": "https://super-hist.co.il/image/cache/fake-900606-200x200.jpg"
+  }
+ ]
+}

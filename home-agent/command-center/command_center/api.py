@@ -19,7 +19,7 @@ def build_router():
 
 
 def register_actions():
-    for module in (docker, google_workspace, price_watches):
+    for module in (docker, google_workspace, price_watches, super_hist):
         module.register_actions()
 
 

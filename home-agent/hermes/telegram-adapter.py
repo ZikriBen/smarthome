@@ -7492,7 +7492,7 @@ class _CommandCenterClient:
     """Async wrapper over the Command Center approval API, authenticated by the narrow callback token."""
 
     @staticmethod
-    def _call(method: str, path: str, body: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    def _call(method: str, path: str, body: Optional[Dict[str, Any]] = None, timeout: float = 15) -> Dict[str, Any]:
         token = os.environ.get("COMMAND_CENTER_CALLBACK_TOKEN", "")
         if not token:
             raise RuntimeError("approval controls are not configured")
@@ -7500,8 +7500,12 @@ class _CommandCenterClient:
         request = urllib.request.Request(
             f"{_COMMAND_CENTER_URL}{path}", method=method, data=data,
             headers={"X-Command-Center-Callback": token, "Content-Type": "application/json"})
-        with urllib.request.urlopen(request, timeout=15) as response:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
             return json.loads(response.read().decode("utf-8"))
+
+    # An approved action runs inside the decide call. Most finish in ~1s, but a הסופר החברתי cart write makes
+    # 3-4 site requests spaced >=10s apart (~35-45s); a short timeout would show "couldn't reach" while it runs.
+    DECIDE_TIMEOUT = 90
 
     async def get(self, approval_id: str) -> Dict[str, Any]:
         return await asyncio.to_thread(self._call, "GET", f"/v1/approvals/{approval_id}")
@@ -7509,7 +7513,8 @@ class _CommandCenterClient:
     async def decide(self, approval_id: str, decision: str, via: str, actor: str) -> Dict[str, Any]:
         try:
             return await asyncio.to_thread(
-                self._call, "POST", f"/v1/approvals/{approval_id}/{decision}", {"via": via, "actor": actor})
+                self._call, "POST", f"/v1/approvals/{approval_id}/{decision}", {"via": via, "actor": actor},
+                self.DECIDE_TIMEOUT)
         except urllib.error.HTTPError as exc:
             # 4xx/5xx is an answer (the decision did not happen there), not a transport failure.
             return {"approval_id": approval_id, "status": "failed", "error": f"Command Center HTTP {exc.code}"}

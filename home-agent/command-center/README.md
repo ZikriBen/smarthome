@@ -27,6 +27,15 @@ integrations; Hermes never receives the Docker socket, host mounts, or a shell.
   distinct standalone code), and writes only the code to
   `hermes/otp/codes.sqlite` (mounted here as /otp-inbox; 10 min TTL, max 5 rows,
   single use). The login waits ~45s for it, else Ben pastes the code.
+- הסופר החברתי cart (account-level, shared with the site/app): `super_hist_cart_view` and
+  `super_hist_search` are read-only; `super_hist_cart_add` (= at least N; an existing line becomes a
+  quantity edit, never a blind add), `super_hist_cart_set_qty` and `super_hist_cart_remove` only create
+  a `super_hist_cart_write` approval. The approved handler re-reads the cart, refuses if the line changed
+  since the proposal, sends ONE write (never retried), re-reads and verifies. `_send` enforces a URL
+  allowlist (cart/search/login routes only; checkout, payment, order, confirm, shipping, success,
+  coupon, voucher and cart/clear are refused before sending, redirects included) and the shared >=10s
+  throttle; 403/429/challenge stops all cart traffic for 24h; an expired session returns
+  `login_required` (no automatic login). Fixtures under tests/fixtures/super-hist are synthetic.
 - Price checks run on their configured interval (minimum 60 minutes), retain the
   last known good price, and record a deduplicated alert when the target is met.
 

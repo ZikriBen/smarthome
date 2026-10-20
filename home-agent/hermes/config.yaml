@@ -72,6 +72,11 @@ mcp_servers:
         - super_hist_login_start
         - super_hist_login_code
         - super_hist_logout
+        - super_hist_cart_view
+        - super_hist_search
+        - super_hist_cart_add
+        - super_hist_cart_set_qty
+        - super_hist_cart_remove
 
 browser:
   # "off" = built-in browser_* tools on local Chromium (default auto-picks the Browser Use CLI,

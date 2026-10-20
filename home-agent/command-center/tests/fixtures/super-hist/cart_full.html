@@ -1,0 +1,35 @@
+<!-- SYNTHETIC fixture (hand-written, fake data) matching the istores/OpenCart cart page structure:
+     div.cart_product[data-product_id][data-cart-id], .product-description a, .price_span ins/del,
+     input[name=quantity], .sub_total / .final_sum.total -> .total_text. Header (name/phone/address) omitted. -->
+<html><head><title>עגלת קניות | הסופר החברתי</title></head><body>
+<div id="cart-page" class="cart-page container">
+  <div class="cart_products_list">
+    <div class="cart_product flex items-center" data-product_id="900101" data-cart-id="7001">
+      <div class="image"><img src="https://super-hist.co.il/image/cache/fake-milk-100x100.jpg" alt=""></div>
+      <div class="product-description"><a href="https://super-hist.co.il/index.php?route=product/product&amp;product_id=900101">חלב טרי 3% 1 ליטר - מחלבה לדוגמה</a>
+        <span class="unit_text">יח׳</span></div>
+      <div class="price_span"><ins>₪6.20</ins> <del>₪7.10</del></div>
+      <div class="quantity_box"><button class="minus">-</button>
+        <input type="text" name="quantity" value="2" class="form-control"><button class="plus">+</button></div>
+      <a class="remove" onclick="cart.remove('7001','900101');">הסר</a>
+    </div>
+    <div class="cart_product flex items-center" data-product_id="900202" data-cart-id="7002">
+      <div class="product-description"><a href="https://super-hist.co.il/index.php?route=product/product&amp;product_id=900202">לחם מחיטה מלאה 750 גרם - מאפייה לדוגמה</a></div>
+      <div class="price_span">₪12.90</div>
+      <div class="quantity_box"><input type="text" name="quantity" value="1"></div>
+      <a class="remove" onclick="cart.remove('7002','900202');">הסר</a>
+    </div>
+    <div class="cart_product flex items-center" data-product_id="900303" data-cart-id="7003">
+      <div class="product-description"><a href="https://super-hist.co.il/index.php?route=product/product&amp;product_id=900303">עגבניות &quot;שרי&quot; במשקל</a></div>
+      <div class="price_span"><ins>₪9.90</ins></div>
+      <div class="quantity_box"><input type="text" name="quantity" value="0.5"></div>
+      <a class="remove" onclick="cart.remove('7003','900303');">הסר</a>
+    </div>
+  </div>
+  <h3 class="order-summary">סיכום הזמנה</h3>
+  <div class="totals">
+    <div class="sub_total"><span class="title">סכום ביניים</span> <span class="total_text">₪30.25</span></div>
+    <div class="final_sum total"><span class="title">סה"כ לתשלום</span> <span class="total_text">₪30.25</span></div>
+  </div>
+</div>
+</body></html>
