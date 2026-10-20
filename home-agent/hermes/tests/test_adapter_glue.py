@@ -30,7 +30,7 @@ class _StubMeta(type):
 
 
 def _stub_attr(module_name, attr):
-    if attr == "cc_approvals":  # the real sibling module must be imported, never stubbed
+    if attr in ("cc_approvals", "otp_relay"):  # the real sibling modules must be imported, never stubbed
         raise AttributeError(attr)
     # CamelCase names become real (subclassable) classes; everything else a MagicMock.
     if attr[:1].isupper() and not attr.isupper():
@@ -40,7 +40,8 @@ def _stub_attr(module_name, attr):
 
 class _StubFinder(importlib.abc.MetaPathFinder, importlib.abc.Loader):
     def find_spec(self, name, path, target=None):
-        if name.split(".")[0] in STUB_ROOTS and name != "plugins.platforms.telegram.cc_approvals":
+        if name.split(".")[0] in STUB_ROOTS and name not in ("plugins.platforms.telegram.cc_approvals",
+                                                              "plugins.platforms.telegram.otp_relay"):
             return importlib.machinery.ModuleSpec(name, self, is_package=True)
         return None
 

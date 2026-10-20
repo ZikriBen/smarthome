@@ -12,6 +12,9 @@ COPY entrypoint-network-guard.sh /usr/local/bin/hermes-network-guard
 COPY telegram-adapter.py /opt/hermes/plugins/platforms/telegram/adapter.py
 # Approval state machine (buttons + chat replies), imported by the adapter above.
 COPY cc_approvals.py /opt/hermes/plugins/platforms/telegram/cc_approvals.py
+# otp-relay core (also loaded as a Hermes plugin from /opt/data/plugins), imported by the adapter's early
+# forward-bot intercept, which must run before the adapter's auth gate.
+COPY plugins/otp-relay/__init__.py plugins/otp-relay/otp_inbox.py /opt/hermes/plugins/platforms/telegram/otp_relay/
 RUN chmod 0755 /usr/local/bin/hermes-network-guard
 
 ENTRYPOINT ["/usr/local/bin/hermes-network-guard"]

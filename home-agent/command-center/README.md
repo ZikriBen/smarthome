@@ -20,8 +20,10 @@ integrations; Hermes never receives the Docker socket, host mounts, or a shell.
   Ben pastes in chat (`super_hist_login_start` -> `super_hist_login_code`). The ID
   number lives only in the root-only file `data/super_hist/vat_id`; the session
   cookie jar is `data/super_hist/cookies.txt` (0600). No automatic resend.
-  Auto-relay: Hermes's `otp-relay` plugin (hermes/plugins/otp-relay) takes
-  `#OTP <site> <code>` from Ben's forward bot before auth/the agent and writes it to
+  Auto-relay: Hermes's `otp-relay` plugin (hermes/plugins/otp-relay; also imported
+  by the Telegram adapter, which consumes the forward bot before its auth gate) takes
+  `#OTP <site> <raw SMS text>` from Ben's forward bot (its private chat only), extracts
+  exactly one standalone code, and writes only the code to
   `hermes/otp/codes.sqlite` (mounted here as /otp-inbox; 10 min TTL, max 5 rows,
   single use). The login waits ~45s for it, else Ben pastes the code.
 - Price checks run on their configured interval (minimum 60 minutes), retain the

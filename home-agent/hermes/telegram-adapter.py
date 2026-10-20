@@ -165,6 +165,21 @@ try:
 except ImportError:  # running from a source checkout
     sys.path.insert(0, str(_Path(__file__).resolve().parent))
     import cc_approvals as _cca  # type: ignore[no-redef]
+# otp-relay (hermes/plugins/otp-relay, copied next to this file as ``otp_relay`` by the Dockerfile): the SMS
+# forward bot is not an allowed user, so its messages must be consumed BEFORE this adapter's auth gate.
+try:
+    from plugins.platforms.telegram import otp_relay as _otp_relay
+except ImportError:  # running from a source checkout
+    try:
+        import importlib.util as _ilu
+        _otp_dir = _Path(__file__).resolve().parent / "plugins" / "otp-relay"
+        _otp_spec = _ilu.spec_from_file_location("otp_relay", _otp_dir / "__init__.py",
+                                                 submodule_search_locations=[str(_otp_dir)])
+        _otp_relay = _ilu.module_from_spec(_otp_spec)
+        sys.modules["otp_relay"] = _otp_relay
+        _otp_spec.loader.exec_module(_otp_relay)
+    except Exception:  # pragma: no cover - fail closed in _otp_relay_intercept
+        _otp_relay = None
 _COMMAND_CENTER_URL = "http://command-center:8080"
 # Max seconds a send/edit may sleep inline on a flood-control RetryAfter; longer penalties fail
 # closed with ``flood_control:{wait}`` so the caller's retry machinery owns the wait.
@@ -6546,6 +6561,25 @@ class TelegramAdapter(BasePlatformAdapter):
         """Message-like payload for normal messages and channel posts (``update.channel_post``)."""
         return getattr(update, "effective_message", None) or getattr(update, "message", None)
 
+    def _otp_relay_intercept(self, msg) -> bool:
+        """True = this message is from OTP_FORWARD_BOT_ID and was consumed (caller drops it). Only the
+        otp-relay store is called: no auth, batching, transcript, session or agent. Never logs the text."""
+        sender = getattr(getattr(msg, "from_user", None), "id", None)
+        bot = os.environ.get("OTP_FORWARD_BOT_ID", "").strip()
+        if not bot.isdigit() or sender is None or str(sender) != bot:
+            return False
+        chat = getattr(msg, "chat", None)
+        is_private = str(getattr(chat, "type", "") or "").lower() == "private"
+        if _otp_relay is None:
+            logger.warning("[Telegram] otp-relay module missing; dropped a forward-bot message")
+            return True
+        try:
+            _otp_relay.consume(sender, getattr(chat, "id", None), is_private, getattr(msg, "text", None),
+                               getattr(msg, "message_id", None))
+        except Exception as exc:  # fail closed: the forward bot never reaches auth or the agent
+            logger.warning("[Telegram] otp-relay failed (%s); dropped a forward-bot message", type(exc).__name__)
+        return True
+
     def _log_blocked_user(self, msg, *, level=logging.WARNING, what: str = "unauthorized user") -> None:
         logger.log(
             level, "[Telegram] Blocked %s %s in chat %s", what, getattr(getattr(msg, "from_user", None), "id", None),
@@ -6572,6 +6606,9 @@ class TelegramAdapter(BasePlatformAdapter):
         """Handle incoming text; buffers client-split chunks into one MessageEvent."""
         msg = self._effective_update_message(update)
         if not msg or not msg.text:
+            return
+        # The SMS forward bot is consumed here, before auth (it is deliberately not an allowed user).
+        if self._otp_relay_intercept(msg):
             return
         # Auth check first: blocked users must not reach batching, the observed transcript, or the agent.
         if not self._is_user_authorized_from_message(msg):

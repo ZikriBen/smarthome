@@ -23,9 +23,12 @@ services:
       HERMES_GID: 1000
       SEARXNG_URL: http://searxng:8080
       # otp-relay plugin (hermes/plugins/otp-relay): numeric user id of Ben's SMS forward bot. Empty = inert.
-      # Its messages are consumed before auth/the agent; only `#OTP <site> <code>` lands in hermes/otp/.
+      # All its messages are consumed by the Telegram adapter BEFORE auth/the agent (it is not an allowed user);
+      # from its private chat, `#OTP <site> <raw SMS>` with exactly one code -> only the code lands in hermes/otp/.
       OTP_FORWARD_BOT_ID: ${OTP_FORWARD_BOT_ID:-}
       OTP_FORWARD_CHAT_ID: ${OTP_FORWARD_CHAT_ID:-}
+      # Optional diagnostics: 1 = log the payload SHAPE only (every digit masked, length, lines, match count).
+      OTP_RELAY_DEBUG_SHAPE: ${OTP_RELAY_DEBUG_SHAPE:-}
 
     # Hermes state (sessions, memories, logs). config.yaml and SOUL.md are tracked in git.
     volumes:
