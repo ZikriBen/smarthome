@@ -66,3 +66,13 @@ domain module's `register_routes(router)`. Add the matching MCP-facing function
 to that domain's `mcp_tools` module. New approved writes are registered once
 through `approvals.register_action`; integrations do not implement their own
 approval state machines.
+
+Approvals are decided once: `POST /v1/approvals/<id>/(approve|deny)` (body
+`{"via": "button"|"chat", "actor": "<name>"}`) claims the row atomically and
+records who/how/when in `approval_decisions`; any later call returns the recorded
+outcome with `already_decided: true` (HTTP 200) instead of an error. `GET
+/v1/approvals/<id>` returns a payload-free status + one-line summary for the
+Telegram prompt. Pending approvals expire after 15 minutes. The Hermes Telegram
+adapter (`hermes/cc_approvals.py`) accepts both a button tap and a chat reply
+("מאשר"/"כן"/"לא"/"בטל", or a reply to the prompt) and edits the prompt to the
+outcome, removing its buttons.

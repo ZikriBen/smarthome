@@ -61,6 +61,10 @@ class API(BaseHTTPRequestHandler):
                 return self.send_json(200 if available else 503, result)
             except Exception:
                 return self.send_json(503, {"status": "unavailable"})
+        approval_view = re.fullmatch(r"/v1/approvals/([0-9a-f]{18})", self.path)
+        if approval_view and (self.authorized() or self.callback_authorized()):
+            # Payload-free status/summary for the Telegram prompt (the callback token can read it).
+            return self.send_json(200, approvals.get(approval_view.group(1)))
         if not self.authorized():
             return self.send_json(401, {"error": "unauthorized"})
         try:
@@ -81,8 +85,11 @@ class API(BaseHTTPRequestHandler):
         try:
             payload = self.body()
             if approval_match:
+                # Idempotent: a second tap/reply gets the recorded outcome (200), not an error, so the
+                # caller can show "already decided" and remove the stale buttons.
                 ident, decision = approval_match.groups()
-                result = approvals.approve(ident) if decision == "approve" else approvals.deny(ident)
+                result = approvals.decide(ident, decision, via=str(payload.get("via") or "button"),
+                                          actor=str(payload.get("actor") or ""))
                 return self.send_json(200, result)
             result = ROUTER.dispatch("POST", self.path, payload)
             if result is None:
