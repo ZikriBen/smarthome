@@ -1,0 +1,20 @@
+{
+ "_source": "REAL raw search responses, live NUC read-only run 2026-10-20 07:20-07:30 IL (store 331 for Rami); no secrets",
+ "_store": "331",
+ "ביצים": "q01.json",
+ "ביצים 30": "q02.json",
+ "גבינה לבנה": "q03.json",
+ "חלב": "q04.json",
+ "יין לקידוש": "q05.json",
+ "יין לקידוש קדם": "q06.json",
+ "יין קדם": "q07.json",
+ "מיץ ענבים": "q08.json",
+ "מיץ ענבים לקידוש": "q09.json",
+ "ממרח חלבה": "q10.json",
+ "ממרח שוקולד": "q11.json",
+ "פטריות": "q12.json",
+ "קדם": "q13.json",
+ "שמנת מתוקה": "q14.json",
+ "שמנת מתוקה x": "q15.json",
+ "תבנית ביצים": "q16.json"
+}

@@ -228,6 +228,30 @@ class GroceryRouteTests(unittest.TestCase):
         self.assertIn("נמחקה", g.preferences({"action": "delete", "index": 2}, {})["text"])
         self.assertIn("שוחזרה", g.preferences({"action": "delete", "undo": True}, {})["text"])
 
+    def test_cart_needs_choice_then_choices_one_run(self):
+        g.FIXTURES = str(Path(__file__).parent / "fixtures" / "grocery-real-20261020")
+        g.add_item({"text": "יין לקידוש קדם, שמנת מתוקה x ×2"}, {})
+        self.assertIn("שמנת מתוקה ×2", g.list_items({}, {})["text"])
+        st = self.wait(g.start_cart({}, {}))
+        self.assertEqual(st["status"], "done", st)
+        rows = {(r["item"], r["site"]): r for r in st["needs_choice"]}
+        self.assertEqual(list(rows), [("יין לקידוש קדם", "rami_levy")])
+        cands = rows[("יין לקידוש קדם", "rami_levy")]["candidates"]
+        self.assertTrue(cands)
+        self.assertNotIn("תלתלים", str(cands) + st["message"])
+        self.assertIn("❓ לבחירה: יין לקידוש קדם", st["message"])
+        with self.assertRaises(ValueError):
+            g.start_cart({"choices": {"יין לקידוש קדם": {"amazon": "1"}}}, {})
+        pid = cands[0]["id"]
+        st2 = self.wait(g.start_cart({"choices": {"יין לקידוש קדם": {"rami_levy": pid}}}, {}))
+        self.assertEqual(st2["status"], "done", st2)
+        self.assertNotIn("needs_choice", st2)
+        self.assertNotIn("❓", st2["message"])
+        picked = [l for l in db.run_lines(conn(), st2["run_id"]) if l["site"] == "rami_levy" and l["item"] == "יין לקידוש קדם"]
+        self.assertEqual(picked[0]["product_id"], pid)
+        self.assertFalse(g.USER_DEFAULTS.is_file() and pid in g.USER_DEFAULTS.read_text(encoding="utf-8"))
+
+
 class VendoredGuardTests(unittest.TestCase):
     def test_no_cart_write_or_login_code_vendored(self):
         root = HERE / "grocery"

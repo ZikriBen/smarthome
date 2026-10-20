@@ -146,10 +146,10 @@ def _skipped(sites, force=False):
     return out
 
 
-def _cart_job(ident, sites, skipped, warning=None):
+def _cart_job(ident, sites, skipped, warning=None, choices=None):
     try:
         r = _api().cart(sites, fixtures=FIXTURES, out_dir=str(REPORTS_DIR), defaults_path=str(DEFAULTS),
-                        log=lambda m: log(f"cart {ident} {m}"), skipped=skipped)
+                        log=lambda m: log(f"cart {ident} {m}"), skipped=skipped, choices=choices)
         for s, err in r.get("blocked", {}).items():
             grocery_db.set_blocked(connection, s, err)
             log(f"cart {ident} {s} BLOCKED for 24h: {err}")
@@ -159,8 +159,10 @@ def _cart_job(ident, sites, skipped, warning=None):
         message = r["message"]
         if warning:
             message = f"{warning}\n{message}"
-        grocery_db.finish_run(connection, ident, "done", message, r["links"], None, r.get("lines"))
-        log(f"cart {ident} done items={r['items']} links={ {s: bool(u) for s, u in r['links'].items()} }")
+        extra = {k: r[k] for k in ("needs_choice", "unmatched_choices") if r.get(k)}
+        grocery_db.finish_run(connection, ident, "done", message, r["links"], None, r.get("lines"), extra)
+        log(f"cart {ident} done items={r['items']} links={ {s: bool(u) for s, u in r['links'].items()} } "
+            f"needs_choice={len(r.get('needs_choice') or [])} choices={len(choices or {})}")
     except Exception as exc:  # recorded AND logged; never swallowed (price_watches lesson)
         error = f"{type(exc).__name__}: {exc}"
         log(f"cart {ident} failed: {error}\n{traceback.format_exc()}")
@@ -169,11 +171,24 @@ def _cart_job(ident, sites, skipped, warning=None):
         _run_lock.release()
 
 
+def _choices(raw):
+    """{list item: {site: product_id}} — one-run picks among needs_choice candidates (never saved)."""
+    if raw in (None, "", {}):
+        return None
+    if not isinstance(raw, dict) or not all(isinstance(v, dict) for v in raw.values()):
+        raise ValueError('choices must be {"<list item>": {"rami_levy": "<id>", "shufersal": "<id>"}}')
+    bad = [s for v in raw.values() for s in v if s not in CART_SITES]
+    if bad:
+        raise ValueError(f"choices: unknown site(s) {bad}; use rami_levy / shufersal")
+    return {str(k): {s: str(i) for s, i in v.items() if str(i or "").strip()} for k, v in raw.items()}
+
+
 def start_cart(p, _q):
     sites = p.get("sites", "both") or "both"
     want = list(CART_SITES) if sites == "both" else [sites]
     if any(s not in CART_SITES for s in want):
         raise ValueError("sites must be both, rami_levy or shufersal")
+    choices = _choices(p.get("choices"))
     if not _run_lock.acquire(blocking=False):
         raise ValueError("a grocery cart job is already running; check grocery_cart_status")
     try:
@@ -190,7 +205,7 @@ def start_cart(p, _q):
         if _run_lock.locked():
             _run_lock.release()
         raise
-    threading.Thread(target=_cart_job, args=(ident, want, skipped, warning), daemon=True).start()
+    threading.Thread(target=_cart_job, args=(ident, want, skipped, warning, choices), daemon=True).start()
     eta = 0 if len(skipped) == len(want) else ETA_SECONDS
     result = {"run_id": ident, "status": "running", "eta_seconds": eta, "items": len(st["items"])}
     if skipped:
@@ -215,8 +230,11 @@ def cart_status(p, _q):
         status, error = "failed", "run exceeded 30 minutes"
     import json
     links = json.loads(row["links_json"]) if row["links_json"] else {s: None for s in row["sites"].split(",")}
-    return {"run_id": ident, "status": status, "seconds": (row["finished"] or int(time.time())) - row["started"],
-            "message": row["message"], "links": links, "error": error}
+    out = {"run_id": ident, "status": status, "seconds": (row["finished"] or int(time.time())) - row["started"],
+           "message": row["message"], "links": links, "error": error}
+    if row.get("extra_json"):
+        out.update(json.loads(row["extra_json"]))
+    return out
 
 
 def register_routes(router):

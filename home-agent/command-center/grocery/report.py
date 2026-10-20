@@ -276,7 +276,10 @@ KASHRUT_UNKNOWN = "כשרות לא ידועה"
 
 
 def check_reasons(site: str, p: Pick) -> List[str]:
-    """Why an item of one site needs a look by hand (empty = fine)."""
+    """Why an item of one site needs a look by hand (empty = fine). needs_choice items are listed on
+    their own '❓ לבחירה' line instead."""
+    if getattr(p, "needs_choice", False):
+        return []
     if p.to_check:
         return [p.check_reason]
     out = []
@@ -406,6 +409,17 @@ def cart_message(results: Dict[str, List[Pick]], names: Dict[str, str], urls: Di
             checks.append(f"{name} ({'; '.join(why)})")
     if checks:
         out.append("⚠️ לבדיקה: " + " · ".join(checks))
+    ask = []
+    for i in range(n if ref else 0):
+        per = [f"{SHORT.get(s, s)}: " + (f"הצעה {results[s][i].chosen.p.name} ₪{results[s][i].chosen.p.price:.2f}"
+                                         if results[s][i].chosen and results[s][i].chosen.p.price is not None
+                                         else "לא בעגלה")
+               + f", {len(results[s][i].choices)} מועמדים"
+               for s in sites if getattr(results[s][i], "needs_choice", False)]
+        if per:
+            ask.append(f"{ref[i].item.name} ({'; '.join(per)})")
+    if ask:
+        out.append("❓ לבחירה: " + " · ".join(ask))
     unk = []
     for s in sites:
         names_unk = [p.item.name for p in results[s] if not p.to_check and KASHRUT_UNKNOWN in p.flags]

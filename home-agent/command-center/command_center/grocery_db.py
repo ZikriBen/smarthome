@@ -11,7 +11,8 @@ import threading
 import time
 
 BLOCK_SECONDS = 24 * 3600
-RUN_COLUMNS = {"sites": "TEXT", "message": "TEXT", "links_json": "TEXT", "ordered": "INTEGER DEFAULT 0"}
+RUN_COLUMNS = {"sites": "TEXT", "message": "TEXT", "links_json": "TEXT", "ordered": "INTEGER DEFAULT 0",
+               "extra_json": "TEXT"}   # extra_json: {needs_choice, unmatched_choices} (additive column)
 _db_lock = threading.Lock()
 
 
@@ -48,12 +49,13 @@ def start_run(conn, ident, sites):
         conn.commit()
 
 
-def finish_run(conn, ident, status, message=None, links=None, error=None, lines=None):
+def finish_run(conn, ident, status, message=None, links=None, error=None, lines=None, extra=None):
     """lines: {site: [plan line dicts]} (POC plan format) + in_link from link_code presence."""
     with _db_lock:
-        conn.execute("UPDATE grocery_runs SET status=?, finished=?, message=?, summary=?, links_json=?, error=? "
-                     "WHERE id=?", (status, int(time.time()), message, message,
-                                    json.dumps(links or {}, ensure_ascii=False), error, ident))
+        conn.execute("UPDATE grocery_runs SET status=?, finished=?, message=?, summary=?, links_json=?, error=?, "
+                     "extra_json=? WHERE id=?", (status, int(time.time()), message, message,
+                                                 json.dumps(links or {}, ensure_ascii=False), error,
+                                                 json.dumps(extra, ensure_ascii=False) if extra else None, ident))
         for site, ls in (lines or {}).items():
             for l in ls:
                 conn.execute(
@@ -66,11 +68,11 @@ def finish_run(conn, ident, status, message=None, links=None, error=None, lines=
 
 
 def get_run(conn, ident):
-    row = conn.execute("SELECT sites,status,started,finished,message,links_json,error FROM grocery_runs "
+    row = conn.execute("SELECT sites,status,started,finished,message,links_json,error,extra_json FROM grocery_runs "
                        "WHERE id=?", (ident,)).fetchone()
     if row is None:
         return None
-    keys = ("sites", "status", "started", "finished", "message", "links_json", "error")
+    keys = ("sites", "status", "started", "finished", "message", "links_json", "error", "extra_json")
     return dict(zip(keys, row))
 
 

@@ -1,0 +1,15 @@
+# Written by upsert_default()/learn_preference() — user overrides on top of defaults.yaml
+version: 1
+aliases:
+  ממרח שוקולד:
+    require_any: [פרווה]
+    _learned:
+      - date: '2026-10-19'
+        reason: 'synthetic test preference'
+        change: 'require: פרווה'
+  ממרח חלבה:
+    brands: [אחווה]
+    _learned:
+      - date: '2026-10-19'
+        reason: 'synthetic test preference'
+        change: 'brand: אחווה'

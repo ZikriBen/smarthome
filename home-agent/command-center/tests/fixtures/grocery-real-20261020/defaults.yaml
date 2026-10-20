@@ -1,0 +1,149 @@
+# defaults.yaml — shared by ALL sites. Resolves a short name ("חלב") into a precise intent.
+# Hermes passes raw text ("חלב, 2 מלפפון, מרק עוף"); each line is looked up here by name or alias.
+# User/agent overrides go to defaults.user.yaml (written by `grocery.py remember` / upsert_default()).
+# Field reference: README.md → "Defaults format". Keep values simple: strings, numbers, [flow, lists].
+# require_any: [a, b] = hard filter: product name (or brand) must contain at least one (all sites).
+# exclude_words: [..] = hard filter: product name must contain none of them (all sites).
+# pack_preference: [a, b, c] = ordered pack sizes in the item's unit (units / grams for kg / ml for l / meters).
+#   The first size that exists wins (counts exact, weights/volumes ±5%); within it the normal score decides.
+#   None found -> normal logic, with a note and lower confidence.
+version: 1
+
+produce_defaults:
+  units: 5              # produce default = 5 units; per-unit produce: 5, by weight: 5 × unit_weight_kg
+  unit_weight_kg: 0.15  # Ben: 0.15 kg per unit -> default 0.75 kg, rounded UP to the site's step (0.5 -> 1.0)
+  kg: 0.5               # default for non-produce goods sold by weight (deli etc.)
+
+# Delivery (home delivery only; pickup not modelled). Fees overrideable via defaults.user.yaml /
+# grocery_learn_preference(change={"delivery": {site: {fee, min_order, free_above}}}).
+# Sources recorded 2026-10-19 — see grocery/delivery.py docstring.
+delivery:
+  rami_levy:
+    fee: 35.90          # https://www.rami-levy.co.il/he/orders-and-deliveries (NUC HTML 19.10.2026)
+    min_order: 0        # no minimum stated on that page; hacoupon.co.il Oct 2026 agrees
+    free_above: null    # past promos (e.g. free above 199 until 24.1.26) are expired
+    note: "flat; credit-club card holders may still pay the old ~29.90 — override with learn if so"
+  shufersal:
+    fee: 35.90          # homepage "35.90 ₪ למשלוח" (NUC HTML 19.10.2026); ynet July 2026 raise
+    min_order: 0        # no site-level minimum found on current homepage; older free-above-750 cancelled
+    free_above: null
+    note: "home delivery; pickup has a separate 15/10 service fee we do not model"
+aliases:
+  ביצים:
+    aliases: [ביצה, תבנית ביצים]
+    terms: [ביצים]
+    keywords: [ביצים]
+    exclude_words: [אטריות, פסטה, מיונז, סלט]
+    # no size (M/L/XL) preference: within a pack size the cheapest per egg wins
+    unit: unit
+    pack_preference: [30, 18, 12]   # Ben: 30-pack first, else 18, else 12 (ordered; in units)
+    # pack_preference items are searched with a 40-row page; if the 30-pack still isn't there, up to 2 more
+    # searches: auto "ביצים 30", then these extra_terms (merged by product id, max 3 requests for the item)
+    extra_terms: [תבנית ביצים]
+    filters:
+      rami_levy:
+        sub_groups: [295]     # site-research: eggs = group 200 / sub_group 295
+  גמבה:
+    aliases: [גמבות, פלפל אדום, פלפלים אדומים]
+    terms: [פלפל אדום]
+    keywords: [פלפל אדום]
+    exclude_words: [צ'ומה, ממולא, קלוי, טושי, חריף]
+    produce: true
+    unit: kg
+    filters:
+      rami_levy:
+        departments: [49]     # fresh produce (pickles are 54)
+  מלפפון:
+    aliases: [מלפפונים]
+    terms: [מלפפון]
+    exclude_words: [במלח, בחומץ, חמוץ, כבוש, בייבי, תחליב, סבון]
+    produce: true
+    unit: kg
+    filters:
+      rami_levy:
+        departments: [49]     # fresh produce (pickles are 54)
+  עגבניה:
+    aliases: [עגבניות]
+    terms: [עגבניה]
+    exclude_words: [שרי, מרוסקות, רסק, מיובשות, קטשופ]
+    produce: true
+    unit: kg
+    filters:
+      rami_levy:
+        departments: [49]     # fresh produce (pickles are 54)
+  חלב:
+    aliases: [חלב טרי]
+    terms: [חלב]
+    keywords: [חלב]
+    exclude_words: [שוקו, שוקולד, גבינה, מרכך, סויה, שקדים, אבקת, עמיד, מועשר]
+    prefer_words: [3%, טרי]
+    filters:
+      rami_levy:
+        sub_groups: [22]      # site-research: milk = sub_group 22
+    unit: l
+    size_min: 0.9
+    size_max: 1.1
+  ממרח שוקולד:
+    terms: [ממרח שוקולד]
+    keywords: [ממרח]
+    unit: kg
+  ממרח חלבה:
+    aliases: [ממרח חלווה, חלווה למריחה]
+    terms: [ממרח חלבה]
+    keywords: [ממרח חלבה, ממרח חלווה, חלבה]
+    exclude_words: [ריבת חלב]
+    unit: kg
+  מרק עוף:
+    aliases: [אבקת מרק עוף, אבקת מרק]
+    terms: [אבקת מרק עוף]
+    fallback_terms: [מרק עוף]
+    keywords: [מרק עוף, טעם עוף]
+    # Ben (11:28): cheapest wins, any brand. Powder / soup mix only:
+    require_any: [מרק]
+    exclude_words: [קוביות, קוביה, מוכן, קפוא, נוזלי, כוס, שקדי מרק, אטריות, קרוטונים, ירקות]
+    unit: kg
+    size_max: 0.5     # pack-size limit only (not a brand rule); remove to allow 1 kg tubs
+  פיתות:
+    aliases: [פיתה]
+    terms: [פיתות]
+    keywords: [פיתות, פיתה]
+    unit: unit
+  חומץ:
+    terms: [חומץ]
+    prefer_words: [5%]
+    keywords: [חומץ]
+    exclude_words: [תפוחים, בלסמי, יין]
+    unit: l
+  נייר כסף:
+    aliases: [נייר אלומיניום, רדיד, רדיד אלומיניום]
+    terms: [רדיד אלומיניום]
+    fallback_terms: [נייר אלומיניום]
+    keywords: [רדיד, אלומיניום]
+    require_any: [רדיד, אלומיניום]   # real run: Shufersal picked ניילון נצמד
+    exclude_words: [תבנית, תבניות, מגש, עטרות, נצמד, ניילון, שקיות, נייר אפיה]
+    unit: m
+  שיבולת שועל:
+    aliases: [קוואקר, שבולת שועל]
+    terms: [שיבולת שועל]
+    keywords: [שיבולת שועל, שבולת שועל]   # real run: Shufersal spells it שבולת
+    prefer_words: [דקה]
+    exclude_words: [חטיף, עוגיות, משקה, גרנולה, קמח]
+    unit: kg
+  זירו:
+    aliases: [קולה זירו, קוקה קולה זירו, פפסי מקס, קולה זירו / פפסי מקס]
+    # OR: both terms are searched and compete; the cheaper per liter wins
+    terms: [קולה זירו, פפסי מקס]
+    keywords: [קולה זירו, פפסי מקס]
+    exclude_words: [כוסות, נוזל כלים, פיירי, נטול, לימון, וניל, דובדבן]   # plain zero only
+    unit: l
+    qty: 1
+    pack_preference: [1500]   # Ben: a single 1.5 L bottle (ml); no 1.5 L -> normal logic + note
+    size_max: 2               # backstop against 6-packs if no 1.5 L bottle exists
+  סוכר:
+    aliases: [סוכר לבן]
+    terms: [סוכר לבן]
+    keywords: [סוכר לבן]
+    require_any: [סוכר]
+    # real run noise: תפוח אדמה לבן, אננס ללא סוכר, מרכך כביסה לבן, שעועית לבנה
+    exclude_words: [חום, דמררה, קוקוס, קנים, תחליף, ללא סוכר, תפוח אדמה, אננס, מרכך, שעועית, ממתק, סוכריות, אבקת סוכר]
+    unit: kg

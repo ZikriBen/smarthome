@@ -43,13 +43,17 @@ def register(mcp, client):
         return client.request("POST", "/grocery/preferences", payload)["text"]
 
     @mcp.tool()
-    def grocery_cart(sites: Literal["both", "rami_levy", "shufersal"] = "both") -> dict:
-        """"תכין עגלה" / "איפה זול": pull the list from Google Tasks, search Rami Levy and Shufersal (read-only, ~3 min) and build cart LINKS + a price comparison. Returns {run_id, status, eta_seconds}. Acknowledge in one short line, then schedule an `in 2m` follow-up that calls grocery_cart_status(run_id, wait_seconds=90), repeating `in 2m` while status is running. If run_id is null, send `message`. You never order or pay; Ben opens the links and checks out himself."""
-        return client.request("POST", "/grocery/cart", {"sites": sites})
+    def grocery_cart(sites: Literal["both", "rami_levy", "shufersal"] = "both",
+                     choices: dict | None = None) -> dict:
+        """"תכין עגלה" / "איפה זול": pull the list from Google Tasks, search Rami Levy and Shufersal (read-only, ~3 min), build cart LINKS + a price comparison. Returns {run_id, status, eta_seconds}. Acknowledge in one short line, then schedule an `in 2m` follow-up calling grocery_cart_status(run_id, wait_seconds=90), repeating while running. If run_id is null, send `message`. choices={"<list item>": {"rami_levy": "<id>"}} = your pick for needs_choice items, this run only (never saved). You never order or pay."""
+        payload = {"sites": sites}
+        if choices:
+            payload["choices"] = choices
+        return client.request("POST", "/grocery/cart", payload)
 
     @mcp.tool()
     def grocery_cart_status(run_id: str, wait_seconds: int = 0) -> dict:
-        """Check a grocery_cart job. status running/done/failed. When done, send `message` VERBATIM (never retype, shorten or rebuild the URLs; `links` holds the same URLs). If `message` contains a line '---', send each part as its own message. On failure report `error`; do not retry automatically."""
+        """Check a grocery_cart job. status running/done/failed. If done and `needs_choice` is non-empty, first choose per SOUL 'בחירת מוצר' and call grocery_cart(choices=...) again; send only the final run's message. Send `message` VERBATIM (never retype or rebuild URLs). If it contains '---', send each part separately. On failure report `error`; no automatic retry."""
         wait_seconds = max(0, min(int(wait_seconds), 90))
         return client.request("POST", "/grocery/cart-status",
                               {"run_id": run_id, "wait_seconds": wait_seconds},

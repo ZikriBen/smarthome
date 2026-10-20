@@ -7,11 +7,16 @@ from dataclasses import dataclass, field
 from typing import Callable, Dict, List, Optional
 
 from . import normalize as N
+from . import relevance as R
 from .http import CloudflareBlocked, HttpError, RobotsDisallowed, SessionExpired
 from .model import Item, Product
 
 W_NAME, W_PRICE, W_CAT, W_BRAND, W_PREFER = 50.0, 35.0, 15.0, 10.0, 6.0
 PEN_UNIT_MISMATCH, PEN_SIZE, PEN_NO_UNITPRICE = 25.0, 30.0, 10.0
+W_RANK = 4.0            # free-text items: the site's own relevance order (first hit +4 .. 10th +0.4)
+CLOSE_PTS = 3.0         # free-text partial match: a different product this close -> needs_choice
+MIN_AUTO = 0.6          # free-text: below this name match the code asks instead of auto-picking
+N_CHOICES = 8
 
 
 @dataclass
@@ -21,6 +26,8 @@ class Candidate:
     name_score: float = 0.0
     score: float = 0.0
     reasons: List[str] = field(default_factory=list)
+    rank: int = 99                     # position in the site's results for the search that found it
+    hits: int = 0                      # free-text: typed tokens found in the name
 
     def __getattr__(self, k):          # convenience: c.id, c.name, c.price, c.pack ...
         if k.startswith("__") or "p" not in self.__dict__:
@@ -47,6 +54,8 @@ class Pick:
     site: str = ""
     notes: List[str] = field(default_factory=list)   # always shown (e.g. pack-preference fallback)
     error: Optional[str] = None     # a search for this item failed (network/HTTP) and nothing was found
+    needs_choice: bool = False      # code not confident: Hermes chooses among `choices` (see relevance.py)
+    choices: List[Candidate] = field(default_factory=list)
 
     @property
     def to_check(self) -> bool:
@@ -261,7 +270,7 @@ class Picker:
         f = item.site_filters(self.site)
         out: Dict[str, Candidate] = {}
         for t in terms:
-            for raw in self._search(t, size):
+            for pos, raw in enumerate(self._search(t, size)):
                 p = self.adapter.normalize(raw, item.unit)
                 if p is None:
                     continue
@@ -277,13 +286,32 @@ class Picker:
                 if not ok:
                     stats["excluded_word"] += 1
                     continue
-                out.setdefault(p.id, Candidate(p, f"{tag}:{t}"))
-        return list(out.values())
+                out.setdefault(p.id, Candidate(p, f"{tag}:{t}", rank=pos))
+        return self._food_sane(item, list(out.values()), stats)
+
+    @staticmethod
+    def _food_sane(item: Item, cands: List[Candidate], stats: Counter) -> List[Candidate]:
+        """Food query: drop cosmetics/hair/cleaning/disposables, but only if some food product remains."""
+        if not cands or R.item_is_nonfood(item.name):
+            return cands
+        food = [c for c in cands if not R.product_is_nonfood(c.p)]
+        if food and len(food) < len(cands):
+            stats["nonfood"] += len(cands) - len(food)
+            return food
+        return cands
+
+    @staticmethod
+    def free_text(item: Item) -> bool:
+        return item.source in ("text", "unknown")
 
     def score(self, cands: List[Candidate], item: Item) -> None:
         has_filter = any(item.site_filters(self.site).get(k) for k in ("departments", "groups", "sub_groups"))
+        free = self.free_text(item)
         for c in cands:
-            c.name_score = name_score(c.p.name, item.match_words)
+            if free:
+                c.name_score, _core, c.hits = R.rel_score(c.p.name, item.name)
+            else:
+                c.name_score = name_score(c.p.name, item.match_words)
         unit = item.unit
         if not unit:
             pool = [c.p.pack.unit for c in cands if c.p.pack.unit and c.name_score >= 0.5] or \
@@ -324,6 +352,9 @@ class Picker:
                 if hits:
                     s += W_PREFER * hits / len(item.prefer_words)
                     c.reasons.append(f"attributes {hits}/{len(item.prefer_words)}")
+            if free and c.rank < 10:
+                s += W_RANK * (1 - c.rank / 10)
+                c.reasons.append(f"site rank {c.rank + 1}")
             c.score = round(s, 2)
 
     @staticmethod
@@ -386,6 +417,11 @@ class Picker:
         terms_used = list(item.terms)
         size = self.deep_size if item.pack_preference and not item.pinned_for(self.site) else None
         cands = self._gather(item, item.terms, "term", stats, size)
+        if not cands:   # stray Latin/noise tokens can empty a search ('שמנת מתוקה x' on Rami Levy)
+            retry = [h for h in (R.hebrew_only(t) for t in item.terms) if h and h not in item.terms]
+            if retry:
+                terms_used += retry
+                cands = self._gather(item, retry, "clean", stats, size)
         attr_miss = False
         if not cands and (item.require_any or item.exclude_words) and not item.pinned_for(self.site):
             # Attribute constraint matched nothing: pick the best unconstrained product and flag it.
@@ -407,6 +443,15 @@ class Picker:
                     item.filters[self.site] = saved
             relaxed = bool(cands)
         self.score(cands, item)
+        if self.free_text(item) and not any(c.name_score >= 0.5 for c in cands):
+            # nothing matched the core noun: shorter searches ('יין לקידוש', 'יין קדם'), max 2
+            extra = [t for t in R.relaxed_terms(item.name) if t not in terms_used][:2]
+            if extra:
+                terms_used += extra
+                known = {c.p.id for c in cands}
+                cands += [c for c in self._gather(item, extra, "relaxed", stats, size) if c.p.id not in known]
+                cands = self._food_sane(item, cands, stats)
+                self.score(cands, item)
         if size and cands:
             terms_used += self._pack_searches(item, cands, stats, size)
         ranked = sorted(cands, key=lambda c: c.score, reverse=True)
@@ -420,8 +465,16 @@ class Picker:
             ranked = sorted(cands, key=lambda c: c.score, reverse=True)
             best = ranked[0] if ranked else None
             from_fallback = bool(best and best.found_by.startswith("fallback"))
-        elif best is None and ranked:
-            best = ranked[0]
+        # never take the top result just because it ranks first: nothing matched -> needs_choice
+        needs_choice, choices = False, []
+        if best is None and ranked and not item.pinned_for(self.site):
+            choices = self._choices(item, ranked)
+            needs_choice = bool(choices)
+        elif best is not None and self.free_text(item) and not item.pinned_for(self.site):
+            close = [c for c in ranked if c is not best and c.name_score >= best.name_score
+                     and c.score >= best.score - CLOSE_PTS and N.norm_text(c.p.name) != N.norm_text(best.p.name)]
+            if best.name_score < 0.99 and (best.name_score < MIN_AUTO or close):
+                needs_choice, choices = True, self._choices(item, ranked)
 
         pinned_id = item.pinned_for(self.site)
         kosher_flag = None
@@ -447,7 +500,8 @@ class Picker:
                 return Pick(item, None, ranked[: self.n_alt], N.round_qty(q, False), "low",
                             [f"product_id {pinned_id} נעוץ אך לא נמצא בתוצאות/בסניף — ייכלל כמו שהוא"],
                             terms_used, dict(stats), self.site)
-            best, conf, flags = pinned, "high", ["מוצר נעוץ (product_id)"]
+            best, conf, flags = pinned, "high", [("נבחר מתוך המועמדים" if self.site in item.chosen_sites
+                                                  else "מוצר נעוץ (product_id)")]
         else:
             pref_fallback = False
             if item.pack_preference and ranked:
@@ -463,6 +517,11 @@ class Picker:
             miss = " / ".join(item.require_any or item.exclude_words[:1] or ["העדפה"])
             flags.append(f"לא נמצא {miss}")
             conf = "low" if conf != "none" else conf
+        if needs_choice:
+            flags = [f for f in flags if f != "לא נמצא מוצר מתאים"]
+            flags.append("❓ לבחירה — " + (f"{len(choices)} מועמדים, ההתאמה לא חד-משמעית" if best is not None
+                                            else f"אין התאמה בטוחה, {len(choices)} מועמדים"))
+            conf = "low" if best is not None else "none"
         if kosher_flag and best is not None:
             flags.append(kosher_flag)
             if kosher_flag.startswith("לא נמצא"):
@@ -476,7 +535,16 @@ class Picker:
             qty, qflags = resolve_qty(item, best.p, self.produce)
             flags += qflags
         notes = [f for f in flags if f in pref_flags] if not pinned_id else []
-        return Pick(item, best, alts, qty, conf, flags, terms_used, dict(stats), self.site, notes)
+        return Pick(item, best, alts, qty, conf, flags, terms_used, dict(stats), self.site, notes,
+                    needs_choice=needs_choice, choices=choices)
+
+    def _choices(self, item: Item, ranked: List[Candidate]) -> List[Candidate]:
+        """Top candidates for Hermes: food-sane (already), at least one typed word in the name."""
+        if self.free_text(item):
+            pool = [c for c in ranked if c.hits > 0]
+        else:
+            pool = [c for c in ranked if c.name_score > 0]
+        return pool[:N_CHOICES]
 
 
 def build_plan(picks: List[Pick], site: str, store, meta: dict) -> dict:
@@ -487,7 +555,7 @@ def build_plan(picks: List[Pick], site: str, store, meta: dict) -> dict:
         pid = p.chosen.p.id if p.chosen else p.item.pinned_for(site)
         line = {"item": p.item.name, "input": p.item.raw_text, "source": p.item.source, "product_id": pid,
                 "qty": p.qty, "confidence": p.confidence, "flags": p.flags, "terms": p.terms_used,
-                "to_check": p.to_check, "error": p.error}
+                "to_check": p.to_check, "error": p.error, "needs_choice": p.needs_choice}
         if p.chosen:
             c = p.chosen.p
             line.update({"product_name": c.name, "brand": c.brand, "price": c.price, "shelf_price": c.shelf_price,

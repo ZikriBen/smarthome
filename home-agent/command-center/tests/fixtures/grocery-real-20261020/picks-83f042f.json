@@ -1,0 +1,310 @@
+{
+ "state": {
+  "items": [
+   {
+    "text": "שמנת מתוקה x",
+    "item": "שמנת מתוקה x",
+    "qty": 2.0,
+    "qty_unit": "unit",
+    "known": false
+   },
+   {
+    "text": "גבינה לבנה",
+    "item": "גבינה לבנה",
+    "qty": null,
+    "qty_unit": null,
+    "known": false
+   },
+   {
+    "text": "ממרח חלווה",
+    "item": "ממרח חלבה",
+    "qty": null,
+    "qty_unit": null,
+    "known": true
+   },
+   {
+    "text": "ממרח שוקולד",
+    "item": "ממרח שוקולד",
+    "qty": null,
+    "qty_unit": null,
+    "known": true
+   },
+   {
+    "text": "יין לקידוש קדם",
+    "item": "יין לקידוש קדם",
+    "qty": null,
+    "qty_unit": null,
+    "known": false
+   },
+   {
+    "text": "ביצים",
+    "item": "ביצים",
+    "qty": null,
+    "qty_unit": null,
+    "known": true
+   },
+   {
+    "text": "פטריות",
+    "item": "פטריות",
+    "qty": null,
+    "qty_unit": null,
+    "known": false
+   },
+   {
+    "text": "חלב",
+    "item": "חלב",
+    "qty": null,
+    "qty_unit": null,
+    "known": true
+   }
+  ],
+  "tasks": {
+   "aGpoQ1l5ak5VcmVTMEpoNw": {
+    "title": "שמנת מתוקה x ×2",
+    "etag": "\"x9zIIMKUXu8\"",
+    "updated": "2026-10-19T15:42:21.515Z"
+   },
+   "SWlTcmpuY3JycnR0Si1fdA": {
+    "title": "גבינה לבנה",
+    "etag": "\"j72UOJ6Duns\"",
+    "updated": "2026-10-19T15:42:04.671Z"
+   },
+   "OHltZjAtNGEtbGNyLVFTQw": {
+    "title": "ממרח חלווה",
+    "etag": "\"TpVBdmmYsmE\"",
+    "updated": "2026-10-19T13:55:19.640Z"
+   },
+   "TURzUURPcmo2VDE0M2U2Mw": {
+    "title": "ממרח שוקולד",
+    "etag": "\"btkpXkbMwfc\"",
+    "updated": "2026-10-19T13:55:17.447Z"
+   },
+   "U3pvTklPUnpPa2xJRnBWQQ": {
+    "title": "יין לקידוש קדם",
+    "etag": "\"5VxDIUTqYgs\"",
+    "updated": "2026-10-19T13:54:44.360Z"
+   },
+   "N2s3VDQ2MmRBQ1NLdHRVQQ": {
+    "title": "ביצים",
+    "etag": "\"wRjfxhXvBic\"",
+    "updated": "2026-10-19T13:54:36.460Z"
+   },
+   "dXNVeDZvWUhRWTRvTTdPaA": {
+    "title": "פטריות",
+    "etag": "\"mu05HXky8CI\"",
+    "updated": "2026-10-19T13:54:36.001Z"
+   },
+   "N3oyTXBYVUhvTmYzTk9OeA": {
+    "title": "חלב",
+    "etag": "\"hAfe3Dl0djo\"",
+    "updated": "2026-10-19T13:54:00.144Z"
+   }
+  },
+  "pending": [],
+  "last_cleared": [],
+  "synced_at": "2026-10-20T04:18:22+00:00",
+  "source": "tasks",
+  "updated_at": "2026-10-20T04:18:22+00:00"
+ },
+ "picks": {
+  "rami_levy": [
+   {
+    "item": "שמנת מתוקה x",
+    "id": null,
+    "name": null,
+    "price": null,
+    "qty": null,
+    "flags": [
+     "לא נמצא מוצר מתאים"
+    ],
+    "terms": [
+     "שמנת מתוקה x"
+    ]
+   },
+   {
+    "item": "גבינה לבנה",
+    "id": "10147",
+    "name": "גבינה לבנה תנובה 5% שומן 250 גרם",
+    "price": 5.8,
+    "qty": 1.0,
+    "flags": [],
+    "terms": [
+     "גבינה לבנה"
+    ]
+   },
+   {
+    "item": "ממרח חלבה",
+    "id": "416821",
+    "name": "ממרח חלבה אלמנדוס 350 גרם",
+    "price": 10.2,
+    "qty": 1.0,
+    "flags": [],
+    "terms": [
+     "ממרח חלבה"
+    ]
+   },
+   {
+    "item": "ממרח שוקולד",
+    "id": "322640",
+    "name": "ממרח אגוזי לוז עם קקאו פרווה צ'וקטה 350 גרם",
+    "price": 10.0,
+    "qty": 1.0,
+    "flags": [],
+    "terms": [
+     "ממרח שוקולד"
+    ]
+   },
+   {
+    "item": "יין לקידוש קדם",
+    "id": "3341",
+    "name": "קרם לחות לעיצוב תלתלים נטורל",
+    "price": 17.2,
+    "qty": 1.0,
+    "flags": [
+     "שם המוצר לא תואם את החיפוש"
+    ],
+    "terms": [
+     "יין לקידוש קדם"
+    ]
+   },
+   {
+    "item": "ביצים",
+    "id": "425669",
+    "name": "ביצים 18יח גדול L",
+    "price": 21.3,
+    "qty": 1.0,
+    "flags": [
+     "אין מארז 30, נבחר 18"
+    ],
+    "terms": [
+     "ביצים",
+     "ביצים 30",
+     "תבנית ביצים"
+    ]
+   },
+   {
+    "item": "פטריות",
+    "id": "414273",
+    "name": "פטריות שלם רמי לוי 230 ג",
+    "price": 5.9,
+    "qty": 1.0,
+    "flags": [],
+    "terms": [
+     "פטריות"
+    ]
+   },
+   {
+    "item": "חלב",
+    "id": "419939",
+    "name": "חלב טרי 3% 1 ליטר רמי לוי",
+    "price": 7.1,
+    "qty": 1.0,
+    "flags": [],
+    "terms": [
+     "חלב"
+    ]
+   }
+  ],
+  "shufersal": [
+   {
+    "item": "שמנת מתוקה x",
+    "id": "P_7290105368904",
+    "name": "שמנת מתוקה להקצפה 32%",
+    "price": 9.1,
+    "qty": 2.0,
+    "flags": [
+     "התאמת שם חלקית"
+    ],
+    "terms": [
+     "שמנת מתוקה x"
+    ]
+   },
+   {
+    "item": "גבינה לבנה",
+    "id": "P_48185",
+    "name": "גבינה לבנה 5% שומן",
+    "price": 5.87,
+    "qty": 1.0,
+    "flags": [],
+    "terms": [
+     "גבינה לבנה"
+    ]
+   },
+   {
+    "item": "ממרח חלבה",
+    "id": "P_7290011498511",
+    "name": "ממרח חלבה מלאה",
+    "price": 13.9,
+    "qty": 1.0,
+    "flags": [],
+    "terms": [
+     "ממרח חלבה"
+    ]
+   },
+   {
+    "item": "ממרח שוקולד",
+    "id": "P_416021",
+    "name": "ממרח השחר העולה",
+    "price": 13.9,
+    "qty": 1.0,
+    "flags": [
+     "לא נמצא פרווה"
+    ],
+    "terms": [
+     "ממרח שוקולד"
+    ]
+   },
+   {
+    "item": "יין לקידוש קדם",
+    "id": "P_24530",
+    "name": "יין מתוק לקידוש סגל",
+    "price": 17.9,
+    "qty": 1.0,
+    "flags": [
+     "התאמת שם חלקית"
+    ],
+    "terms": [
+     "יין לקידוש קדם"
+    ]
+   },
+   {
+    "item": "ביצים",
+    "id": "P_1201619",
+    "name": "ביצים ארוזות M",
+    "price": 19.69,
+    "qty": 1.0,
+    "flags": [
+     "אין מארז 30, נבחר 18"
+    ],
+    "terms": [
+     "ביצים",
+     "ביצים 30",
+     "תבנית ביצים"
+    ]
+   },
+   {
+    "item": "פטריות",
+    "id": "P_77",
+    "name": "פטריות פורטובלו למילוי",
+    "price": 39.9,
+    "qty": 0.5,
+    "flags": [],
+    "terms": [
+     "פטריות"
+    ]
+   },
+   {
+    "item": "חלב",
+    "id": "P_522319",
+    "name": "חלב טרי מהגולן 3%",
+    "price": 7.35,
+    "qty": 1.0,
+    "flags": [],
+    "terms": [
+     "חלב"
+    ]
+   }
+  ]
+ },
+ "_note": "picks made by the DEPLOYED 83f042f picker on these exact responses (live NUC 2026-10-20 07:2x IL) — regression baseline"
+}

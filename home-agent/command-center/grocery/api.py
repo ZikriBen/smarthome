@@ -188,13 +188,18 @@ def _il_now():
 def cart(sites: Union[str, List[str]] = "both", fixtures: Optional[str] = None, store: Optional[str] = None,
          out_dir: Optional[str] = None, defaults_path: str = DEFAULTS,
          log: Union[None, Callable[[str], None], List[str]] = None, parallel: bool = True,
-         skipped: Optional[Dict[str, str]] = None, title: str = "רשימת קניות") -> Dict:
+         skipped: Optional[Dict[str, str]] = None, title: str = "רשימת קניות",
+         choices: Optional[Dict[str, Dict[str, str]]] = None) -> Dict:
     """Read-only price search on both sites + cart LINKS (Ben opens them; nothing is written to any cart).
     sites = "both" | "rami_levy" | "shufersal" | list. fixtures = fixtures ROOT (<root>/<site>/index.json).
     skipped = {site: reason} for sites the caller decided not to search (circuit breaker) — shown in the message.
     Returns {message, links:{site:url|None}, urls:{site:[..]}, lines:{site:[plan lines]}, site_errors:{site:msg},
              blocked:{site:msg} (subset of site_errors: the site refused us -> caller's circuit breaker),
-             missing:{site:[items not in link]}, plan_paths:{site:path}, items:int}."""
+             missing:{site:[items not in link]}, plan_paths:{site:path}, items:int,
+             needs_choice:[{item, site, suggested, candidates:[{id,name,price,brand,category,kashrut}]}],
+             unmatched_choices:[item names in `choices` that are not on the list]}.
+    choices = {list item: {site: product_id}} — a ONE-RUN pick (Hermes chose among needs_choice candidates);
+    never saved as a preference."""
     import threading
     from . import links as L
     from .cli import DEFAULT_OUT, run_site_or_fail, write_outputs
@@ -206,6 +211,7 @@ def cart(sites: Union[str, List[str]] = "both", fixtures: Optional[str] = None, 
             raise ValueError(f"unknown site {s}")
     run_sites = [s for s in want if s not in skipped]
     items, d = current_items(defaults_path)
+    unmatched = apply_choices(items, choices)
     empty = {"message": "הרשימה ריקה — אין מה לבנות", "links": {}, "urls": {}, "lines": {}, "site_errors": {},
              "blocked": {},
              "missing": {}, "plan_paths": {}, "items": 0}
@@ -264,7 +270,51 @@ def cart(sites: Union[str, List[str]] = "both", fixtures: Optional[str] = None, 
                                   delivery=d.delivery)
     return {"message": msg, "links": {s: (urls.get(s) or [None])[0] for s in want},
             "urls": urls, "lines": lines, "site_errors": errors, "blocked": blocked, "missing": missing,
-            "plan_paths": paths, "items": len(items)}
+            "plan_paths": paths, "items": len(items),
+            "needs_choice": needs_choice_rows(results, run_sites, errors), "unmatched_choices": unmatched}
+
+
+def _ckey(s: str) -> str:
+    from .relevance import clean_text
+    from .normalize import norm_text
+    return norm_text(clean_text(str(s or "")))
+
+
+def apply_choices(items, choices) -> List[str]:
+    """Pin the chosen product ids for this run only. Returns choice keys that match no list item."""
+    unmatched = []
+    for key, per_site in (choices or {}).items():
+        k = _ckey(key)
+        hit = [it for it in items if k in (_ckey(it.name), _ckey(it.raw_text or ""))]
+        if not hit or not isinstance(per_site, dict):
+            unmatched.append(str(key))
+            continue
+        for it in hit:
+            for site, pid in per_site.items():
+                if site in CART_SITES and str(pid or "").strip():
+                    it.pinned[site] = str(pid).strip()
+                    it.chosen_sites.add(site)
+    return unmatched
+
+
+def _cand(c) -> Dict:
+    from .relevance import product_category
+    p = c.p
+    return {"id": p.id, "name": p.name, "price": p.price, "brand": p.brand or "",
+            "category": product_category(p), "kashrut": p.kashrut}
+
+
+def needs_choice_rows(results, sites, errors) -> List[Dict]:
+    rows = []
+    for s in sites:
+        if s in errors:
+            continue
+        for pk in results.get(s) or []:
+            if pk is not None and getattr(pk, "needs_choice", False):
+                rows.append({"item": pk.item.name, "list_text": pk.item.raw_text or pk.item.name, "site": s,
+                             "suggested": _cand(pk.chosen) if pk.chosen else None,
+                             "candidates": [_cand(c) for c in pk.choices]})
+    return rows
 
 
 def preferences(action: str = "list", index: int = None, change=None, undo: bool = False,

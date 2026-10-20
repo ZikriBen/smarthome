@@ -82,9 +82,11 @@ class Defaults:
         return [s]
 
     def resolve(self, text: str) -> Item:
-        name = self.lookup(text)
+        from .relevance import clean_text
+        clean = clean_text(text.strip())        # 'שמנת מתוקה x' (old list entries) -> 'שמנת מתוקה'
+        name = self.lookup(text) or self.lookup(clean)
         if name is None:
-            item = Item(name=text.strip(), terms=[text.strip()], source="unknown", raw_text=text)
+            item = Item(name=clean, terms=[clean], source="unknown", raw_text=text)
             return self._apply_global(item)
         entry = {k: v for k, v in self.aliases[name].items() if k not in ("aliases", "_learned")}
         item = Item(name=name, source="defaults", raw_text=text)

@@ -40,6 +40,7 @@ class Item:
     kashrut: Optional[str] = None        # "mehadrin" | "badatz" | "" (explicitly none) | None (unset)
     source: str = "list"                 # list | defaults | text | unknown
     raw_text: Optional[str] = None
+    chosen_sites: Set[str] = field(default_factory=set)   # sites whose pin came from a one-run `choices`
 
     @property
     def match_words(self) -> List[str]:

@@ -38,7 +38,7 @@ def _strip(s: str) -> str:
     return re.sub(r"\s+", " ", s).strip(" -:,")
 
 
-def parse_line(raw: str) -> ParsedLine:
+def _parse_line(raw: str) -> ParsedLine:
     s = " " + re.sub(r"\s+", " ", raw.replace("״", '"').replace("׳", "'")).strip() + " "
     # --- weights ---
     pats = [
@@ -58,8 +58,8 @@ def parse_line(raw: str) -> ParsedLine:
     # --- counts ---
     cpats = [
         (r"\s" + NUM + r"\s?" + COUNT_WORDS + r"?\s", lambda m: _num(m.group(1))),           # "2 מלפפון", "2 חבילות"
-        (r"\s[x×*]\s?" + NUM + r"\s", lambda m: _num(m.group(1))),                            # "x2"
-        (r"\s" + NUM + r"\s?[x×*]\s", lambda m: _num(m.group(1))),                            # "2x"
+        (r"\s[xX×*]\s?" + NUM + r"\s", lambda m: _num(m.group(1))),                            # "x2"
+        (r"\s" + NUM + r"\s?[xX×*]\s", lambda m: _num(m.group(1))),                            # "2x"
         (r"\s(" + "|".join(NUM_WORDS) + r")\s" + COUNT_WORDS + r"?\s?", lambda m: float(NUM_WORDS[m.group(1)])),
         (r"\s(?:חצי)\s" + COUNT_WORDS + r"\s", lambda m: 1.0),
     ]
@@ -74,6 +74,14 @@ def parse_line(raw: str) -> ParsedLine:
     if m and _strip(s[: m.start()] + " " + s[m.end():]):
         return ParsedLine(raw, _strip(s[: m.start()] + " " + s[m.end():]), 1.0, "unit")
     return ParsedLine(raw, _strip(s), None, None)
+
+
+def parse_line(raw: str) -> ParsedLine:
+    """Quantity first, then drop stray noise tokens ('שמנת מתוקה x ×2' -> 'שמנת מתוקה', qty 2)."""
+    from .relevance import clean_text
+    pl = _parse_line(raw)
+    pl.text = clean_text(pl.text)
+    return pl
 
 
 def parse_text(text: str, split=None) -> List[ParsedLine]:
