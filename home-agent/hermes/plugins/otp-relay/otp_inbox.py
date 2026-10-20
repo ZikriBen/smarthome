@@ -59,7 +59,7 @@ def take(path, site, since=0.0, now=None):
     """Return the newest unexpired code for `site` received at or after `since`, and delete all codes for
     `site` (single use). None when there is none."""
     now = time.time() if now is None else now
-    if not Path(path).parent.is_dir():
+    if not Path(path).is_file():  # the reader never creates the file (it would be owned by the reader's uid)
         return None
     con = _connect(path)
     try:

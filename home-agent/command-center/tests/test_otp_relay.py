@@ -103,6 +103,11 @@ class InboxTests(unittest.TestCase):
         self.assertIsNone(inbox.take(Path(self.tmp.name) / "missing" / "codes.sqlite", "super_hist"))
         self.assertFalse((Path(self.tmp.name) / "missing").exists())
 
+    def test_take_never_creates_the_file(self):
+        self.db.parent.mkdir(mode=0o700)
+        self.assertIsNone(inbox.take(self.db, "super_hist"))
+        self.assertFalse(self.db.exists())  # the writer (Hermes, uid 1000) must own it, not the reader
+
     def test_plugin_copy_is_identical(self):
         self.assertEqual((PLUGIN_DIR / "otp_inbox.py").read_bytes(),
                          (HERE / "command_center" / "otp_inbox.py").read_bytes())
