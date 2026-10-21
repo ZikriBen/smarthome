@@ -5,9 +5,14 @@
   "type": "module",
   "scripts": {
     "check": "CHECK_ONLY=true node sync.mjs",
-    "sync": "node sync.mjs"
+    "sync": "node sync.mjs",
+    "test": "node --test test/"
   },
   "dependencies": {
-    "israeli-bank-scrapers": "6.9.0"
+    "israeli-bank-scrapers": "6.9.0",
+    "puppeteer": "24.43.1"
+  },
+  "engines": {
+    "node": ">=20"
   }
 }

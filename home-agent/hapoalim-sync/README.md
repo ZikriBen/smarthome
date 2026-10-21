@@ -1,39 +1,23 @@
-# Bank Hapoalim report proof of concept
+# Bank Hapoalim monthly report (local, one-shot, OTP via Ben's SMS relay)
 
-This isolated one-shot service uses `israeli-bank-scrapers` to fetch current-account
-transactions and generate a private CSV report. It does not expose a port and is not
-connected to Hermes.
+`israeli-bank-scrapers` **6.9.0 + a local patch** (`patches/`, not upstream) logs in to Ben's own account from
+the NUC, at most once a day and only after Ben approves the run in Telegram. If the bank asks for an SMS code
+(new device / trust expired), the code reaches the scraper automatically through the existing relay
+(phone Forward SMS → `@<your_sms_relay_bot>` → Hermes otp-relay → `codes.sqlite` → Command Center one-code
+broker socket) and is typed **once**. The browser profile (device trust) is kept encrypted at rest so the
+SMS is needed only when the bank asks (~monthly, unverified). The CSV stays on the NUC.
 
-## Safe manual test
+Read **DESIGN.md** first. Layout:
 
-Build and validate the image without bank credentials:
+| path | what |
+|---|---|
+| `sync.mjs` | the one-shot scraper entrypoint (container) |
+| `lib/` | broker client, run lock/lockout, profile vault (age), egress filter, redaction |
+| `patches/` | `israeli-bank-scrapers+6.9.0.patch` (patch-package format) + notes |
+| `host/` | NUC side: runner, systemd units, setup scripts Ben runs himself, egress proxy |
+| `test/` | `node --test test/` — fake bank (no network), units, process-level guards |
+| `run-manual.sh` | dev helper (prompts for credentials, one run); not the production path |
 
-```sh
-docker build -t smarthome-hapoalim-sync:test ./hapoalim-sync
-docker run --rm --read-only --tmpfs /tmp:rw,noexec,nosuid,size=64m \
-  -e CHECK_ONLY=true smarthome-hapoalim-sync:test
-```
-
-Then run the interactive helper from the `home-agent` directory:
-
-```sh
-./hapoalim-sync/run-manual.sh
-```
-
-The helper prevents credentials from being written to shell history or disk. They are
-present only in the one-shot container environment while the scrape runs. A Docker
-administrator could inspect them during that short window, so run this only on a trusted
-host.
-
-By default, the report covers the previous calendar month. To test a different month:
-
-```sh
-REPORT_MONTH=2026-09 ./hapoalim-sync/run-manual.sh
-```
-
-Reports are written under `hapoalim-sync/reports/` with owner-only permissions. The
-`last-run.json` metadata intentionally contains no balances, full account numbers, or
-transactions.
-
-This is unofficial browser automation. Bank login changes, password expiry, additional
-verification, or anti-automation controls can interrupt a run.
+Tests: `npm ci && npx patch-package` (or `patch -p1 < patches/*.patch`), then `npm test`
+(needs a local Chromium/Chrome for the fake-bank e2e; set `CHROMIUM_PATH`). Python side:
+`cd ../command-center && python -m pytest tests/test_hapoalim.py`.

@@ -80,6 +80,9 @@ mcp_servers:
         - super_hist_cart_remove
         - super_hist_deals
         - super_hist_deals_status
+        # Bank Hapoalim monthly report: read-only status + an approval-gated run proposal (no credentials/codes).
+        - hapoalim_status
+        - hapoalim_run_report
 
 browser:
   # "off" = built-in browser_* tools on local Chromium (default auto-picks the Browser Use CLI,

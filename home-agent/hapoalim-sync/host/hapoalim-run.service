@@ -1,0 +1,29 @@
+[Unit]
+Description=Bank Hapoalim one-shot monthly report (one approved request)
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+# The runner is root only because it talks to docker.sock. The container itself runs as the dedicated
+# `hapoalim` uid with --cap-drop ALL, --read-only, no-new-privileges. See ../DESIGN.md.
+#
+# Secrets: encrypted at rest with systemd-creds (host key / TPM2 when present), created by Ben with
+# host/setup-secrets.sh. systemd decrypts them into $CREDENTIALS_DIRECTORY (a private, non-swappable ramfs,
+# readable only by this unit) for the lifetime of this one run. Never in env, never in a file Hermes can read.
+LoadCredentialEncrypted=hapoalim.user_code:/etc/credstore.encrypted/hapoalim.user_code
+LoadCredentialEncrypted=hapoalim.password:/etc/credstore.encrypted/hapoalim.password
+LoadCredentialEncrypted=hapoalim.age_key:/etc/credstore.encrypted/hapoalim.age_key
+UMask=0077
+PrivateTmp=yes
+ProtectHome=yes
+NoNewPrivileges=yes
+Environment=HAPOALIM_SPOOL_DIR=/var/lib/hapoalim-spool
+Environment=HAPOALIM_HOME=/var/lib/hapoalim
+Environment=HAPOALIM_BROKER_DIR=/var/lib/hapoalim-otp
+Environment=HAPOALIM_DOCKER_NETWORK=hapoalim-egress
+Environment=HAPOALIM_PROXY=hapoalim-proxy:8888
+EnvironmentFile=/etc/hapoalim/image.env
+ExecStart=/usr/local/lib/hapoalim/run-once.sh
+TimeoutStartSec=20min
+Nice=10

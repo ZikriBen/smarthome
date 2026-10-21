@@ -1,0 +1,4 @@
+# One extended regex per line, matched against the HOST only. UNVERIFIED: the live login may also need a CDN or
+# an anti-fraud/fingerprint vendor; the first live run reports blocked hosts (status.blockedHosts). Add a host
+# here only after reviewing it; never a wildcard TLD.
+^(.+\.)?bankhapoalim\.co\.il$
