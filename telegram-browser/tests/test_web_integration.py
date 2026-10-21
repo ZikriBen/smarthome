@@ -162,3 +162,49 @@ def test_watch_uses_env_key_by_reference(main_client, configured, monkeypatch):
         srv.close()
     assert data["status"] == "ready"
     assert srv.requests[0][2] == 'MediaBrowser Token="env-dummy-key"'
+
+
+def test_watch_pending_has_message_and_status_endpoint(main_client, configured, monkeypatch):
+    from tests.test_watch import FakeJellyfin
+
+    srv = FakeJellyfin(mode="never", item_path="/media/telegram-streams/Film (2001)/Film (2001) - 720p.strm")
+    monkeypatch.setenv("JELLYFIN_API_KEY", "env-dummy-key")
+    monkeypatch.setattr(web, "JELLYFIN_URL", srv.url)
+    monkeypatch.setattr(web, "JELLYFIN_POLL_TIMEOUT_S", 0.5)
+    monkeypatch.setattr(web, "JELLYFIN_FALLBACK_AFTER_S", 0.1)
+    monkeypatch.setattr(web, "JELLYFIN_LIBRARY", web.stream_watch.LibraryState(None, "/media/telegram-streams"))
+    try:
+        assert main_client.get("/api/watch/555").json()["status"] == "not_prepared"
+        data = main_client.post("/api/watch/555").json()
+        assert data["status"] == "pending" and data["message"] and "steps" in data
+        assert main_client.get("/api/watch/555").json()["status"] == "pending"
+        srv.visible = True
+        st = main_client.get("/api/watch/555").json()
+        assert st["status"] == "ready" and st["url"].endswith("/web/#/details?id=abc123")
+        assert main_client.get("/api/watch/999").status_code == 404
+    finally:
+        srv.close()
+    for r in srv.requests:
+        assert r[2] == 'MediaBrowser Token="env-dummy-key"' and "env-dummy-key" not in r[1]
+    sig = signing.sign(KEY, 555)
+    assert sig not in json.dumps(data) and sig not in json.dumps(st)
+
+
+def test_watch_schedules_subtitles_for_mkv(main_client, configured, monkeypatch):
+    calls = []
+
+    class Jobs:
+        def schedule(self, vid, row, folder, strm_name, matroska):
+            calls.append((vid, folder.name, strm_name, matroska))
+            return {"status": "queued"}
+
+        def public(self, vid):
+            return {"status": "queued"}
+
+    monkeypatch.setattr(web, "subtitle_jobs", Jobs())
+    data = main_client.post("/api/watch/555").json()
+    assert data["status"] == "refresh_skipped" and data["subtitles"] == {"status": "queued"}
+    assert calls == [(555, "Film (2001)", "Film (2001) - 720p.strm", False)]  # x.mp4 -> not Matroska
+    monkeypatch.setattr(web, "TG_SUBS_ENABLED", False)
+    main_client.post("/api/watch/555")
+    assert len(calls) == 1

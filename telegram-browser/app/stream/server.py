@@ -10,7 +10,7 @@ from fastapi.responses import JSONResponse, Response, StreamingResponse
 
 from app.stream import signing
 from app.stream.ranges import RangeNotSatisfiable, parse_range
-from app.stream.service import StreamError, StreamService
+from app.stream.service import StreamError, StreamService, stream_mime
 
 
 class RedactSigFilter(logging.Filter):
@@ -34,7 +34,15 @@ def _error(exc: StreamError) -> JSONResponse:
     return JSONResponse({"detail": exc.detail}, status_code=exc.status, headers=headers)
 
 
-def build_stream_app(service: StreamService, key_provider) -> FastAPI:
+def etag_for(variant_id: int, size: int) -> str:
+    # Strong validator: a catalog variant is an immutable Telegram document.
+    return f'"tg{int(variant_id)}-{int(size)}"'
+
+
+def build_stream_app(service: StreamService, key_provider, cors_origins: frozenset[str] = frozenset()) -> FastAPI:
+    """``cors_origins``: exact origins (scheme://host:port) allowed to read the
+    stream cross-origin. Only needed when Jellyfin Web runs with "include CORS
+    credentials" (crossorigin=use-credentials); plain <video src> does not use CORS."""
     app = FastAPI(title="tg-stream", docs_url=None, redoc_url=None, openapi_url=None)
 
     @app.get("/health")
@@ -61,15 +69,29 @@ def build_stream_app(service: StreamService, key_provider) -> FastAPI:
         try:
             loc = await service.location(variant_id)
             size = loc.size
+            etag = etag_for(variant_id, size)
             base = {
                 "Accept-Ranges": "bytes",
-                "Content-Type": row["mime_type"],
+                "Content-Type": stream_mime(row),
                 "X-Content-Type-Options": "nosniff",
                 "Content-Disposition": "inline",
                 "Cache-Control": "private, no-transform",
+                "ETag": etag,
             }
+            origin = request.headers.get("origin")
+            if origin and origin in cors_origins:
+                base.update({
+                    "Access-Control-Allow-Origin": origin,
+                    "Access-Control-Allow-Credentials": "true",
+                    "Access-Control-Expose-Headers": "Accept-Ranges, Content-Range, Content-Length, ETag",
+                    "Vary": "Origin",
+                })
+            range_header = request.headers.get("range")
+            if_range = request.headers.get("if-range")
+            if range_header and if_range and if_range.strip() != etag:
+                range_header = None  # RFC 9110 13.1.5: validator mismatch -> full 200
             try:
-                rng = parse_range(request.headers.get("range"), size)
+                rng = parse_range(range_header, size)
             except RangeNotSatisfiable:
                 release()
                 return Response(status_code=416, headers={**base, "Content-Range": f"bytes */{size}"})

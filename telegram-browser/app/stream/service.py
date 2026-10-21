@@ -46,6 +46,29 @@ def is_media_mime(mime: str | None) -> bool:
     return bool(mime) and mime.lower().startswith("video/")
 
 
+_EXT_MIME = {
+    "mkv": "video/x-matroska", "mk3d": "video/x-matroska", "webm": "video/webm",
+    "mp4": "video/mp4", "m4v": "video/mp4", "mov": "video/quicktime",
+    "avi": "video/x-msvideo", "ts": "video/mp2t", "m2ts": "video/mp2t",
+}
+_MIME_ALIASES = {"video/mkv": "video/x-matroska", "video/matroska": "video/x-matroska", "video/x-mkv": "video/x-matroska"}
+
+
+def stream_mime(row: dict) -> str:
+    """Content-Type to advertise: the file extension wins (Telegram mime types
+    for MKV vary: video/x-matroska, video/mkv, ...), else the normalized mime."""
+    name = str(row.get("filename") or "")
+    ext = name.rsplit(".", 1)[-1].lower() if "." in name else ""
+    if ext in _EXT_MIME:
+        return _EXT_MIME[ext]
+    mime = str(row.get("mime_type") or "").lower()
+    return _MIME_ALIASES.get(mime, mime or "application/octet-stream")
+
+
+def is_matroska(row: dict) -> bool:
+    return stream_mime(row) in ("video/x-matroska", "video/webm")
+
+
 class StreamService:
     def __init__(
         self,
@@ -55,7 +78,7 @@ class StreamService:
         source,
         cache: ChunkCache,
         max_streams: int = 2,
-        per_stream_requests: int = 4,
+        per_stream_requests: int = 16,
         flood_inline_max: int = 10,
         location_ttl: float = 1800.0,
         extract: Callable[[Any], tuple[int, Any, int]] = default_extract,
@@ -79,7 +102,12 @@ class StreamService:
         self.active: dict[int, int] = {}
         self._locations: dict[int, Location] = {}
         self._inflight: dict[tuple[int, int], asyncio.Future] = {}
-        self.stats = {"chunks_fetched": 0, "floodwaits": 0, "file_ref_refreshes": 0, "gone": 0}
+        # Foreground (player/Jellyfin HTTP) Telegram fetches in flight. Background
+        # readers (subtitle extraction) only fetch while this is zero.
+        self._fg_fetching = 0
+        self._fg_idle = asyncio.Event()
+        self._fg_idle.set()
+        self.stats = {"chunks_fetched": 0, "floodwaits": 0, "file_ref_refreshes": 0, "gone": 0, "bg_chunks": 0}
 
     # ---------------------------------------------------------------- gates
     def variant(self, variant_id: int) -> dict:
@@ -181,6 +209,8 @@ class StreamService:
             return await asyncio.shield(pending)
         future = asyncio.get_running_loop().create_future()
         self._inflight[key] = future
+        self._fg_fetching += 1
+        self._fg_idle.clear()
         try:
             data = await self._fetch_chunk(variant_id, index)
         except BaseException as exc:
@@ -190,8 +220,30 @@ class StreamService:
             raise
         finally:
             self._inflight.pop(key, None)
+            self._fg_fetching -= 1
+            if self._fg_fetching <= 0:
+                self._fg_fetching = 0
+                self._fg_idle.set()
         self.cache.put(key, data)
         future.set_result(data)
+        return data
+
+    async def get_chunk_background(self, variant_id: int, index: int) -> bytes:
+        """Low-priority read for bulk consumers (subtitle extraction): waits
+        until no foreground fetch is in flight, never takes a stream slot and
+        never populates the LRU cache (so it cannot evict the player's chunks).
+        Raises StreamError while new streams are paused by a FloodWait."""
+        key = (variant_id, index)
+        hit = self.cache.get(key)
+        if hit is not None:
+            return hit
+        pending = self._inflight.get(key)
+        if pending is not None:
+            return await asyncio.shield(pending)
+        await self._fg_idle.wait()
+        self._check_pause()
+        data = await self._fetch_chunk(variant_id, index)
+        self.stats["bg_chunks"] += 1
         return data
 
     # ---------------------------------------------------------------- reading

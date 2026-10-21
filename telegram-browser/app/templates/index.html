@@ -1427,24 +1427,37 @@ async function watchNow(
     const tab = window.open("about:blank", "_blank");
     button.disabled = true;
     button.textContent = "…";
+    const go = url => {
+        if (tab) { tab.location.href = url; } else { window.location.href = url; }
+    };
     try {
         const response = await fetch(
             `/api/watch/${variantId}`,
             { method: "POST" }
         );
-        const data = await response.json();
+        let data = await response.json();
         if (!response.ok) {
             throw new Error(data.detail || "Watch error");
         }
+        // 'pending': Jellyfin has not indexed it yet. Poll the cheap status
+        // endpoint for up to ~60 s instead of giving up silently.
+        for (let i = 0; data.status === "pending" && i < 15; i++) {
+            button.textContent = "⏳";
+            await new Promise(resolve => setTimeout(resolve, 4000));
+            const r = await fetch(`/api/watch/${variantId}`);
+            if (r.ok) { data = await r.json(); }
+        }
         if (data.status === "ready" && data.url) {
-            if (tab) { tab.location.href = data.url; } else { window.location.href = data.url; }
+            go(data.url);
         } else {
             if (tab) { tab.close(); }
-            alert(
-                data.status === "pending"
-                    ? "נוסף ל-Jellyfin, יופיע תוך דקה"
-                    : "הקובץ נוצר, אבל רענון Jellyfin דולג"
-            );
+            const messages = {
+                pending: "נוסף ל-Jellyfin אבל עדיין לא נסרק. נסה שוב בעוד דקה",
+                refresh_skipped: "הקובץ נוצר, אבל רענון Jellyfin דולג (אין מפתח API)",
+                refresh_failed: "Jellyfin לא זמין כרגע; הקובץ נוצר ויופיע בסריקה הבאה",
+                auth_failed: "Jellyfin דחה את מפתח ה-API",
+            };
+            alert(messages[data.status] || (data.message || data.status));
         }
     } catch (error) {
         console.error(error);

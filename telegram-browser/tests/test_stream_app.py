@@ -190,3 +190,60 @@ def test_concurrent_requests_dedupe_inflight():
 
     x, y = run(both())
     assert x == y == CONTENT[CHUNK_SIZE:2 * CHUNK_SIZE] and len(svc.source.calls) == 1
+
+
+# ------------------------------------------------------------------ browser playback headers (field finding 3)
+from app.stream.server import etag_for  # noqa: E402
+from app.stream.service import stream_mime  # noqa: E402
+
+
+@pytest.mark.parametrize("row,mime", [
+    ({"filename": "Movie.2001.720p.mkv", "mime_type": "video/mp4"}, "video/x-matroska"),
+    ({"filename": "x", "mime_type": "video/mkv"}, "video/x-matroska"),
+    ({"filename": "a.MP4", "mime_type": "video/x-matroska"}, "video/mp4"),
+    ({"filename": None, "mime_type": "video/webm"}, "video/webm"),
+    ({"filename": "a.bin", "mime_type": None}, "application/octet-stream"),
+])
+def test_stream_mime(row, mime):
+    assert stream_mime(row) == mime
+
+
+def test_etag_and_if_range():
+    svc = make_service()
+    r = run(req(svc, "HEAD", url(10)))
+    etag = r.headers["etag"]
+    assert etag == etag_for(10, SIZE) and r.headers["content-length"] == str(SIZE)
+    r = run(req(svc, "GET", url(10), {"Range": "bytes=0-", "If-Range": etag}))
+    assert r.status_code == 206 and r.headers["content-range"] == f"bytes 0-{SIZE - 1}/{SIZE}"
+    r = run(req(svc, "GET", url(10), {"Range": "bytes=10-19", "If-Range": '"other"'}))
+    assert r.status_code == 200 and len(r.content) == SIZE
+
+
+def test_cors_only_for_configured_origin():
+    svc = make_service()
+
+    async def go(origin):
+        app = build_stream_app(svc, lambda: KEY, frozenset({"http://<LAN_IP>:8096"}))
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as c:
+            return await c.head(url(10), headers={"Origin": origin})
+
+    ok = run(go("http://<LAN_IP>:8096"))
+    assert ok.headers["access-control-allow-origin"] == "http://<LAN_IP>:8096"
+    assert ok.headers["access-control-allow-credentials"] == "true" and "Content-Range" in ok.headers["access-control-expose-headers"]
+    bad = run(go("http://evil.example"))
+    assert "access-control-allow-origin" not in bad.headers
+    plain = run(req(svc, "HEAD", url(10)))
+    assert "access-control-allow-origin" not in plain.headers
+
+
+def test_many_parallel_requests_one_stream_not_rejected():
+    """Browser + Jellyfin probe + subtitle extraction open >4 requests on one
+    item (first-play stall). The per-stream cap is now 16, not 4."""
+    svc = make_service()
+
+    async def scenario():
+        return await asyncio.gather(*[req(svc, "GET", url(10), {"Range": f"bytes={i * 1000}-{i * 1000 + 99}"})
+                                      for i in range(8)])
+
+    rs = run(scenario())
+    assert [r.status_code for r in rs] == [206] * 8 and svc.active == {}

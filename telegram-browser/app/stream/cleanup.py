@@ -1,4 +1,5 @@
-"""Remove PoC 'Watch now' entries from the streams dir and tell Jellyfin.
+"""Remove PoC 'Watch now' entries (.strm, NFO, poster, subtitle sidecars) from
+the streams dir and tell Jellyfin.
 
 Dry-run by default. Only folders that carry the PoC marker (.tgstream.json)
 are ever touched. Run inside the container (files are owned by its user):
@@ -22,6 +23,10 @@ from pathlib import Path
 from app.stream import watch
 
 
+def glob_escape(text: str) -> str:
+    return "".join(f"[{c}]" if c in "*?[" else c for c in text)
+
+
 def plan(root: Path, variant: int | None) -> list[tuple[Path, list[Path], bool]]:
     """[(folder, files_to_delete, delete_whole_folder)]"""
     out = []
@@ -32,9 +37,11 @@ def plan(root: Path, variant: int | None) -> list[tuple[Path, list[Path], bool]]
         if not marker.is_file():
             continue
         try:
-            variants = json.loads(marker.read_text()).get("variants", {})
+            data = json.loads(marker.read_text())
         except (OSError, ValueError):
-            variants = {}
+            data = {}
+        variants = data.get("variants", {})
+        subs = data.get("subs", {})
         if variant is None:
             out.append((folder, [], True))
             continue
@@ -44,7 +51,11 @@ def plan(root: Path, variant: int | None) -> list[tuple[Path, list[Path], bool]]
         if len(variants) <= 1:
             out.append((folder, [], True))
         else:
-            out.append((folder, [folder / name], False))
+            stem = name[:-5] if name.endswith(".strm") else name
+            sidecars = {folder / n for n in subs.get(str(variant), [])}
+            # also untracked sidecars of this variant (e.g. an interrupted marker update)
+            sidecars |= {p for p in folder.glob(f"{glob_escape(stem)}.*.srt") if p.is_file()}
+            out.append((folder, [folder / name, *sorted(sidecars)], False))
     # stale temp folders from interrupted writes
     if variant is None:
         out += [(p, [], True) for p in root.glob(".tmp-*") if p.is_dir()]
@@ -61,6 +72,7 @@ def apply_plan(items, variant: int | None) -> None:
             marker = folder / watch.MARKER
             data = json.loads(marker.read_text())
             data["variants"].pop(str(variant), None)
+            data.get("subs", {}).pop(str(variant), None)
             marker.write_text(json.dumps(data))
 
 
