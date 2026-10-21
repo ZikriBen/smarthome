@@ -189,7 +189,7 @@ class GroceryTasksTests(unittest.TestCase):
         names["grocery_clear"](undo=True)
         names["grocery_cart"]()
         names["grocery_cart_status"]("abc", wait_seconds=500)
-        self.assertEqual(sent, [("/grocery/clear", {"undo": True}), ("/grocery/cart", {"sites": "both"}),
+        self.assertEqual(sent, [("/grocery/clear", {"undo": True}), ("/grocery/cart", {"sites": "weekly"}),
                                 ("/grocery/cart-status", {"run_id": "abc", "wait_seconds": 90})])
         for fn in names.values():
             self.assertLess(len(fn.__doc__), 600, fn.__name__)

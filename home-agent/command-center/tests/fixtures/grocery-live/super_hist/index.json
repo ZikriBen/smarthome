@@ -1,0 +1,16 @@
+{
+ "_source": "SYNTHETIC Super-Hist /search-results/ responses: keys/types copied from the live run 2026-10-20, every value made up. 'מלפפון' has no file (not found); 'שיבולת שועל' returns 0 results; ממרח שוקולד is out of stock; פלפל אדום is by weight.",
+ "_store": null,
+ "ביצים": "q01.json",
+ "פלפל אדום": "q02.json",
+ "חלב": "q03.json",
+ "ממרח שוקולד": "q04.json",
+ "ממרח חלבה": "q05.json",
+ "אבקת מרק עוף": "q06.json",
+ "פיתות": "q07.json",
+ "חומץ": "q08.json",
+ "רדיד אלומיניום": "q09.json",
+ "שיבולת שועל": "q10.json",
+ "קולה זירו": "q11.json",
+ "סוכר לבן": "q12.json"
+}

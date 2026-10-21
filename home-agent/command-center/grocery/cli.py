@@ -91,7 +91,8 @@ def _robots_note(cls, mode) -> Optional[str]:
 def run_site(site, items, args, store, fixtures_dir, defaults, log):
     adapter, mode = make_adapter(site, args, store, fixtures_dir, log)
     picker = Picker(adapter, log=log, produce_defaults=defaults.produce,
-                    deep_size=getattr(args, "deep_size", None))
+                    deep_size=getattr(args, "deep_size", None),
+                    max_extra_searches=getattr(adapter, "max_extra_searches", 2))
     picks = [picker.pick(it) for it in items]
     sr = adapter.searcher
     reqs = sr.client.request_count if hasattr(sr, "client") else getattr(sr, "request_count", None)
@@ -120,7 +121,8 @@ def run_site_or_fail(site, items, args, store, fixtures_dir, defaults, log):
                       adapter.name, error=msg) for it in items]
         mode = "live (failed)" if not fixtures_dir else f"fixtures ({fixtures_dir})"
         meta = {"generated_at": dt.datetime.now().astimezone().isoformat(timespec="seconds"), "mode": mode,
-                "searches": 0, "requests": None, "tool": "grocery-poc 0.3", "site_error": msg}
+                "searches": 0, "requests": None, "tool": "grocery-poc 0.3", "site_error": msg,
+                "site_error_kind": type(e).__name__}
         return adapter, picks, build_plan(picks, adapter.name, adapter.store, meta), mode
 
 
@@ -200,6 +202,41 @@ def cmd_compare(args) -> int:
         print("ERROR: stopped (not retried): " + " | ".join(blocked), file=sys.stderr)
         return 10
     return 0
+
+
+def cmd_weekly(args) -> int:
+    """Weekly basket: Super-Hist first, the remainder at ONE other store, evidence section. Read-only.
+    Super-Hist live search exists only inside Command Center (its login session); elsewhere it is skipped."""
+    from . import api
+    from . import weekly as W
+    if args.estimate:
+        e = W.estimate(args.estimate, build_cart=args.with_cart_estimate)
+        print(json.dumps(e, ensure_ascii=False, indent=1))
+        print(f"wall ≈ {W.fmt_seconds(e['wall_seconds'])} (sites in parallel), requests {e['requests_total']}")
+        return 0
+    log = _log_fn(args.verbose)
+    defaults = load_defaults(args.defaults)
+    have_text = args.list or args.text or args.text_file
+    override = (load_items(args, defaults)[0], defaults) if have_text else None
+    skipped = {}
+    if not args.fixtures_root:
+        try:
+            from command_center import super_hist as SHC      # inside the Command Center container only
+            from .sites import super_hist as SHA
+            SHA.set_transport(SHC.grocery_transport)
+        except Exception:
+            skipped["super_hist"] = "חיפוש בסופר החברתי רק דרך Command Center (grocery_cart)"
+    data_dir = os.environ.get("GROCERY_DATA_DIR") or os.path.join(HERE, "data")
+    hist = args.history if args.history else (None if args.fixtures_root else
+                                               os.path.join(data_dir, "weekly-history.jsonl"))
+    r = api.weekly(fixtures=args.fixtures_root, store=args.store, out_dir=args.out, defaults_path=args.defaults,
+                   log=log, skipped=skipped, history_path=hist, items_override=override)
+    print(open(r["report_path"], encoding="utf-8").read() if args.full and r.get("report_path") else r["message"])
+    if r.get("report_path"):
+        print(f"\nweekly report: {r['report_path']}")
+    if r["status"] == "login_required":
+        return 11
+    return 10 if r.get("blocked") else 0
 
 
 def cmd_capture(args) -> int:
@@ -318,7 +355,7 @@ def cmd_learn(args) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    ap = argparse.ArgumentParser(prog="grocery.py", description="Grocery cart builder POC (Rami Levy, Shufersal)")
+    ap = argparse.ArgumentParser(prog="grocery.py", description="Grocery cart builder POC (Super-Hist, Rami Levy, Shufersal)")
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     def common(p):
@@ -355,6 +392,15 @@ def build_parser() -> argparse.ArgumentParser:
     c.add_argument("--sites", default="rami_levy,shufersal")
     c.add_argument("--fixtures-root", help="offline: <root>/<site>/index.json")
     c.set_defaults(func=cmd_compare)
+
+    w = sub.add_parser("weekly-basket", help="weekly basket: Super-Hist first + ONE cheaper other store (read-only)")
+    common(w)
+    w.add_argument("--fixtures-root", help="offline: <root>/<site>/index.json for super_hist, rami_levy, shufersal")
+    w.add_argument("--history", help="append a JSON line per run (default data/weekly-history.jsonl when live)")
+    w.add_argument("--full", action="store_true", help="print the Markdown report instead of the message")
+    w.add_argument("--estimate", type=int, metavar="LINES", help="only print the runtime/request estimate")
+    w.add_argument("--with-cart-estimate", action="store_true", help="--estimate incl. the cart-build approval")
+    w.set_defaults(func=cmd_weekly)
 
     cp = sub.add_parser("capture", help="LIVE: save raw search responses for the list's terms as fixtures (NUC only)")
     common(cp)
@@ -428,3 +474,7 @@ def main(argv=None) -> int:
     except (HttpError, CartError, ListError) as e:
         print(f"ERROR: {e}", file=sys.stderr)
         return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

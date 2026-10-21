@@ -12,7 +12,7 @@ import time
 
 BLOCK_SECONDS = 24 * 3600
 RUN_COLUMNS = {"sites": "TEXT", "message": "TEXT", "links_json": "TEXT", "ordered": "INTEGER DEFAULT 0",
-               "extra_json": "TEXT"}   # extra_json: {needs_choice, unmatched_choices} (additive column)
+               "extra_json": "TEXT"}   # extra_json: {needs_choice, unmatched_choices, super_hist_cart*, ...}
 _db_lock = threading.Lock()
 
 
@@ -65,6 +65,19 @@ def finish_run(conn, ident, status, message=None, links=None, error=None, lines=
                      l.get("unit_price"), l.get("confidence"), json.dumps(l.get("flags") or [], ensure_ascii=False),
                      int(bool(l.get("link_code")) and not l.get("to_check") and l.get("price") is not None)))
         conn.commit()
+
+
+def update_extra(conn, ident, patch):
+    """Merge keys into a run's extra_json (e.g. the Super-Hist batch result that arrives after approval)."""
+    with _db_lock:
+        row = conn.execute("SELECT extra_json FROM grocery_runs WHERE id=?", (ident,)).fetchone()
+        if row is None:
+            return False
+        extra = json.loads(row[0]) if row[0] else {}
+        extra.update(patch)
+        conn.execute("UPDATE grocery_runs SET extra_json=? WHERE id=?", (json.dumps(extra, ensure_ascii=False), ident))
+        conn.commit()
+        return True
 
 
 def get_run(conn, ident):

@@ -1,0 +1,24 @@
+{
+ "text": "מעבר לכל ה (1) תוצאות",
+ "results": "1",
+ "search_input": "פלפל אדום",
+ "data": [
+  {
+   "bgfnribbon_text": false,
+   "product_id": "910011",
+   "name": "פלפל אדום",
+   "price": "₪6.50",
+   "price_number": "6.5000",
+   "special": false,
+   "tax": "₪6.50",
+   "minimum": "1",
+   "rating": 0,
+   "out_of_stock": false,
+   "weight": true,
+   "weight_unit_price_text": "₪6.50 לק\"ג",
+   "in_cart": false,
+   "href": "https://super-hist.co.il/index.php?route=product/product&product_id=910011",
+   "thumb": "https://super-hist.co.il/image/cache/fake-910011-200x200.jpg"
+  }
+ ]
+}

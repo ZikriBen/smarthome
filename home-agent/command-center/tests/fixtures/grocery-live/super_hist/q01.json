@@ -1,0 +1,41 @@
+{
+ "text": "מעבר לכל ה (2) תוצאות",
+ "results": "2",
+ "search_input": "ביצים",
+ "data": [
+  {
+   "bgfnribbon_text": false,
+   "product_id": "910001",
+   "name": "ביצים גדולות L 12 יח' - משק לדוגמה",
+   "price": "₪13.90",
+   "price_number": "13.9000",
+   "special": false,
+   "tax": "₪13.90",
+   "minimum": "1",
+   "rating": 0,
+   "out_of_stock": false,
+   "weight": false,
+   "weight_unit_price_text": "",
+   "in_cart": false,
+   "href": "https://super-hist.co.il/index.php?route=product/product&product_id=910001",
+   "thumb": "https://super-hist.co.il/image/cache/fake-910001-200x200.jpg"
+  },
+  {
+   "bgfnribbon_text": false,
+   "product_id": "910002",
+   "name": "ביצים M 30 יח' - משק לדוגמה",
+   "price": "₪32.90",
+   "price_number": "32.9000",
+   "special": false,
+   "tax": "₪32.90",
+   "minimum": "1",
+   "rating": 0,
+   "out_of_stock": false,
+   "weight": false,
+   "weight_unit_price_text": "",
+   "in_cart": false,
+   "href": "https://super-hist.co.il/index.php?route=product/product&product_id=910002",
+   "thumb": "https://super-hist.co.il/image/cache/fake-910002-200x200.jpg"
+  }
+ ]
+}

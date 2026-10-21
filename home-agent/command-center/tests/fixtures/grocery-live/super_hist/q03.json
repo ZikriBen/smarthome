@@ -1,0 +1,41 @@
+{
+ "text": "מעבר לכל ה (2) תוצאות",
+ "results": "2",
+ "search_input": "חלב",
+ "data": [
+  {
+   "bgfnribbon_text": false,
+   "product_id": "910021",
+   "name": "חלב טרי 3% 1 ליטר - מחלבה לדוגמה",
+   "price": "₪7.90",
+   "price_number": "7.9000",
+   "special": false,
+   "tax": "₪7.90",
+   "minimum": "1",
+   "rating": 0,
+   "out_of_stock": false,
+   "weight": false,
+   "weight_unit_price_text": "",
+   "in_cart": false,
+   "href": "https://super-hist.co.il/index.php?route=product/product&product_id=910021",
+   "thumb": "https://super-hist.co.il/image/cache/fake-910021-200x200.jpg"
+  },
+  {
+   "bgfnribbon_text": false,
+   "product_id": "910022",
+   "name": "משקה חלב שוקו 1 ליטר",
+   "price": "₪8.90",
+   "price_number": "8.9000",
+   "special": false,
+   "tax": "₪8.90",
+   "minimum": "1",
+   "rating": 0,
+   "out_of_stock": false,
+   "weight": false,
+   "weight_unit_price_text": "",
+   "in_cart": false,
+   "href": "https://super-hist.co.il/index.php?route=product/product&product_id=910022",
+   "thumb": "https://super-hist.co.il/image/cache/fake-910022-200x200.jpg"
+  }
+ ]
+}

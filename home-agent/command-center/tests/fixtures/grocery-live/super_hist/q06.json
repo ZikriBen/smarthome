@@ -1,0 +1,24 @@
+{
+ "text": "מעבר לכל ה (1) תוצאות",
+ "results": "1",
+ "search_input": "אבקת מרק עוף",
+ "data": [
+  {
+   "bgfnribbon_text": false,
+   "product_id": "910051",
+   "name": "אבקת מרק בטעם עוף 400 גרם",
+   "price": "₪9.90",
+   "price_number": "9.9000",
+   "special": false,
+   "tax": "₪9.90",
+   "minimum": "1",
+   "rating": 0,
+   "out_of_stock": false,
+   "weight": false,
+   "weight_unit_price_text": "",
+   "in_cart": false,
+   "href": "https://super-hist.co.il/index.php?route=product/product&product_id=910051",
+   "thumb": "https://super-hist.co.il/image/cache/fake-910051-200x200.jpg"
+  }
+ ]
+}

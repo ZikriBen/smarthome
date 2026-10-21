@@ -84,7 +84,7 @@ def summarize(action, payload):
             return f"שליחת מייל ל-{_clip(p.get('to'), 50)}: ״{_clip(p.get('subject'), 50)}״"
         if action == "docker_restart":
             return f"אתחול הקונטיינר {_clip(p.get('container'), 40)}"
-        if action == "super_hist_cart_write":
+        if action in ("super_hist_cart_write", "super_hist_cart_batch"):
             # Built by super_hist._propose: store, item, unit price, qty before→after, expected new total.
             return _clip(p.get("summary"), 220)
         if action == "price_watch_create":

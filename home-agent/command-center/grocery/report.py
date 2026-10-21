@@ -1,7 +1,7 @@
 """Reports: full Hebrew Markdown (file), compact one-line-per-item (for the agent), and site comparison."""
 from __future__ import annotations
 
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 from . import normalize as N
 from .picker import Pick
@@ -436,3 +436,210 @@ def cart_message(results: Dict[str, List[Pick]], names: Dict[str, str], urls: Di
 def _pack_label(p: Pick) -> str:
     c = p.chosen.p
     return qty_label(p) if c.by_weight else c.pack.label()
+
+
+# ---------------- weekly basket (Super-Hist first + ONE other store) ----------------
+SH_CART_URL = "https://super-hist.co.il/index.php?route=checkout/cart"
+W_SHORT = {"super_hist": "הסופר", "rami_levy": "רמי", "shufersal": "שופרסל"}
+MAX_PRICIER = 8
+
+
+def _money(v) -> str:
+    return "?" if v is None else f"₪{v:.2f}"
+
+
+def _wqty(r) -> str:
+    q = r.get("qty")
+    if q is None:
+        return ""
+    return f' {q:g} ק"ג' if r.get("by_weight") else (f" ×{q:g}" if q != 1 else "")
+
+
+def _pricier_lines(ev: dict, limit: int = MAX_PRICIER) -> List[str]:
+    """Items where Super-Hist costs more, merged over stores: 'חלב (+₪0.80 מול רמי, +₪0.25 מול שופרסל)'."""
+    by_item: Dict[str, List[str]] = {}
+    order: List[str] = []
+    for s, e in ev.items():
+        for x in e["pricier"]:
+            if x["item"] not in by_item:
+                by_item[x["item"]] = []
+                order.append(x["item"])
+            by_item[x["item"]].append(f"+₪{x['diff']:.2f} מול {W_SHORT.get(s, s)}"
+                                      + (" ליחידה" if x["basis"] == "unit_price" and
+                                         abs(x["sh_cost"] - x["other_cost"] - x["diff"]) > 0.01 else ""))
+    return [f"{it} ({', '.join(by_item[it])})" for it in order[:limit]] + (
+        [f"ועוד {len(order) - limit}"] if len(order) > limit else [])
+
+
+def weekly_message(res: dict, other_urls: List[str], generated: str = "", sh_cart: Optional[dict] = None,
+                   runtime: Optional[dict] = None, history: Optional[str] = None,
+                   mode: str = "price") -> str:
+    """The ready Hebrew Telegram message: part 1 Super-Hist, part 2 ONE other store, evidence, 'לבדיקה'.
+    res = weekly.compute(); other_urls = cart link(s) for part 2; sh_cart = the cart-build proposal result
+    (mode "cart"); runtime = {"seconds", "requests": {site: n}}."""
+    from .links import split_message
+    sh, other = res["super_hist"], res.get("other")
+    out = [f"🛒 סל שבועי · {res['items']} פריטים" + (f" · {generated}" if generated else "")]
+    # ---- part 1
+    if res.get("sh_error"):
+        out.append(f"1️⃣ הסופר החברתי: לא זמין — {res['sh_error'][:90]}. כל הרשימה עברה לחנות השנייה.")
+    else:
+        fee = "" if sh["fee"] is None else (f" + משלוח {_money(sh['fee'])} = {_money(sh['final'])}")
+        out.append(f"1️⃣ הסופר החברתי — {len(sh['lines'])} פריטים · {_money(sh['total'])}{fee}"
+                   + ("" if sh["fee"] is not None else " (בלי משלוח)"))
+        c = sh_cart or {}
+        if mode == "cart" and c.get("status") == "pending_approval":
+            out.append(f"🧺 {c.get('headline') or 'הצעה לעדכון העגלה'} — ממתין לאישור שלך. אחרי האישור: "
+                       f"[עגלת הסופר החברתי]({SH_CART_URL})")
+        elif mode == "cart" and c.get("status") == "no_changes":
+            out.append(f"🧺 העגלה כבר מכילה הכל. [עגלת הסופר החברתי]({SH_CART_URL})")
+        elif mode == "cart" and c.get("status"):
+            out.append(f"🧺 לא בניתי עגלה: {str(c.get('text') or c['status'])[:120]}")
+        for r in sh["lines"]:
+            out.append(f"• {r['name']}{_wqty(r)} {_money(r['cost'])}" + (" (במשקל)" if r["by_weight"] else ""))
+        if mode != "cart" or (sh_cart or {}).get("status") not in ("pending_approval", "no_changes"):
+            out.append("(מצב מחירים בלבד: זו רשימת הפריטים להזמנה בסופר החברתי; העגלה באתר לא שונתה)")
+    # ---- part 2
+    if other:
+        o = other
+        alt = o.get("alternative")
+        cmp_txt = ""
+        if alt and o["compare"].get(alt, {}).get("found"):
+            ca, cc = o["compare"][alt], o["compare"][o["site"]]
+            cmp_txt = (f" (על {cc['common']} הפריטים המשותפים: {W_SHORT[o['site']]} {_money(cc['final'])} מול "
+                       f"{W_SHORT[alt]} {_money(ca['final'])}, כולל משלוח)")
+        out.append(f"2️⃣ {o['name']} — {len(o['lines'])} פריטים · {_money(o['items_total'])} + משלוח "
+                   f"{_money(o['fee'])} = {_money(o['final'])}{cmp_txt}")
+        text, note = LINK_TEXT.get(o["site"], (o["name"], ""))
+        for k, u in enumerate(other_urls or [], 1):
+            part = f" חלק {k}/{len(other_urls)}" if len(other_urls) > 1 else ""
+            out.append(f"[{text}{part}]({u})  ← {note}")
+        if o["lines"] and not other_urls:
+            out.append(f"{o['name']}: אין פריטים לקישור")
+        for r in o["lines"]:
+            out.append(f"• {r['item']}: {r['name']}{_wqty(r)} {_money(r['cost'])} (בסופר: {r['why_not_sh']})")
+    elif res.get("remainder"):
+        out.append("2️⃣ אין חנות שנייה זמינה לשאר הפריטים (רמי לוי ושופרסל נכשלו/דולגו).")
+    else:
+        out.append("2️⃣ אין צורך בחנות שנייה — הכל נמצא בסופר החברתי.")
+    total = sh["final"] + (other["final"] if other else 0)
+    out.append(f"סה״כ משוער: {_money(total)}" + (" (שתי הזמנות)" if other and sh["lines"] else ""))
+    # ---- evidence
+    ev = {s: e for s, e in res["evidence"].items() if e["lines"]}
+    if ev and sh["lines"]:
+        parts = []
+        for s, e in ev.items():
+            sign = (f"חיסכון {_money(e['saving'])}" if e["saving"] > 0.004 else
+                    f"הסופר יקר ב-{_money(-e['saving'])}" if e["saving"] < -0.004 else "שווה")
+            parts.append(f"{W_SHORT[s]} {_money(e['other_total'])} על {e['lines']}/{e['of']} ({sign})")
+        out.append(f"📊 אותם פריטים של הסופר ({_money(sh['total'])}) בחנויות האחרות: " + " · ".join(parts))
+        packs = sorted({x for e in ev.values() for x in e.get("pack_differs", [])})
+        if packs:
+            out.append(f"   (אריזה בגודל אחר ב: {', '.join(packs[:6])} — הסכומים לפי מה שכל עגלה קונה; "
+                       "\"יקר יותר\" לפי מחיר ליחידה)")
+        pr = _pricier_lines(ev)
+        out.append("   יקר יותר בסופר: " + " · ".join(pr) if pr else "   אף פריט לא יקר יותר בסופר.")
+    # ---- to check / choices / kashrut
+    checks = [f"{r['item']} (הסופר: {r['reason']})" for r in sh["check"]]
+    checks += [f"{r['item']} ({W_SHORT.get(r.get('site'), '')}: {r['reason']}"
+               + (f"; נמצא ב{W_SHORT[r['elsewhere']['site']]} {_money(r['elsewhere']['cost'])}"
+                  if r.get("elsewhere") else "") + ")"
+               for r in res["check"] if r.get("site") or r.get("reason") == "אין חנות חלופית זמינה"]
+    if checks:
+        out.append("⚠️ לבדיקה (לא בסה״כ): " + " · ".join(checks))
+    if sh["choice"]:
+        out.append("❓ לבחירה בסופר (לא בסה״כ): " + " · ".join(
+            f"{r['item']} ({r['candidates']} מועמדים)" for r in sh["choice"]))
+    unk = [r["item"] for r in sh["lines"] if r["kashrut_unknown"]] + \
+          [r["item"] for r in (other or {}).get("lines", []) if r["kashrut_unknown"]]
+    if unk:
+        out.append(f"⚠️ {KASHRUT_UNKNOWN} (בדוק באריזה): " + ", ".join(unk[:8]) + ("…" if len(unk) > 8 else ""))
+    if runtime:
+        req = runtime.get("requests") or {}
+        out.append(f"⏱️ {_fmt_secs(runtime.get('seconds'))} · בקשות: "
+                   + " · ".join(f"{W_SHORT.get(s, s)} {n}" for s, n in req.items() if n is not None))
+    if history:
+        out.append(f"📈 {history}")
+    out.append("לא הוזמן ולא שולם כלום; התשלום אצלך בלבד.")
+    return split_message("\n".join(out))
+
+
+def _fmt_secs(s) -> str:
+    if s is None:
+        return "?"
+    s = int(round(s))
+    return f"{s // 60}:{s % 60:02d} דק׳" if s >= 60 else f"{s} שנ׳"
+
+
+def weekly_full(res: dict, other_urls: List[str], generated: str = "", estimate: Optional[dict] = None,
+                runtime: Optional[dict] = None, history: Optional[str] = None, mode: str = "price",
+                sh_cart: Optional[dict] = None) -> str:
+    """Markdown report (saved next to the per-site reports)."""
+    sh, other = res["super_hist"], res.get("other")
+    out = [f"# סל שבועי — הסופר החברתי קודם ({generated})", "",
+           f"{res['items']} פריטים · מצב: {'בניית עגלה (באישור)' if mode == 'cart' else 'מחירים בלבד'}", "",
+           "## 1. הסופר החברתי", ""]
+    if res.get("sh_error"):
+        out.append(f"לא זמין: {res['sh_error']}. כל הרשימה עברה לחנות השנייה.")
+    out += ["| פריט | מוצר | כמות | מחיר | עלות |", "|---|---|---|---|---|"]
+    for r in sh["lines"]:
+        out.append(f"| {_cell(r['item'])} | {_cell(r['name'])} | {_wqty(r).strip() or '1'} | {_money(r['price'])} | "
+                   f"{_money(r['cost'])} |")
+    out += ["", f"**סה\"כ הסופר החברתי:** {_money(sh['total'])}"
+            + (" (דמי משלוח לא ידועים — לא נכללו)" if sh["fee"] is None else f" + משלוח {_money(sh['fee'])}"), ""]
+    if sh_cart:
+        out += [f"עגלה: {sh_cart.get('status')} — {_cell(sh_cart.get('text') or '')}", ""]
+    out += ["## 2. החנות השנייה (שאר הפריטים)", ""]
+    if other:
+        out.append(f"נבחרה **{other['name']}**: {_money(other['items_total'])} + משלוח {_money(other['fee'])} = "
+                   f"**{_money(other['final'])}**.")
+        for s, c in other["compare"].items():
+            out.append(f"- {NAMES_HE.get(s, s)}: {c['found']} פריטים נמצאו; על {c['common']} המשותפים "
+                       f"{_money(c['common_total'])} + משלוח = {_money(c['final'])}")
+        out += ["", "| פריט | למה לא בסופר | מוצר | עלות |", "|---|---|---|---|"]
+        for r in other["lines"]:
+            out.append(f"| {_cell(r['item'])} | {_cell(r['why_not_sh'])} | {_cell(r['name'])} | {_money(r['cost'])} |")
+        for k, u in enumerate(other_urls or [], 1):
+            out.append(f"\nקישור {k}: {u}")
+    else:
+        out.append("אין (הכל בסופר החברתי, או שאין חנות חלופית זמינה).")
+    out += ["", "## 3. בדיקת ההנחה \"הסופר תמיד זול יותר\"", ""]
+    for s, e in res["evidence"].items():
+        out.append(f"### מול {NAMES_HE.get(s, s)}")
+        gap = ("הסופר זול ב-" + _money(e["saving"]) if e["saving"] > 0.004 else
+               "הסופר יקר ב-" + _money(-e["saving"]) if e["saving"] < -0.004 else "שווה")
+        out.append(f"{e['lines']} מתוך {e['of']} פריטי הסופר נמצאו גם שם: הסופר {_money(e['sh_total'])} מול "
+                   f"{_money(e['other_total'])} ({gap}). זול בסופר: {e['sh_cheaper']}, "
+                   f"יקר בסופר: {e['sh_pricier']}, שווה: {e['same']}.")
+        if e["pricier"]:
+            out += ["", "| פריט | הסופר | שם | יותר יקר ב | בסיס |", "|---|---|---|---|---|"]
+            for x in e["pricier"]:
+                out.append(f"| {_cell(x['item'])} | {_money(x['sh_cost'])} | {_money(x['other_cost'])} | "
+                           f"₪{x['diff']:.2f} | {'מחיר ליחידה' if x['basis'] == 'unit_price' else 'מחיר בפועל'} |")
+        out.append("")
+    if not res["evidence"]:
+        out.append("לא היה עם מה להשוות (רמי לוי/שופרסל לא זמינים).")
+    out += ["", "## לבדיקה / לבחירה (לא בסה\"כ)", ""]
+    rows = ([f"- {r['item']}: הסופר — {r['reason']}" for r in sh["check"]] +
+            [f"- {r['item']}: הסופר — ❓ {r['candidates']} מועמדים" for r in sh["choice"]] +
+            [f"- {r['item']}: {r.get('reason')} (לא בסופר: {r.get('why_not_sh')})" for r in res["check"]
+             if r not in sh["check"]])
+    out += rows or ["אין."]
+    out += ["", "## זמן ריצה ובקשות", ""]
+    if runtime:
+        out.append(f"בפועל: {_fmt_secs(runtime.get('seconds'))}; בקשות: " +
+                   ", ".join(f"{NAMES_HE.get(s, s)} {n}" for s, n in (runtime.get('requests') or {}).items()))
+    if estimate:
+        out.append(f"הערכה ל-{estimate['lines']} שורות (שלושת האתרים במקביל): {_fmt_secs(estimate['wall_seconds'])}; "
+                   + ", ".join(f"{NAMES_HE[s]} {estimate[s]['requests']} בקשות ≈ {_fmt_secs(estimate[s]['seconds'])}"
+                               for s in ("super_hist", "rami_levy", "shufersal")))
+        if estimate.get("approval_write"):
+            aw = estimate["approval_write"]
+            out.append(f"אחרי אישור העגלה (ברקע): {aw['requests']} בקשות ≈ {_fmt_secs(aw['seconds'])}")
+    if history:
+        out += ["", history]
+    out += ["", "לא הוזמן ולא שולם כלום. שינוי בעגלת הסופר החברתי רק אחרי אישור אחד שלך."]
+    return "\n".join(out) + "\n"
+
+
+NAMES_HE = {"super_hist": "הסופר החברתי", "rami_levy": "רמי לוי", "shufersal": "שופרסל"}

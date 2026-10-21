@@ -165,6 +165,9 @@ def run(site: str = "rami_levy", fixtures: Optional[str] = None, store: Optional
         with open(path, "w", encoding="utf-8") as f:
             f.write(md)
         return report.compare_compact(results, names) + f"\nדוח מלא: {path}"
+    if site == "weekly":
+        r = weekly(fixtures=fixtures, store=store, out_dir=out_dir, defaults_path=defaults_path, log=log)
+        return r["message"] + (f"\nדוח מלא: {r['report_path']}" if r.get("report_path") else "")
     get_adapter_class(site)
     lg(f"[{site}] start ({len(items)} items)")
     ad, picks, plan, mode = run_site(site, items, args, store, fixtures, d, lg)
@@ -174,6 +177,8 @@ def run(site: str = "rami_levy", fixtures: Optional[str] = None, store: Optional
 
 
 CART_SITES = ("rami_levy", "shufersal")
+WEEKLY_SITES = ("super_hist", "rami_levy", "shufersal")
+CHOICE_SITES = WEEKLY_SITES
 
 
 def _il_now():
@@ -291,7 +296,7 @@ def apply_choices(items, choices) -> List[str]:
             continue
         for it in hit:
             for site, pid in per_site.items():
-                if site in CART_SITES and str(pid or "").strip():
+                if site in CHOICE_SITES and str(pid or "").strip():
                     it.pinned[site] = str(pid).strip()
                     it.chosen_sites.add(site)
     return unmatched
@@ -336,3 +341,177 @@ def preferences(action: str = "list", index: int = None, change=None, undo: bool
             return "צריך מספר העדפה ואת השינוי (למשל change=\"פרווה\")"
         return P.update(int(index), change, defaults_path, full=bool(full))
     return f"action לא מוכר: {action} (list|update|delete)"
+
+
+def _run_sites(sites, items, d, fixtures, store, lg, parallel=True):
+    """{site: (adapter, picks, plan, mode) | Exception}, {site: seconds}. Sites run in parallel threads
+    (different hosts; each keeps its own pacing)."""
+    import threading
+    import time
+    from .cli import run_site_or_fail
+    res, secs = {}, {}
+
+    def one(s):
+        args = SimpleNamespace(delay=1.5, size=10, crawl_delay=None, deep_size=None)
+        fx = os.path.join(fixtures, s) if fixtures else None
+        if s == "super_hist" and fx and not os.path.exists(os.path.join(fx, "index.json")):
+            fx = None   # Super-Hist "live" = the transport Command Center injected; never network from here
+        lg(f"[{s}] start ({len(items)} items)")
+        t0 = time.time()
+        try:
+            res[s] = run_site_or_fail(s, items, args, store if s == "rami_levy" else None, fx, d, lg)
+        except Exception as e:   # one site's crash must not kill the others
+            lg(f"[{s}] crashed: {type(e).__name__}: {e}")
+            res[s] = e
+        secs[s] = round(time.time() - t0, 1)
+    if parallel and len(sites) > 1:
+        ts = [threading.Thread(target=one, args=(s,), daemon=True) for s in sites]
+        for t in ts:
+            t.start()
+        for t in ts:
+            t.join()
+    else:
+        for s in sites:
+            one(s)
+    return res, secs
+
+
+BLOCK_KINDS = ("CloudflareBlocked", "RateLimited", "RobotsDisallowed")
+
+
+def weekly(fixtures: Optional[str] = None, store: Optional[str] = None, out_dir: Optional[str] = None,
+           defaults_path: str = DEFAULTS, log: Union[None, Callable[[str], None], List[str]] = None,
+           parallel: bool = True, skipped: Optional[Dict[str, str]] = None, title: str = "רשימת קניות",
+           choices: Optional[Dict[str, Dict[str, str]]] = None, mode: str = "price",
+           super_hist_gate: Optional[Callable[[], Dict]] = None,
+           cart_builder: Optional[Callable[[List[Dict]], Dict]] = None,
+           history_path: Optional[str] = None, items_override=None) -> Dict:
+    """THE weekly-basket entry point (a future Tuesday routine calls this as-is and sends `message`).
+    Part 1 הסופר החברתי (everything available there), part 2 ONE other store (Rami Levy or Shufersal, whichever
+    is cheaper for the remainder), plus the evidence section (Super-Hist lines priced at Rami/Shufersal too).
+    mode "price" = read-only (part 1 is a list of items); mode "cart" = also propose ONE batched Super-Hist cart
+    approval via cart_builder(lines) (nothing is written before Ben approves; never checkout/order).
+    super_hist_gate() -> {"status": logged_in|login_required|site_blocked|site_error, "text"} runs BEFORE any
+    search: login_required stops the whole run with status "login_required" (no searches anywhere).
+    items_override = (items, defaults) for the CLI (--text / --list); default = the working list.
+    Returns {status: done|login_required|empty, message, report_path, links, urls, lines, site_errors, blocked,
+             needs_choice, unmatched_choices, items, result, super_hist_cart, runtime, estimate, other_site}."""
+    import time
+    from . import links as L
+    from . import weekly as W
+    from .cli import DEFAULT_OUT, write_outputs
+    from .sites import get_adapter_class
+    t0 = time.time()
+    lg = _sink(log)
+    skipped = dict(skipped or {})
+    items, d = items_override if items_override is not None else current_items(defaults_path)
+    unmatched = apply_choices(items, choices)
+    base = {"links": {}, "urls": {}, "lines": {}, "site_errors": {}, "blocked": {}, "needs_choice": [],
+            "unmatched_choices": unmatched, "items": len(items), "result": None, "super_hist_cart": None,
+            "runtime": None, "estimate": None, "other_site": None, "report_path": None, "plan_paths": {}}
+    if not items:
+        return dict(base, status="empty", message="הרשימה ריקה — אין מה לבנות")
+    est = W.estimate(len(items), build_cart=mode == "cart")
+    base["estimate"] = est
+    gate_requests = 0
+    if W.SH not in skipped and super_hist_gate is not None:
+        g = super_hist_gate() or {}
+        gate_requests = 1
+        lg(f"[super_hist] gate: {g.get('status')}")
+        if g.get("status") == "login_required":
+            msg = ("🔐 " + str(g.get("text") or "צריך להתחבר לסופר החברתי") +
+                   "\nלא חיפשתי באף אתר (גם לא ברמי לוי/שופרסל) — אחרי ההתחברות להריץ שוב.")
+            return dict(base, status="login_required", message=msg, login=g.get("login"))
+        if g.get("status") != "logged_in":
+            skipped[W.SH] = str(g.get("text") or g.get("status"))[:160]
+    run_sites = [s for s in WEEKLY_SITES if s not in skipped]
+    if not run_sites:
+        return dict(base, status="done", site_errors={s: f"דילגתי: {w}" for s, w in skipped.items()},
+                    message="לא חיפשתי באף אתר: " + " · ".join(f"{W.NAMES.get(s, s)} — {w}"
+                                                               for s, w in skipped.items()))
+    out_dir = out_dir or DEFAULT_OUT
+    raw, secs = _run_sites(run_sites, items, d, fixtures, store, lg, parallel)
+    results, errors, blocked, lines, paths, requests = {}, {}, {}, {}, {}, {}
+    for s in WEEKLY_SITES:
+        r = raw.get(s)
+        if s in skipped:
+            errors[s] = f"דילגתי: {skipped[s]}"
+            continue
+        if isinstance(r, Exception) or r is None:
+            errors[s] = f"{type(r).__name__}: {r}" if r is not None else "no result"
+            continue
+        ad, picks, plan, pmode = r
+        results[s] = picks
+        requests[s] = plan["meta"].get("requests")
+        err = plan["meta"].get("site_error")
+        if err:
+            kind = plan["meta"].get("site_error_kind") or ""
+            errors[s] = ("החיבור פג באמצע הריצה — צריך להתחבר מחדש" if s == W.SH and kind == "SessionExpired"
+                         else err)
+            if s != W.SH or kind in BLOCK_KINDS:
+                blocked[s] = err
+        _md, paths[s] = write_outputs(out_dir, ad.name, report.render(picks, plan, pmode, ad.display_name), plan)
+        lines[s] = plan["lines"]
+    if W.SH in skipped:
+        requests[W.SH] = gate_requests
+    elif W.SH in requests and requests[W.SH] is not None:
+        requests[W.SH] += gate_requests
+    res = W.compute({s: results[s] for s in results}, errors, d.delivery)
+    o = res.get("other")
+    urls = {}
+    if o and o["lines"]:
+        want = {r["i"] for r in o["lines"]}
+        urls[o["site"]], _missing = L.site_urls(o["site"], [l for k, l in enumerate(lines[o["site"]]) if k in want],
+                                               title)
+    sh_cart = None
+    if mode == "cart" and res["super_hist"]["lines"]:
+        cand = [{"product_id": r["product_id"], "quantity": r["qty"], "name": r["name"], "price": r["price"],
+                 "weighted": r["by_weight"], "item": r["item"]} for r in res["super_hist"]["lines"]]
+        if cart_builder is None:
+            sh_cart = {"status": "unavailable", "text": "בניית עגלה זמינה רק דרך Command Center"}
+        else:
+            try:
+                sh_cart = cart_builder(cand) or {}
+            except Exception as e:   # the price part is still worth sending
+                sh_cart = {"status": "site_error", "text": f"{type(e).__name__}: {str(e)[:120]}"}
+            if sh_cart.get("status") not in ("pending_approval", "no_changes"):
+                lg(f"[super_hist] cart proposal: {sh_cart.get('status')}: {sh_cart.get('text')}")
+            requests[W.SH] = (requests.get(W.SH) or 0) + (1 if sh_cart.get("status") in ("pending_approval",
+                                                                                          "no_changes") else 0)
+    elapsed = round(time.time() - t0, 1)
+    runtime = {"seconds": elapsed, "requests": requests, "per_site_seconds": secs}
+    hist_txt = None
+    if history_path:
+        try:
+            W.history_append(history_path, W.history_row(res, elapsed=elapsed, requests=requests, mode=mode))
+            rows = W.history_read(history_path)
+            hist_txt = W.history_summary(rows) if len(rows) >= 2 else None
+        except OSError as e:
+            lg(f"[weekly] history not written: {e}")
+    gen = _il_now().strftime("%d.%m %H:%M")
+    msg = report.weekly_message(res, urls.get(o["site"]) if o else [], gen, sh_cart, runtime, hist_txt, mode)
+    full = report.weekly_full(res, urls.get(o["site"]) if o else [], gen, est, runtime, hist_txt, mode, sh_cart)
+    os.makedirs(out_dir, exist_ok=True)
+    rpath = os.path.join(out_dir, f"weekly-{dt.datetime.now():%Y%m%d-%H%M%S}.md")
+    with open(rpath, "w", encoding="utf-8") as f:
+        f.write(full)
+    states = res["states"]
+    rem = {r["i"] for r in res["remainder"]}
+    need = []
+    for s in results:
+        if s in errors:
+            continue
+        for k, pk in enumerate(results[s]):
+            if not getattr(pk, "needs_choice", False):
+                continue
+            if (s == W.SH and states[k] == "choice") or (o and s == o["site"] and k in rem):
+                need.append({"item": pk.item.name, "list_text": pk.item.raw_text or pk.item.name, "site": s,
+                             "suggested": _cand(pk.chosen) if pk.chosen else None,
+                             "candidates": [_cand(c) for c in pk.choices]})
+    sh_link = report.SH_CART_URL if (sh_cart or {}).get("status") in ("pending_approval", "no_changes") else None
+    links = {W.SH: sh_link}
+    if o:
+        links[o["site"]] = (urls.get(o["site"]) or [None])[0]
+    return dict(base, status="done", message=msg, report_path=rpath, links=links, urls=urls, lines=lines,
+                site_errors=errors, blocked=blocked, needs_choice=need, result=res, super_hist_cart=sh_cart,
+                runtime=runtime, other_site=o["site"] if o else None, plan_paths=paths)

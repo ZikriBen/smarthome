@@ -14,5 +14,6 @@
   once. `wrong_code` → ask him to re-check the SMS (`attempts_left`). `cooldown`,
   `rate_limited`, `site_changed`, `not_configured`, `too_many_attempts` → relay
   `text` and stop; never resend a code or retry by yourself, and never repeat a
-  code in later messages. Don't order, pay, or change anything on the site; Ben
+  code in later messages. Never order or pay; cart changes only via the approval
+  flow (see SOUL_SUPER_HIST_CART_SNIPPET.md / SOUL_GROCERY_WEEKLY_SNIPPET.md); Ben
   checks out himself.

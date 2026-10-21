@@ -36,6 +36,13 @@ integrations; Hermes never receives the Docker socket, host mounts, or a shell.
   coupon, voucher and cart/clear are refused before sending, redirects included) and the shared >=10s
   throttle; 403/429/challenge stops all cart traffic for 24h; an expired session returns
   `login_required` (no automatic login). Fixtures under tests/fixtures/super-hist are synthetic.
+- Weekly basket (`grocery_cart`, default sites="weekly"): הסופר החברתי first, the remainder at ONE other
+  store (Rami Levy or Shufersal, whichever is cheaper for it), every line also priced at Rami/Shufersal for an
+  evidence section (Super-Hist total vs the same items, lines where Super-Hist is pricier). Logged out → one
+  login start (one SMS) and `login_required`. `build_super_hist_cart=true` → ONE batched cart approval
+  (`super_hist_cart_batch`, adds/raises only, by-weight refused, background writes verified by a re-read).
+  Entry points: `grocery.api.weekly()`, `python -m grocery.cli weekly-basket`, history in
+  /data/grocery/weekly-history.jsonl. See ../docs/SOUL_GROCERY_WEEKLY_SNIPPET.md (runtime ≈ 3:20 min / 15 lines).
 - Price checks run on their configured interval (minimum 60 minutes), retain the
   last known good price, and record a deduplicated alert when the target is met.
 

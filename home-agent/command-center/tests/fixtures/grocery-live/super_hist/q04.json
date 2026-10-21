@@ -1,0 +1,24 @@
+{
+ "text": "מעבר לכל ה (1) תוצאות",
+ "results": "1",
+ "search_input": "ממרח שוקולד",
+ "data": [
+  {
+   "bgfnribbon_text": false,
+   "product_id": "910031",
+   "name": "ממרח שוקולד חלבי 500 גרם",
+   "price": "₪11.90",
+   "price_number": "11.9000",
+   "special": false,
+   "tax": "₪11.90",
+   "minimum": "1",
+   "rating": 0,
+   "out_of_stock": true,
+   "weight": false,
+   "weight_unit_price_text": "",
+   "in_cart": false,
+   "href": "https://super-hist.co.il/index.php?route=product/product&product_id=910031",
+   "thumb": "https://super-hist.co.il/image/cache/fake-910031-200x200.jpg"
+  }
+ ]
+}

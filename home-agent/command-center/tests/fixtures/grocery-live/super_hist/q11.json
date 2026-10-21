@@ -1,0 +1,24 @@
+{
+ "text": "מעבר לכל ה (1) תוצאות",
+ "results": "1",
+ "search_input": "קולה זירו",
+ "data": [
+  {
+   "bgfnribbon_text": "2 ב-11",
+   "product_id": "910101",
+   "name": "קוקה קולה זירו 1.5 ליטר",
+   "price": "₪6.90",
+   "price_number": "6.9000",
+   "special": "₪5.90",
+   "tax": "₪5.90",
+   "minimum": "1",
+   "rating": 0,
+   "out_of_stock": false,
+   "weight": false,
+   "weight_unit_price_text": "",
+   "in_cart": false,
+   "href": "https://super-hist.co.il/index.php?route=product/product&product_id=910101",
+   "thumb": "https://super-hist.co.il/image/cache/fake-910101-200x200.jpg"
+  }
+ ]
+}

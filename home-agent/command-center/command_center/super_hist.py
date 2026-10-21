@@ -876,8 +876,289 @@ def apply_write(payload):
             "note": problem}
 
 
+# =========================================================================== grocery weekly basket hooks
+# The grocery picker (vendored `grocery` package) searches Super-Hist through grocery_transport(); the weekly
+# job checks the login first with grocery_gate(); with build mode the proposed lines become ONE batched
+# approval (propose_batch); the approved batch runs in the background (apply_batch) because N writes at
+# >=10 s apart take longer than the Telegram decide call may wait.
+
+CART_BATCH_ACTION = "super_hist_cart_batch"
+MAX_BATCH = 40
+_batches = {}               # batch id (approval id) -> latest result dict
+_batch_listeners = []       # callables(run_id, result) — Command Center stores the result on the grocery run
+
+
+def search_raw(term):
+    """One read-only search for the grocery picker: the raw `data` list (product dicts as the site sends them).
+    Raises LoginRequired / SiteBlocked / SiteChanged / SiteError like the cart tools."""
+    term = " ".join(str(term or "").split())[:MAX_TERM]
+    if not term:
+        return []
+    with _lock:
+        _require_login()
+        body = _cart_send("POST", SEARCH_URL, {"search": term, "screen_break_points": "desktop"}, referer=BASE + "/")
+    data = _json(body)
+    if data is None or not isinstance(data.get("data", []), list):
+        raise SiteChanged("תשובת החיפוש באתר השתנתה (לא JSON צפוי).")
+    now = _now()
+    for product in parse_search(body)["products"]:
+        _catalog[product["product_id"]] = (now, product)
+    return [x for x in (data.get("data") or []) if isinstance(x, dict)]
+
+
+def grocery_transport(term):
+    """search_raw with errors mapped to the grocery package's (so the picker stops / skips correctly)."""
+    from grocery.http import CloudflareBlocked, HttpError, SessionExpired
+    try:
+        return search_raw(term)
+    except LoginRequired:
+        raise SessionExpired("login_required: החיבור לסופר החברתי פג") from None
+    except SiteBlocked as exc:
+        raise CloudflareBlocked(str(exc)[:160]) from None
+    except SiteError as exc:          # SiteChanged / PolicyError / network: this one search failed
+        raise HttpError(str(exc)[:160]) from None
+
+
+def grocery_gate(send_sms=True):
+    """Before a weekly run: one read-only login check. Logged out -> at most ONE login start (one SMS; the
+    relay may complete it by itself). Returns {"status": logged_in | login_required | site_blocked | site_error,
+    "text", "login"?}. Never loops, never resends: a pending code is reused (Ben pastes it)."""
+    with _lock:
+        try:
+            _require_login(fresh=True)
+            return _result("logged_in", "מחובר לסופר החברתי.")
+        except LoginRequired:
+            pass
+        except SiteBlocked as exc:
+            return _result("site_blocked", str(exc))
+        except SiteError as exc:
+            return _result("site_error", str(exc)[:200])
+        pending = _state["phase"] == "code_sent" and _now() - _state["sent_at"] <= CODE_WINDOW
+    if pending:
+        return _result("login_required", "החיבור לסופר החברתי פג וכבר נשלח קוד SMS. תדביק את הקוד "
+                       "(super_hist_login_code) ואז להריץ שוב.", login="code_already_sent")
+    if not send_sms:
+        return _result("login_required", "החיבור לסופר החברתי פג. צריך להתחבר מחדש (SMS) ואז להריץ שוב.",
+                       login="not_started")
+    started = start_login()
+    if started.get("status") in ("logged_in", "already_logged_in"):
+        return _result("logged_in", started.get("text") or "מחובר לסופר החברתי.", login=started.get("status"))
+    return _result("login_required", "החיבור לסופר החברתי פג. " + str(started.get("text") or "")
+                   + " אחרי ההתחברות (super_hist_login_code) להריץ שוב.", login=started.get("status"))
+
+
+def _batch_qty(value):
+    try:
+        q = float(value)
+    except (TypeError, ValueError):
+        return None
+    return int(q) if q.is_integer() and 1 <= q <= MAX_QTY else None
+
+
+def propose_batch(lines, run_id=None):
+    """ONE approval for the whole Super-Hist part of a weekly basket. lines: [{product_id, quantity, name,
+    price, weighted}]. Reads the cart first (shown as-is), proposes add / raise-to-quantity per line, refuses
+    by-weight lines (manual), never lowers or removes anything. Nothing is written here."""
+    if not isinstance(lines, list) or not lines:
+        return _result("invalid", "אין שורות להצעה.")
+    with _lock:
+        try:
+            _require_login()
+            cart = _read_cart()
+        except SiteError as exc:
+            return _error_result(exc)
+    changes, skipped = [], []
+    for raw in lines[:MAX_BATCH]:
+        raw = raw if isinstance(raw, dict) else {}
+        name = _clip(raw.get("name") or "", 60)
+        try:
+            pid = _pid(raw.get("product_id"))
+        except ValueError:
+            skipped.append({"name": name, "reason": "אין מספר מוצר"})
+            continue
+        if raw.get("weighted"):
+            skipped.append({"product_id": pid, "name": name, "reason": "במשקל — להוסיף ידנית באתר"})
+            continue
+        qty = _batch_qty(raw.get("quantity"))
+        if qty is None:
+            skipped.append({"product_id": pid, "name": name, "reason": f"כמות לא נתמכת ({raw.get('quantity')})"})
+            continue
+        product = _known_product(pid) or {}
+        if product.get("weighted"):
+            skipped.append({"product_id": pid, "name": name, "reason": "במשקל — להוסיף ידנית באתר"})
+            continue
+        line = _line(cart, pid)
+        before = line["quantity"] if line else 0
+        if line is not None and line["weighted"]:
+            skipped.append({"product_id": pid, "name": name, "reason": "במשקל — להוסיף ידנית באתר"})
+            continue
+        if line is None and product.get("out_of_stock"):
+            skipped.append({"product_id": pid, "name": name, "reason": "אזל באתר"})
+            continue
+        if line is None:
+            qty = max(qty, int(product.get("minimum") or 1))
+        if before >= qty:
+            skipped.append({"product_id": pid, "name": name, "reason": f"כבר בעגלה ({before})"})
+            continue
+        price = raw.get("price") if raw.get("price") is not None else product.get("price")
+        changes.append({"op": "set_qty" if line else "add", "product_id": pid,
+                        "cart_id": (line or {}).get("cart_id"), "name": name or product.get("name") or pid,
+                        "unit_price": price, "qty_before": before, "qty_after": qty})
+    if len(lines) > MAX_BATCH:
+        skipped += [{"name": _clip((x or {}).get("name"), 60), "reason": f"מעל {MAX_BATCH} שורות"}
+                    for x in lines[MAX_BATCH:]]
+    now_txt = (f"בעגלה עכשיו {cart['count']} שורות, סה״כ {_fmt(cart['total'])}." if cart["count"]
+               else "העגלה בסופר החברתי ריקה כרגע.")
+    if not changes:
+        return _result("no_changes", now_txt + " אין מה להוסיף.", cart=_public_cart(cart), skipped=skipped)
+    delta = sum((c["unit_price"] or 0) * (c["qty_after"] - c["qty_before"]) for c in changes)
+    expected = round(cart["total"] + delta, 2) if cart["total"] is not None else None
+    adds = sum(1 for c in changes if c["op"] == "add")
+    eta = int((len(changes) + 3) * MIN_INTERVAL)
+    headline = (f"הסופר החברתי: {len(changes)} שינויים בעגלה ({adds} הוספות, {len(changes) - adds} העלאות כמות)"
+                f" · סה״כ עגלה {_fmt(cart['total'])}→≈{_fmt(expected)}")
+    summary = headline + f" · רץ ברקע ~{eta} שנ׳ אחרי האישור; לא מוריד ולא מסיר כלום; בלי הזמנה/תשלום"
+    payload = {"run_id": run_id, "changes": changes, "total_before": cart["total"], "expected_total": expected,
+               "summary": summary}
+    ident = _approvals().create(CART_BATCH_ACTION, payload)
+    detail = [now_txt] + [f"• {c['name']} {_fmt(c['unit_price'])} · {c['qty_before']}→{c['qty_after']}" for c in changes]
+    if skipped:
+        detail.append("לא בהצעה: " + " · ".join(f"{x['name']} ({x['reason']})" for x in skipped))
+    return _result("pending_approval", "\n".join([headline] + detail), approval_id=ident, headline=headline,
+                   cart=_public_cart(cart), changes=[{k: v for k, v in c.items() if k != "cart_id"} for c in changes],
+                   skipped=skipped, expected_total=expected, eta_seconds=eta, cart_url=CART_URL)
+
+
+def on_batch(listener):
+    if listener not in _batch_listeners:
+        _batch_listeners.append(listener)
+
+
+def _publish(run_id, result):
+    for fn in list(_batch_listeners):
+        try:
+            fn(run_id, dict(result))
+        except Exception:
+            pass
+
+
+def _batch_text(result):
+    w, f, n = result["written"], result["failed"], result["not_sent"]
+    total = len(w) + len(f) + len(n) + len(result["changed"])
+    head = {"done": "✅ העגלה בסופר החברתי עודכנה", "partial": "⚠️ העגלה עודכנה חלקית",
+            "failed": "❌ העגלה לא עודכנה", "login_required": "❌ החיבור לסופר החברתי פג — לא שיניתי כלום",
+            "unverified": "⚠️ שלחתי עדכונים אבל לא הצלחתי לקרוא שוב את העגלה"}.get(result["status"], result["status"])
+    out = [f"{head}: {len(w)}/{total} שורות" + (f" · סה״כ עגלה {_fmt(result.get('total'))}" if result.get("total")
+                                               is not None else "")]
+    if f:
+        out.append("לא עודכנו: " + " · ".join(f"{x['name']} ({x['reason']})" for x in f))
+    if result["changed"]:
+        out.append("השתנו באתר מאז ההצעה (לא נגעתי): " + " · ".join(x["name"] for x in result["changed"]))
+    if n:
+        out.append("לא נשלחו: " + " · ".join(x["name"] for x in n))
+    out.append(f"העגלה: {CART_URL} (התשלום אצלך בלבד)")
+    return "\n".join(out)
+
+
+def _run_batch(ident, payload):
+    changes = payload.get("changes") or []
+    run_id = payload.get("run_id")
+    res = {"batch_id": ident, "status": "running", "written": [], "failed": [], "not_sent": [], "changed": [],
+           "total": None, "cart_url": CART_URL}
+    _batches[ident] = res
+    attempted = []
+    with _lock:
+        try:
+            try:
+                _require_login(fresh=True)
+                cart = _read_cart()
+            except LoginRequired:
+                res.update(status="login_required", not_sent=[{"name": c["name"]} for c in changes])
+                return
+            except SiteError as exc:
+                res.update(status="failed", not_sent=[{"name": c["name"]} for c in changes], error=str(exc)[:200])
+                return
+            for k, c in enumerate(changes):
+                pid = c["product_id"]
+                line = _line(cart, pid)
+                now_qty = line["quantity"] if line else 0
+                if now_qty != c["qty_before"]:
+                    res["changed"].append({"name": c["name"], "now": now_qty})
+                    continue
+                if line is None:
+                    url, form = CART_ADD_URL, {"product_id": pid, "quantity": str(c["qty_after"])}
+                else:
+                    url, form = CART_EDIT_URL, {"data[0][key]": line["cart_id"], "data[0][quantity]": str(c["qty_after"])}
+                try:
+                    body = _cart_send("POST", url, form)
+                    problem = _check_write_response("add" if url == CART_ADD_URL else "set_qty", body, c["qty_after"])
+                    attempted.append((c, problem))
+                except (SiteBlocked, LoginRequired) as exc:     # stop: no more requests
+                    res["failed"].append({"name": c["name"], "reason": _clip(str(exc), 80)})
+                    res["not_sent"] = [{"name": x["name"]} for x in changes[k + 1:]]
+                    res["status"] = "failed" if not attempted else "partial"
+                    res["error"] = str(exc)[:200]
+                    break
+                except SiteError as exc:                       # may or may not have reached the site: verify
+                    attempted.append((c, str(exc)[:80]))
+            if res["status"] != "running":                     # blocked mid-batch: no re-read is allowed now
+                res["failed"] += [{"name": c["name"], "reason": "נשלח, לא אומת (האתר חסם)"} for c, _p in attempted]
+                res["status"] = "unverified" if attempted else "failed"
+                return
+            try:
+                final = _read_cart()
+            except SiteError as exc:
+                res.update(status="unverified", error=str(exc)[:200])
+                res["failed"] += [{"name": c["name"], "reason": "לא אומת"} for c, _p in attempted]
+                return
+            res["total"] = final["total"]
+            for c, problem in attempted:
+                got = _line(final, c["product_id"])
+                got_qty = got["quantity"] if got else 0
+                if got_qty == c["qty_after"]:
+                    res["written"].append({"name": c["name"], "quantity": got_qty})
+                else:
+                    res["failed"].append({"name": c["name"], "reason": f"בעגלה {got_qty} במקום {c['qty_after']}"
+                                          + (f"; {problem}" if problem else "")})
+            if res["status"] == "running":
+                res["status"] = ("done" if res["written"] and not res["failed"] and not res["changed"]
+                                 else "partial" if res["written"] else "failed")
+        finally:
+            if res["status"] == "running":
+                res["status"] = "failed"
+            res["text"] = _batch_text(res)
+            _batches[ident] = res
+            _publish(run_id, res)
+
+
+def apply_batch(payload, _ident=None):
+    """Approved batch: validates and starts the writes in the background (one POST per line, never retried,
+    re-read and verified at the end). The result goes to the grocery run (grocery_cart_status)."""
+    p = payload if isinstance(payload, dict) else {}
+    changes = p.get("changes")
+    if not isinstance(changes, list) or not changes or len(changes) > MAX_BATCH:
+        raise ValueError("הצעת עגלה לא תקינה")
+    for c in changes:
+        _pid(c.get("product_id"))
+        if c.get("op") not in ("add", "set_qty") or _batch_qty(c.get("qty_after")) is None \
+                or not isinstance(c.get("qty_before"), int) or c["qty_before"] >= c["qty_after"]:
+            raise ValueError("הצעת עגלה לא תקינה")
+    ident = os.urandom(6).hex()
+    _batches[ident] = {"batch_id": ident, "status": "running"}
+    _publish(p.get("run_id"), {"batch_id": ident, "status": "running", "changes": len(changes)})
+    threading.Thread(target=_run_batch, args=(ident, p), daemon=True).start()
+    eta = int((len(changes) + 3) * MIN_INTERVAL)
+    return {"status": "started", "batch_id": ident, "changes": len(changes), "eta_seconds": eta,
+            "text": f"מעדכן {len(changes)} שורות בעגלה ברקע (~{eta} שנ׳). התוצאה ב-grocery_cart_status."}
+
+
+def batch_status(ident):
+    return _batches.get(str(ident)) or {"status": "unknown"}
+
+
 def register_actions():
     _approvals().register_action(CART_ACTION, apply_write)
+    _approvals().register_action(CART_BATCH_ACTION, apply_batch)
 
 
 def register_routes(router):

@@ -1,9 +1,13 @@
 """Grocery list (Google Tasks "קניות"), learned preferences and the "תכין עגלה" cart job.
 
 The working list lives in Google Tasks (see grocery_list.py); state/current_list.json is only its cache.
-The cart job searches Rami Levy and Shufersal READ-ONLY (in parallel; Rami 1.5 s, Shufersal >= 10 s between
-requests) and returns cart LINKS that Ben opens in his own browser. Nothing here logs in to a supermarket,
-writes to a supermarket cart or checks out; the vendored `grocery` package has that code stubbed out.
+Default job ("weekly"): הסופר החברתי FIRST, the remainder at ONE other store (Rami Levy or Shufersal, whichever
+is cheaper for it), every line priced on all three sites for the evidence section. All searches are READ-ONLY
+and run in parallel (Super-Hist >= 10 s, Rami 1.5 s, Shufersal >= 10 s between requests). Super-Hist goes
+through command_center.super_hist (its login session, URL policy, 24 h breaker); a logged-out session gets ONE
+login start (one SMS) and the job returns login_required. Optional build mode proposes ONE batched Super-Hist
+cart approval; nothing is written before Ben approves, and nothing here ever orders or pays. "both" / one site
+= the older Rami+Shufersal links flow.
 """
 
 import os
@@ -24,9 +28,11 @@ USER_DEFAULTS = DATA_DIR / "defaults.user.yaml"  # learned; persistent, never ov
 STATE_DIR = DATA_DIR / "state"
 REPORTS_DIR = Path(os.environ.get("GROCERY_REPORTS_DIR", "/workspace/grocery"))
 CART_SITES = ("rami_levy", "shufersal")
-SITE_NAMES = {"rami_levy": "רמי לוי", "shufersal": "שופרסל"}
+WEEKLY_SITES = ("super_hist", "rami_levy", "shufersal")
+SITE_NAMES = {"rami_levy": "רמי לוי", "shufersal": "שופרסל", "super_hist": "הסופר החברתי"}
 STALE_SECONDS = 30 * 60
-ETA_SECONDS = 180
+ETA_SECONDS = 180            # "both": Shufersal ~13 searches x >=10 s
+HISTORY_FILE = "weekly-history.jsonl"
 POLL_SECONDS = 2
 FIXTURES = os.environ.get("GROCERY_FIXTURES_ROOT") or None   # tests / dry runs only; unset in production
 
@@ -52,6 +58,8 @@ def setup():
         shutil.copyfile(IMAGE_DEFAULTS, DEFAULTS)
     grocery_list.configure(DEFAULTS, STATE_DIR / "current_list.json", GROCERY_LIST_BACKEND)
     grocery_db.init(connection)
+    from . import super_hist
+    super_hist.on_batch(_batch_done)      # an approval decided after a restart still lands on its run
 
 
 def _text(fn, *args, **kwargs):
@@ -146,7 +154,92 @@ def _skipped(sites, force=False):
     return out
 
 
+def _release(held):
+    if held[0]:
+        held[0] = False
+        _run_lock.release()
+
+
+def _sh_hooks(ident):
+    """(gate, cart_builder) for the weekly job. Offline fixture runs never touch the site (tests patch this)."""
+    if FIXTURES:
+        return None, None
+    from . import super_hist
+    return (lambda: super_hist.grocery_gate(send_sms=True)), (lambda lines: super_hist.propose_batch(lines, run_id=ident))
+
+
+def _wire_super_hist():
+    from grocery.sites import super_hist as adapter
+    from . import super_hist
+    adapter.set_transport(None if FIXTURES else super_hist.grocery_transport)
+    super_hist.on_batch(_batch_done)
+
+
+def _batch_done(run_id, result):
+    """Background Super-Hist batch write finished (or started): keep the latest state on the grocery run."""
+    if not run_id:
+        return
+    grocery_db.update_extra(connection, run_id, {"super_hist_cart_result": result})
+    log(f"cart {run_id} super_hist batch {result.get('status')}: written={len(result.get('written') or [])} "
+        f"failed={len(result.get('failed') or [])} not_sent={len(result.get('not_sent') or [])}")
+
+
+def _weekly_job(ident, skipped, warning=None, choices=None, build=False):
+    held = [True]
+
+    def finish(*args):
+        _release(held)   # free the lock BEFORE the run reads as done: a caller may start the next job at once
+        grocery_db.finish_run(connection, ident, *args)
+
+    try:
+        _wire_super_hist()
+        gate, builder = _sh_hooks(ident)
+        r = _api().weekly(fixtures=FIXTURES, out_dir=str(REPORTS_DIR), defaults_path=str(DEFAULTS),
+                          log=lambda m: log(f"cart {ident} {m}"), skipped=skipped, choices=choices,
+                          mode="cart" if build else "price", super_hist_gate=gate, cart_builder=builder,
+                          history_path=None if FIXTURES else str(DATA_DIR / HISTORY_FILE))
+        for s, err in r.get("blocked", {}).items():
+            grocery_db.set_blocked(connection, s, err)
+            log(f"cart {ident} {s} BLOCKED for 24h: {err}")
+        for s in r.get("plan_paths", {}):
+            if s not in r.get("site_errors", {}):
+                grocery_db.set_ok(connection, s)
+        message = r["message"]
+        if warning:
+            message = f"{warning}\n{message}"
+        extra = {k: r[k] for k in ("needs_choice", "unmatched_choices") if r.get(k)}
+        extra["mode"] = "weekly"
+        if r["status"] == "login_required":
+            extra["login_required"] = True
+        if r.get("super_hist_cart"):
+            c = r["super_hist_cart"]
+            extra["super_hist_cart"] = {k: c.get(k) for k in ("status", "approval_id", "headline", "text",
+                                                              "eta_seconds", "cart_url", "expected_total")
+                                        if c.get(k) is not None}
+        if r.get("other_site"):
+            extra["other_site"] = r["other_site"]
+        if r.get("report_path"):
+            extra["report_path"] = r["report_path"]
+        if r.get("runtime"):
+            extra["runtime"] = r["runtime"]
+        finish("done", message, r["links"], None, r.get("lines"), extra)
+        log(f"cart {ident} weekly {r['status']} items={r['items']} other={r.get('other_site')} "
+            f"sh_cart={(r.get('super_hist_cart') or {}).get('status')} runtime={(r.get('runtime') or {}).get('seconds')}")
+    except Exception as exc:  # recorded AND logged; never swallowed
+        error = f"{type(exc).__name__}: {exc}"
+        log(f"cart {ident} failed: {error}\n{traceback.format_exc()}")
+        finish("failed", None, None, error)
+    finally:
+        _release(held)
+
+
 def _cart_job(ident, sites, skipped, warning=None, choices=None):
+    held = [True]
+
+    def finish(*args):
+        _release(held)   # free the lock BEFORE the run reads as done: a caller may start the next job at once
+        grocery_db.finish_run(connection, ident, *args)
+
     try:
         r = _api().cart(sites, fixtures=FIXTURES, out_dir=str(REPORTS_DIR), defaults_path=str(DEFAULTS),
                         log=lambda m: log(f"cart {ident} {m}"), skipped=skipped, choices=choices)
@@ -160,15 +253,15 @@ def _cart_job(ident, sites, skipped, warning=None, choices=None):
         if warning:
             message = f"{warning}\n{message}"
         extra = {k: r[k] for k in ("needs_choice", "unmatched_choices") if r.get(k)}
-        grocery_db.finish_run(connection, ident, "done", message, r["links"], None, r.get("lines"), extra)
+        finish("done", message, r["links"], None, r.get("lines"), extra)
         log(f"cart {ident} done items={r['items']} links={ {s: bool(u) for s, u in r['links'].items()} } "
             f"needs_choice={len(r.get('needs_choice') or [])} choices={len(choices or {})}")
     except Exception as exc:  # recorded AND logged; never swallowed (price_watches lesson)
         error = f"{type(exc).__name__}: {exc}"
         log(f"cart {ident} failed: {error}\n{traceback.format_exc()}")
-        grocery_db.finish_run(connection, ident, "failed", None, None, error)
+        finish("failed", None, None, error)
     finally:
-        _run_lock.release()
+        _release(held)
 
 
 def _choices(raw):
@@ -177,18 +270,24 @@ def _choices(raw):
         return None
     if not isinstance(raw, dict) or not all(isinstance(v, dict) for v in raw.values()):
         raise ValueError('choices must be {"<list item>": {"rami_levy": "<id>", "shufersal": "<id>"}}')
-    bad = [s for v in raw.values() for s in v if s not in CART_SITES]
+    bad = [s for v in raw.values() for s in v if s not in WEEKLY_SITES]
     if bad:
-        raise ValueError(f"choices: unknown site(s) {bad}; use rami_levy / shufersal")
+        raise ValueError(f"choices: unknown site(s) {bad}; use super_hist / rami_levy / shufersal")
     return {str(k): {s: str(i) for s, i in v.items() if str(i or "").strip()} for k, v in raw.items()}
 
 
 def start_cart(p, _q):
-    sites = p.get("sites", "both") or "both"
-    want = list(CART_SITES) if sites == "both" else [sites]
-    if any(s not in CART_SITES for s in want):
-        raise ValueError("sites must be both, rami_levy or shufersal")
+    sites = p.get("sites", "weekly") or "weekly"
+    weekly = sites == "weekly"
+    want = list(WEEKLY_SITES) if weekly else list(CART_SITES) if sites == "both" else [sites]
+    if not weekly and any(s not in CART_SITES for s in want):
+        raise ValueError("sites must be weekly, both, rami_levy or shufersal")
+    build = bool(p.get("build_super_hist_cart", False))
+    if build and not weekly:
+        raise ValueError("build_super_hist_cart needs sites=weekly")
     choices = _choices(p.get("choices"))
+    if choices and not weekly and any("super_hist" in v for v in choices.values()):
+        raise ValueError("choices for super_hist need sites=weekly")
     if not _run_lock.acquire(blocking=False):
         raise ValueError("a grocery cart job is already running; check grocery_cart_status")
     try:
@@ -205,8 +304,13 @@ def start_cart(p, _q):
         if _run_lock.locked():
             _run_lock.release()
         raise
-    threading.Thread(target=_cart_job, args=(ident, want, skipped, warning, choices), daemon=True).start()
-    eta = 0 if len(skipped) == len(want) else ETA_SECONDS
+    if weekly:
+        from grocery import weekly as W
+        threading.Thread(target=_weekly_job, args=(ident, skipped, warning, choices, build), daemon=True).start()
+        eta = W.estimate(len(st["items"]), build_cart=build)["wall_seconds"] + 30
+    else:
+        threading.Thread(target=_cart_job, args=(ident, want, skipped, warning, choices), daemon=True).start()
+        eta = 0 if len(skipped) == len(want) else ETA_SECONDS
     result = {"run_id": ident, "status": "running", "eta_seconds": eta, "items": len(st["items"])}
     if skipped:
         result["skipped"] = {s: w for s, w in skipped.items()}

@@ -24,6 +24,7 @@ from command_center import groceries as g  # noqa: E402
 from command_center import grocery_db as db  # noqa: E402
 from command_center import grocery_list as gl  # noqa: E402
 
+BOTH = {"sites": "both"}   # the older Rami+Shufersal links flow (default is now "weekly")
 ALL13 = ("ביצים, פלפל אדום, 5 מלפפון, חלב, ממרח שוקולד, ממרח חלבה, אבקת מרק עוף, פיתות, חומץ, רדיד אלומיניום, "
          "שיבולת שועל, קולה זירו, סוכר לבן")
 
@@ -82,7 +83,7 @@ class GroceryRouteTests(unittest.TestCase):
 
     def test_cart_end_to_end_both_links_and_history(self):
         g.add_item({"text": ALL13}, {})
-        started = g.start_cart({}, {})
+        started = g.start_cart(BOTH, {})
         self.assertEqual((started["status"], started["eta_seconds"], started["items"]), ("running", 180, 13))
         st = self.wait(started)
         self.assertEqual(st["status"], "done", st)
@@ -125,12 +126,12 @@ class GroceryRouteTests(unittest.TestCase):
                     "plan_paths": {}, "items": 1}
         self.api.cart = slow
         g.add_item({"text": "חלב"}, {})
-        started = g.start_cart({}, {})
+        started = g.start_cart(BOTH, {})
         with self.assertRaises(ValueError):
-            g.start_cart({}, {})
+            g.start_cart(BOTH, {})
         gate.set()
         self.assertEqual(self.wait(started)["status"], "done")
-        self.assertEqual(self.wait(g.start_cart({}, {}))["status"], "done")   # lock released
+        self.assertEqual(self.wait(g.start_cart(BOTH, {}))["status"], "done")   # lock released
 
     def test_circuit_breaker_block_skip_expire(self):
         calls = []
@@ -142,16 +143,16 @@ class GroceryRouteTests(unittest.TestCase):
                     "site_errors": dict(blocked), "blocked": blocked, "plan_paths": {"rami_levy": "p"}, "items": 1}
         self.api.cart = fake
         g.add_item({"text": "חלב"}, {})
-        self.wait(g.start_cart({}, {}))
+        self.wait(g.start_cart(BOTH, {}))
         self.assertIsNotNone(db.blocked(conn(), "shufersal"))
-        second = g.start_cart({}, {})
+        second = g.start_cart(BOTH, {})
         self.assertIn("shufersal", second["skipped"])
         self.wait(second)
         self.assertIn("shufersal", calls[1])
         self.assertIsNone(db.blocked(conn(), "shufersal", now=time.time() + db.BLOCK_SECONDS + 1))
         conn().execute("UPDATE grocery_site_state SET blocked_until=0")
         conn().commit()
-        self.wait(g.start_cart({}, {}))
+        self.wait(g.start_cart(BOTH, {}))
         self.assertEqual(calls[2], {})
 
     def test_all_sites_blocked_eta_zero(self):
@@ -165,7 +166,7 @@ class GroceryRouteTests(unittest.TestCase):
     def test_failed_job_recorded_and_restart_marks_running_failed(self):
         self.api.cart = lambda sites, **kw: (_ for _ in ()).throw(RuntimeError("site down"))
         g.add_item({"text": "חלב"}, {})
-        st = self.wait(g.start_cart({}, {}))
+        st = self.wait(g.start_cart(BOTH, {}))
         self.assertEqual(st["status"], "failed")
         self.assertIn("site down", st["error"])
         db.start_run(conn(), "zombie", ["rami_levy"])
@@ -232,7 +233,7 @@ class GroceryRouteTests(unittest.TestCase):
         g.FIXTURES = str(Path(__file__).parent / "fixtures" / "grocery-real-20261020")
         g.add_item({"text": "יין לקידוש קדם, שמנת מתוקה x ×2"}, {})
         self.assertIn("שמנת מתוקה ×2", g.list_items({}, {})["text"])
-        st = self.wait(g.start_cart({}, {}))
+        st = self.wait(g.start_cart(BOTH, {}))
         self.assertEqual(st["status"], "done", st)
         rows = {(r["item"], r["site"]): r for r in st["needs_choice"]}
         self.assertEqual(list(rows), [("יין לקידוש קדם", "rami_levy")])
@@ -241,15 +242,89 @@ class GroceryRouteTests(unittest.TestCase):
         self.assertNotIn("תלתלים", str(cands) + st["message"])
         self.assertIn("❓ לבחירה: יין לקידוש קדם", st["message"])
         with self.assertRaises(ValueError):
-            g.start_cart({"choices": {"יין לקידוש קדם": {"amazon": "1"}}}, {})
+            g.start_cart({"sites": "both", "choices": {"יין לקידוש קדם": {"amazon": "1"}}}, {})
         pid = cands[0]["id"]
-        st2 = self.wait(g.start_cart({"choices": {"יין לקידוש קדם": {"rami_levy": pid}}}, {}))
+        st2 = self.wait(g.start_cart({"sites": "both", "choices": {"יין לקידוש קדם": {"rami_levy": pid}}}, {}))
         self.assertEqual(st2["status"], "done", st2)
         self.assertNotIn("needs_choice", st2)
         self.assertNotIn("❓", st2["message"])
         picked = [l for l in db.run_lines(conn(), st2["run_id"]) if l["site"] == "rami_levy" and l["item"] == "יין לקידוש קדם"]
         self.assertEqual(picked[0]["product_id"], pid)
         self.assertFalse(g.USER_DEFAULTS.is_file() and pid in g.USER_DEFAULTS.read_text(encoding="utf-8"))
+
+
+class WeeklyJobTests(unittest.TestCase):
+    """start_cart default = weekly (Super-Hist first). Fixtures root has super_hist/ too (synthetic)."""
+    wait = GroceryRouteTests.wait
+
+    def setUp(self):
+        GroceryRouteTests.setUp(self)
+        self.real_hooks = g._sh_hooks
+
+    def tearDown(self):
+        g._sh_hooks = self.real_hooks
+        GroceryRouteTests.tearDown(self)
+
+    def test_weekly_default_two_parts(self):
+        g.add_item({"text": ALL13}, {})
+        started = g.start_cart({}, {})
+        self.assertGreater(started["eta_seconds"], 150)
+        st = self.wait(started)
+        self.assertEqual(st["status"], "done", st)
+        self.assertIn("1️⃣ הסופר החברתי", st["message"])
+        self.assertIn("2️⃣ רמי לוי", st["message"])
+        self.assertEqual(st["other_site"], "rami_levy")
+        self.assertEqual(st["mode"], "weekly")
+        urls = re.findall(r"\]\((https://[^)]+)\)", st["message"])
+        self.assertEqual(urls, [st["links"]["rami_levy"]])
+        sites = {l["site"] for l in db.run_lines(conn(), started["run_id"])}
+        self.assertEqual(sites, {"super_hist", "rami_levy", "shufersal"})
+
+    def test_weekly_build_mode_batch_result_lands_on_run(self):
+        seen = []
+
+        def builder(lines):
+            seen.append(lines)
+            return {"status": "pending_approval", "approval_id": "a1", "headline": "הסופר החברתי: 9 שינויים",
+                    "eta_seconds": 120}
+        g._sh_hooks = lambda ident: ((lambda: {"status": "logged_in"}), builder)
+        g.add_item({"text": ALL13}, {})
+        started = g.start_cart({"build_super_hist_cart": True}, {})
+        st = self.wait(started)
+        self.assertEqual(st["super_hist_cart"]["approval_id"], "a1")
+        self.assertIn("ממתין לאישור", st["message"])
+        self.assertEqual(len(seen[0]), 10)
+        g._batch_done(started["run_id"], {"status": "partial", "written": [{"name": "x"}], "failed": [],
+                                          "not_sent": []})
+        st2 = g.cart_status({"run_id": started["run_id"]}, {})
+        self.assertEqual(st2["super_hist_cart_result"]["status"], "partial")
+        self.assertEqual(st2["super_hist_cart"]["approval_id"], "a1")
+        with self.assertRaises(ValueError):
+            g.start_cart({"sites": "both", "build_super_hist_cart": True}, {})
+
+    def test_weekly_login_required(self):
+        g._sh_hooks = lambda ident: ((lambda: {"status": "login_required", "text": "נשלח קוד"}), None)
+        g.add_item({"text": "חלב"}, {})
+        st = self.wait(g.start_cart({}, {}))
+        self.assertEqual(st["status"], "done")
+        self.assertTrue(st["login_required"])
+        self.assertIn("🔐", st["message"])
+        self.assertEqual(db.run_lines(conn(), st["run_id"]), [])
+
+    def test_weekly_super_hist_breaker(self):
+        db.set_blocked(conn(), "super_hist", "HTTP 429")
+        g.add_item({"text": "חלב"}, {})
+        started = g.start_cart({}, {})
+        self.assertIn("super_hist", started["skipped"])
+        st = self.wait(started)
+        self.assertIn("הסופר החברתי: לא זמין", st["message"])
+
+    def test_weekly_choices_for_super_hist(self):
+        g.add_item({"text": "חלב"}, {})
+        st = self.wait(g.start_cart({"choices": {"חלב": {"super_hist": "910021"}}}, {}))
+        self.assertEqual(st["status"], "done", st)
+        with self.assertRaises(ValueError):
+            g.start_cart({"sites": "both", "choices": {"חלב": {"super_hist": "1"}}}, {})
 
 
 class VendoredGuardTests(unittest.TestCase):

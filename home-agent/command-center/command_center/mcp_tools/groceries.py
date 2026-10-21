@@ -1,4 +1,4 @@
-"""MCP tools for the household grocery list and cart links. Never logs in to, writes to, or pays at a supermarket."""
+"""MCP tools for the household grocery list, the weekly basket (Super-Hist first) and cart links. Never orders or pays; a Super-Hist cart change happens only through one Telegram approval."""
 
 from typing import Literal
 
@@ -43,17 +43,19 @@ def register(mcp, client):
         return client.request("POST", "/grocery/preferences", payload)["text"]
 
     @mcp.tool()
-    def grocery_cart(sites: Literal["both", "rami_levy", "shufersal"] = "both",
-                     choices: dict | None = None) -> dict:
-        """"תכין עגלה" / "איפה זול": pull the list from Google Tasks, search Rami Levy and Shufersal (read-only, ~3 min), build cart LINKS + a price comparison. Returns {run_id, status, eta_seconds}. Acknowledge in one short line, then schedule an `in 2m` follow-up calling grocery_cart_status(run_id, wait_seconds=90), repeating while running. If run_id is null, send `message`. choices={"<list item>": {"rami_levy": "<id>"}} = your pick for needs_choice items, this run only (never saved). You never order or pay."""
+    def grocery_cart(sites: Literal["weekly", "both", "rami_levy", "shufersal"] = "weekly",
+                     choices: dict | None = None, build_super_hist_cart: bool = False) -> dict:
+        """"תכין עגלה"/"איפה זול": weekly = הסופר החברתי first, the rest at ONE cheaper store (Rami/Shufersal), read-only (~4 min). build_super_hist_cart=true only when Ben asks to fill the Super-Hist cart: ONE batched approval, never an order. Returns {run_id, eta_seconds}: ack in one line, schedule `in 3m` grocery_cart_status(run_id, wait_seconds=90). run_id null: send `message`. choices={"<item>": {"super_hist": "<id>"}} = your pick for needs_choice, this run only."""
         payload = {"sites": sites}
         if choices:
             payload["choices"] = choices
+        if build_super_hist_cart:
+            payload["build_super_hist_cart"] = True
         return client.request("POST", "/grocery/cart", payload)
 
     @mcp.tool()
     def grocery_cart_status(run_id: str, wait_seconds: int = 0) -> dict:
-        """Check a grocery_cart job. status running/done/failed. If done and `needs_choice` is non-empty, first choose per SOUL 'בחירת מוצר' and call grocery_cart(choices=...) again; send only the final run's message. Send `message` VERBATIM (never retype or rebuild URLs). If it contains '---', send each part separately. On failure report `error`; no automatic retry."""
+        """Check a grocery_cart job (running/done/failed). needs_choice non-empty: choose per SOUL and rerun with choices; send only the final message. Send `message` VERBATIM (never rebuild URLs; '---' = separate parts). super_hist_cart.status pending_approval: end the last part with [[CC_APPROVAL:<approval_id>]]; after approval, check again for super_hist_cart_result. login_required: relay; no retry by yourself."""
         wait_seconds = max(0, min(int(wait_seconds), 90))
         return client.request("POST", "/grocery/cart-status",
                               {"run_id": run_id, "wait_seconds": wait_seconds},
