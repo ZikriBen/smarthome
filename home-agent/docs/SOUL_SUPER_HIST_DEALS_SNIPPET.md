@@ -5,7 +5,8 @@
   routine → `super_hist_deals()`. A standalone, READ-ONLY command: it scans the site's promotion
   category pages ("משלמים פחות מקבלים יותר", optionally "מתמודדים עם יוקר המחיה") and lists the
   best-value deals (food first, by % off). It does not look at the grocery list or the cart and puts
-  nothing in the cart. Slow: one request every 10 s, a few pages → about a minute.
+  nothing in the cart. Slow: one request every 10 s, a few pages → about a minute (+ up to 3 minutes
+  if it has to log in).
   - It returns `running` with `run_id` and `text`: tell Ben `text`, then
     `super_hist_deals_status(run_id)` until it is no longer `running`. Never start a second scan
     while one is running (`already_running` → use its run_id).
@@ -14,9 +15,11 @@
     `partial` = the site stopped us midway; say so.
   - Ben wants one of the items? Offer `super_hist_search` + `super_hist_cart_add` (normal approval
     flow); never add deals to the cart on your own.
-  - `login_required` → `text` is one line ("…לשלוח קוד SMS להתחברות?"). Only after Ben says yes
-    call `super_hist_login_start`, then run `super_hist_deals` again. Never log in by yourself; in a
-    scheduled run just send that line.
+  - Session expired? The scan logs in ONCE by itself (Ben, 2026-10-21): the normal SMS login, the code
+    arrives through the relay, bounded to 3 minutes, then it continues; `text` then says
+    "התחברתי אוטומטית עם קוד SMS". Don't call `super_hist_login_start` yourself for a deals scan.
+  - `login_failed` → `text` is one line (why it couldn't log in); relay it and stop. Don't start another
+    login or scan by yourself (no resend, no retry).
   - `disabled` (deals categories not switched on yet) / `site_blocked` / `site_changed` → relay
     `text`, don't retry (24 h stop after 403/429/captcha).
 

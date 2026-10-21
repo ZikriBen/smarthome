@@ -106,20 +106,36 @@ class Category(unittest.TestCase):
         self.assertEqual(deals.parse_category_page("<html></html>", 2), ([], False))   # past the last page
 
 
+class FakeLogin:
+    def __init__(self, ok=True, reason=None, on_success=None):
+        self.ok, self.reason, self.on_success, self.calls = ok, reason, on_success, 0
+
+    def attempt(self):
+        self.calls += 1
+        if self.ok and self.on_success:
+            self.on_success()
+        return self.ok, self.reason
+
+
 class FakeOps:
-    def __init__(self, cart_exc=None, page_exc=None, page_exc_at=None):
+    def __init__(self, cart_exc=None, page_exc=None, page_exc_at=None, logged_out=False):
         self.inner = deals.FixtureSite(FX)
         self.cart_exc, self.page_exc, self.page_exc_at = cart_exc, page_exc, page_exc_at
         self.calls = []
+        self.logged_out = logged_out
 
     def cart(self):
         self.calls.append("cart")
+        if self.logged_out:
+            raise sh.LoginRequired("login")
         if self.cart_exc:
             raise self.cart_exc
         return self.inner.cart()
 
     def category_page(self, key, page):
         self.calls.append((key, page))
+        if self.logged_out:
+            raise sh.LoginRequired("login")
         if self.page_exc and (self.page_exc_at is None or self.page_exc_at == (key, page)):
             raise self.page_exc
         return self.inner.category_page(key, page)
@@ -131,7 +147,8 @@ def scenario_run(site=None, **kw):
     d = load_defaults(str((FX / spec["defaults"]).resolve()), user_path=str(FX / "none.yaml"))
     args = dict(list_entries=[{"item": t} for t in spec["list"]], regulars=spec["regulars"],
                 staples=spec["staples"], defaults=d, kashrut_level=spec["kashrut"], site=site or FakeOps(),
-                categories=["promo"], previous_ids=set(spec["previous_ids"]), today=TODAY)
+                categories=["promo"], previous_ids=set(spec["previous_ids"]), today=TODAY,
+                login=FakeLogin(ok=False, reason="test: no login expected"))
     args.update(kw)
     return deals.run(**args)
 
@@ -235,17 +252,91 @@ class Personal(unittest.TestCase):
 
 
 class Failures(unittest.TestCase):
-    def test_login_required_is_one_line(self):
-        r = scenario_run(site=FakeOps(page_exc=sh.LoginRequired("login")))
-        self.assertEqual(r["status"], "login_required")
-        self.assertEqual(r["message"], deals.LOGIN_LINE)
-        self.assertNotIn("\n", r["message"])
-        self.assertIn("SMS", r["message"])
+    def test_logged_out_auto_login_then_scan(self):
+        ops = FakeOps(logged_out=True)
+        login = FakeLogin(ok=True, on_success=lambda: setattr(ops, "logged_out", False))
+        r = scenario_run(site=ops, login=login)
+        self.assertEqual((r["status"], login.calls), ("ok", 1))
+        self.assertEqual(ops.calls, [("promo", 1), ("promo", 1), ("promo", 2)])   # same page once more
+        self.assertTrue(r["auto_login"])
+        self.assertIn("התחברתי אוטומטית", r["message"])
+        self.assertNotIn("לשלוח קוד", r["message"])
 
-    def test_personal_login_required_at_cart(self):
-        ops = FakeOps(cart_exc=sh.LoginRequired("login"))
-        r = scenario_run(site=ops, personal=True)
-        self.assertEqual((r["status"], ops.calls), ("login_required", ["cart"]))
+    def test_login_failure_is_one_line(self):
+        ops = FakeOps(logged_out=True)
+        login = FakeLogin(ok=False, reason="קוד ה-SMS לא הגיע תוך 3 דקות")
+        r = scenario_run(site=ops, login=login)
+        self.assertEqual((r["status"], login.calls), ("login_failed", 1))
+        self.assertEqual(ops.calls, [("promo", 1)])
+        self.assertNotIn("\n", r["message"])
+        self.assertIn("לא הגיע תוך 3 דקות", r["message"])
+        self.assertNotIn("לשלוח קוד", r["message"])
+
+    def test_single_attempt_when_still_logged_out(self):
+        ops = FakeOps(logged_out=True)
+        login = FakeLogin(ok=True)                       # "succeeds" but the site still says logged out
+        r = scenario_run(site=ops, login=login, categories=["promo", "cost_of_living"])
+        self.assertEqual((r["status"], login.calls), ("login_failed", 1))
+        self.assertEqual(ops.calls, [("promo", 1), ("promo", 1)])
+
+    def test_personal_login_at_cart(self):
+        ops = FakeOps(logged_out=True)
+        login = FakeLogin(ok=False, reason="x")
+        r = scenario_run(site=ops, personal=True, login=login)
+        self.assertEqual((r["status"], ops.calls, login.calls), ("login_failed", ["cart"], 1))
+
+
+class AutoLoginFlow(unittest.TestCase):
+    """AutoLogin over mocked start_login / submit_code and a fake clock (no site, no SMS)."""
+
+    def make(self, start_result, submit_results, step=15):
+        clock = [0.0]
+        submits = list(submit_results)
+        calls = {"start": 0, "submit": []}
+
+        def start(_p):
+            calls["start"] += 1
+            clock[0] += 45                                  # start_login waits up to 45 s for the relay
+            return start_result
+
+        def submit(p):
+            calls["submit"].append(p["wait_seconds"])
+            clock[0] += p["wait_seconds"]
+            return submits.pop(0) if submits else {"status": "no_relayed_code"}
+
+        return deals.AutoLogin(start=start, submit=submit, clock=lambda: clock[0]), calls, clock
+
+    def test_relayed_immediately(self):
+        login, calls, _ = self.make({"status": "logged_in", "auto": True}, [])
+        self.assertEqual(login.attempt(), (True, None))
+        self.assertEqual((calls["start"], calls["submit"]), (1, []))
+
+    def test_code_arrives_while_polling(self):
+        login, calls, _ = self.make({"status": "code_sent"}, [{"status": "no_relayed_code"}, {"status": "logged_in"}])
+        self.assertEqual(login.attempt(), (True, None))
+        self.assertEqual(calls["start"], 1)
+        self.assertEqual(calls["submit"], [15, 15])
+
+    def test_timeout_bounded_to_3_minutes(self):
+        login, calls, clock = self.make({"status": "code_sent"}, [])
+        ok, reason = login.attempt()
+        self.assertFalse(ok)
+        self.assertIn("3 דקות", reason)
+        self.assertEqual(calls["start"], 1)                 # never a second SMS
+        self.assertLessEqual(clock[0], deals.LOGIN_MAX_WAIT)
+
+    def test_failure_statuses(self):
+        for start_result in ({"status": "rate_limited", "text": "האתר חסם זמנית שליחת קודים"},
+                             {"status": "not_configured", "text": "חסר מספר תעודת זהות"},
+                             {"status": "cooldown", "text": "קוד כבר נשלח"}):
+            login, calls, _ = self.make(start_result, [])
+            ok, reason = login.attempt()
+            self.assertFalse(ok)
+            self.assertEqual(reason, start_result["text"])
+            self.assertEqual(calls["submit"], [])
+        login, calls, _ = self.make({"status": "code_sent"}, [{"status": "wrong_code", "text": "האתר דחה את הקוד"}])
+        self.assertEqual(login.attempt(), (False, "האתר דחה את הקוד"))
+        self.assertEqual(calls["start"], 1)
 
     def test_blocked_mid_scan_stops(self):
         ops = FakeOps(page_exc=sh.SiteBlocked("האתר חסם את הבקשה (HTTP 429)"), page_exc_at=("promo", 2))
@@ -315,11 +406,12 @@ class Transport(unittest.TestCase):
         times = [t for *_x, t in self.calls]
         self.assertTrue(all(b - a >= sh.MIN_INTERVAL for a, b in zip(times, times[1:])), times)
 
-    def test_logged_out_never_logs_in(self):
+    def test_logged_out_one_login_attempt(self):
         self.account_status = 302
-        r = scenario_run(site=deals.SiteOps())
-        self.assertEqual(r["status"], "login_required")
-        self.assertEqual([c[1] for c in self.calls], ["account/account"])
+        login = FakeLogin(ok=False, reason="test")
+        r = scenario_run(site=deals.SiteOps(), login=login)
+        self.assertEqual((r["status"], login.calls), ("login_failed", 1))
+        self.assertEqual([c[1] for c in self.calls], ["account/account"])   # no category page, no SMS route
 
     def test_429_stops_for_24h(self):
         self.page_status = 429
@@ -387,7 +479,8 @@ class Job(unittest.TestCase):
         seen = {}
         deals._sources = lambda: self.fail("standalone scan must not read list/cart/regulars")
         real_run = saved[1]
-        deals.run = lambda *a, **k: seen.update(k) or real_run(site=FakeOps(), categories=["promo"], today=TODAY)
+        deals.run = lambda *a, **k: seen.update(k) or real_run(site=FakeOps(), categories=["promo"], today=TODAY,
+                                                                 login=FakeLogin(ok=False))
         try:
             deals.scan({})
         finally:

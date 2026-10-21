@@ -8,7 +8,8 @@ Plus Ben's cart page (2-3 requests: account check, cart, mini-cart canary only w
 because it is cheap; a cart line showing <del>shelf</del><ins>sale</ins> is a deal by itself.
 Everything goes through super_hist's transport: the URL allowlist (GET of the two categories, page 1 / ?page=N),
 >= MIN_INTERVAL (10 s) between requests, the 24 h stop on 403/429/captcha (also persisted in grocery_site_state),
-and never an automatic login: logged out -> one line asking whether to send an SMS.
+and at most ONE automatic login per run when logged out (the existing SMS flow, code via the Telegram relay,
+bounded to 3 minutes; failure/timeout -> one line and stop; never a resend or a retry).
 
 Local matching (no extra requests): each category product is matched against the cart (product id), then the
 CACHED grocery list (state/current_list.json — no Google Tasks sync from here), regulars (items in >= 2 past
@@ -384,6 +385,53 @@ class _SkipCart(Exception):
     pass
 
 
+LOGIN_MAX_WAIT = 180          # seconds: one automatic login per run, bounded
+LOGIN_POLL = 15               # each relay check waits up to this long (no site request while waiting)
+
+
+class _LoginFailed(Exception):
+    pass
+
+
+class AutoLogin:
+    """ONE automatic login per scan (Ben, 2026-10-21): the existing flow — super_hist.start_login asks the site
+    for an SMS code and waits for the Telegram relay to deliver it; if it is not there yet, the relay is
+    polled with submit_code() (empty code = take the relayed one; no site request until a code arrives) until
+    LOGIN_MAX_WAIT. Never resends, never retries. Returns (ok, reason)."""
+
+    def __init__(self, start=None, submit=None, clock=None, max_wait=None):
+        self.start = start or sh.start_login
+        self.submit = submit or sh.submit_code
+        self.clock = clock or time.monotonic
+        self.max_wait = LOGIN_MAX_WAIT if max_wait is None else max_wait
+        self.calls = 0
+
+    def attempt(self):
+        self.calls += 1
+        deadline = self.clock() + self.max_wait
+        result = self.start({}) or {}
+        status = result.get("status")
+        while status in ("code_sent", "no_relayed_code") and self.clock() < deadline:
+            wait = int(max(1, min(LOGIN_POLL, deadline - self.clock())))
+            result = self.submit({"wait_seconds": wait}) or {}
+            status = result.get("status")
+        if status in ("logged_in", "already_logged_in"):
+            return True, None
+        if status in ("code_sent", "no_relayed_code"):
+            return False, "קוד ה-SMS לא הגיע תוך 3 דקות"
+        return False, sh._clip(result.get("text") or status or "שגיאה לא ידועה", 80)
+
+
+class NoLogin:
+    """For offline/fixture runs: never logs in."""
+
+    calls = 0
+
+    def attempt(self):
+        self.calls += 1
+        return False, "אין התחברות בריצה לא מקוונת"
+
+
 def _cart_deals(cart):
     out = []
     for line in cart.get("lines") or []:
@@ -396,7 +444,7 @@ def _cart_deals(cart):
 
 
 def run(list_entries=(), regulars=(), staples=(), defaults=None, kashrut_level=None, site=None,
-        categories=None, max_pages=None, previous_ids=(), today=None, log=None, personal=None):
+        categories=None, max_pages=None, previous_ids=(), today=None, log=None, personal=None, login=None):
     """One deals scan. Default (standalone): scan the category pages only and rank the best-value deals —
     no grocery list, no cart, no regulars. personal=True (SUPER_HIST_DEALS_PERSONAL=1): also read the cart and
     match against the cached list/regulars/staples. Returns a JSON-able dict."""
@@ -413,6 +461,31 @@ def run(list_entries=(), regulars=(), staples=(), defaults=None, kashrut_level=N
     warnings, found, notable_pool = [], {}, {}
     stopped, requests, pages_read = None, 0, {}
     cart_ids = set()
+    login = login or AutoLogin()
+    logged = {"tried": False, "ok": False}
+
+    def call(fn, *args):
+        """A site read; logged out -> ONE automatic login, then the same read once more."""
+        try:
+            return fn(*args)
+        except sh.LoginRequired:
+            if logged["tried"]:
+                raise _LoginFailed("החיבור נפל שוב אחרי ההתחברות") from None
+            logged["tried"] = True
+            log("logged out -> one automatic login")
+            ok, reason = login.attempt()
+            if not ok:
+                raise _LoginFailed(reason) from None
+            logged["ok"] = True
+        try:
+            return fn(*args)
+        except sh.LoginRequired:
+            raise _LoginFailed("עדיין לא מחובר אחרי ההתחברות") from None
+
+    def failed(reason):
+        res = {"status": "login_failed", "error": sh._clip(" ".join(str(reason).split()), 100),
+               "deals": [], "notable": [], "auto_login": logged["tried"]}
+        return _finish(res, requests, pages_read, interests, "login_failed", warnings, today)
 
     def keep(product, tier, interest_name=None, produce=False):
         d = deal_of(product, today)
@@ -446,20 +519,19 @@ def run(list_entries=(), regulars=(), staples=(), defaults=None, kashrut_level=N
                 return
         keep(p, TIER_NOTABLE)
 
-    # 1. personal mode only: the cart (2-3 requests; also tells us whether the session is alive — never logs in)
+    # 1. personal mode only: the cart (2-3 requests; logged out -> the one automatic login)
     try:
         if not personal:
             raise _SkipCart
-        cart = site.cart()
+        cart = call(site.cart)
         requests += 2
         cart_ids.update(ln["product_id"] for ln in cart.get("lines") or [])
         for p in _cart_deals(cart):
             keep(p, TIER_CART, p["name"])
     except _SkipCart:
         pass
-    except sh.LoginRequired:
-        return _finish({"status": "login_required", "deals": [], "notable": []},
-                       requests, pages_read, interests, "login_required", warnings, today)
+    except _LoginFailed as exc:
+        return failed(exc)
     except sh.SiteError as exc:
         return _finish({"status": _err_status(exc), "error": str(exc)[:200], "deals": [], "notable": []},
                        requests, pages_read, interests, _err_status(exc), warnings, today)
@@ -469,11 +541,10 @@ def run(list_entries=(), regulars=(), staples=(), defaults=None, kashrut_level=N
         page = 1
         while page <= max_pages and stopped is None:
             try:
-                products, has_next = site.category_page(key, page)
+                products, has_next = call(site.category_page, key, page)
                 requests += 1
-            except sh.LoginRequired:
-                return _finish({"status": "login_required", "deals": [], "notable": []},
-                               requests, pages_read, interests, "login_required", warnings, today)
+            except _LoginFailed as exc:
+                return failed(exc)
             except sh.SiteChanged as exc:
                 requests += 1
                 warnings.append(f"{CATEGORY_HE.get(key, key)}: {exc}")
@@ -498,6 +569,7 @@ def run(list_entries=(), regulars=(), staples=(), defaults=None, kashrut_level=N
         best = sorted((d for d in notable_pool.values() if d["pct_off"]),
                       key=lambda d: (d["nonfood"], -(d["pct_off"] or 0), d["name"]))
         result = {"status": "partial" if stopped else "ok", "stopped": stopped, "personal": False,
+                  "auto_login": logged["ok"],
                   "deals": best[:TOP_DEALS], "notable": [], "categories": categories}
         return _finish(result, requests, pages_read, interests, None, warnings, today)
     mine = sorted(found.values(), key=lambda d: (d["tier"], d["kashrut_flag"] is not None, -(d["pct_off"] or 0),
@@ -505,7 +577,8 @@ def run(list_entries=(), regulars=(), staples=(), defaults=None, kashrut_level=N
     notable = [d for d in notable_pool.values() if d["product_id"] not in found
                and (d["pct_off"] or 0) >= NOTABLE_MIN_PCT]
     notable = sorted(notable, key=lambda d: (d["kashrut_flag"] is not None, -(d["pct_off"] or 0), d["name"]))
-    result = {"status": "partial" if stopped else "ok", "stopped": stopped, "personal": True, "deals": mine,
+    result = {"status": "partial" if stopped else "ok", "stopped": stopped, "personal": True,
+              "auto_login": logged["ok"], "deals": mine,
               "notable": notable[:NOTABLE_MAX], "categories": categories}
     return _finish(result, requests, pages_read, interests, None, warnings, today)
 
@@ -515,6 +588,7 @@ def _err_status(exc):
 
 
 def _finish(result, requests, pages_read, interests, error_status, warnings, today):
+    result.setdefault("auto_login", False)
     result.update(requests=requests, pages=dict(pages_read), interests=[i.as_dict() for i in interests],
                   warnings=warnings, date=today.isoformat(), cart_url=sh.CART_URL)
     result["message"] = render(result, error_status)
@@ -549,13 +623,14 @@ def _deal_line(i, d):
     return f"{head}\n   {meta}{weighted}{flag}\n   {d.get('url') or ''}".rstrip()
 
 
-LOGIN_LINE = "🏷️ מבצעים בסופר החברתי: החיבור לאתר פג ולא בדקתי. לשלוח קוד SMS להתחברות?"
+def login_failed_line(reason):
+    return f"🏷️ מבצעים בסופר החברתי: לא הצלחתי להתחבר אוטומטית ({reason}); עצרתי."
 
 
 def render(result, error_status=None):
     date = dt.date.fromisoformat(result["date"]).strftime("%d.%m")
-    if error_status == "login_required":
-        return LOGIN_LINE
+    if error_status == "login_failed":
+        return login_failed_line(result.get("error") or "שגיאה")
     if error_status:
         return f"🏷️ מבצעים בסופר החברתי: לא הצלחתי לבדוק ({result.get('error') or error_status}). לא ניסיתי שוב."
     out = [f"🏷️ מבצעים בסופר החברתי — {date}"]
@@ -580,6 +655,8 @@ def render(result, error_status=None):
             out += ["", f"🔍 {flagged} מבצעים בלי כשרות מהדרין/בד״ץ בשם המוצר — לבדוק בדף המוצר לפני קנייה."]
     read = ", ".join(f"{CATEGORY_HE.get(k, k)} ({n} עמ׳)" for k, n in (result.get("pages") or {}).items())
     out += ["", f"נסרקו: {read or 'אף עמוד'} · כ-{result['requests']} פניות לאתר."]
+    if result.get("auto_login"):
+        out.append("🔑 החיבור לאתר פג — התחברתי אוטומטית עם קוד SMS.")
     if result.get("stopped"):
         out.append(f"⚠️ עצרתי באמצע: {result['warnings'][-1] if result['warnings'] else result['stopped']}")
     elif result.get("warnings"):
@@ -781,7 +858,7 @@ def main(argv=None):
       Against the running Command Center (all site traffic stays in that one process, so its throttle and
       24 h stop apply; token from COMMAND_CENTER_TOKEN):
         python -m command_center.super_hist_deals --api http://command-center:8080/v1 [--max-pages 5] [--json]
-    Prints the Hebrew message (or the JSON result). Exit 0 ok/partial, 2 login_required, 3 blocked/error."""
+    Prints the Hebrew message (or the JSON result). Exit 0 ok/partial, 2 login_failed, 3 blocked/error."""
     import argparse
     ap = argparse.ArgumentParser(prog="super_hist_deals")
     src = ap.add_mutually_exclusive_group(required=True)
@@ -808,7 +885,7 @@ def main(argv=None):
                     break
     print(json.dumps(result, ensure_ascii=False, indent=1) if a.json else (result.get("message") or result.get("text")))
     st = result.get("status")
-    return 0 if st in ("ok", "partial") else 2 if st == "login_required" else 3
+    return 0 if st in ("ok", "partial") else 2 if st == "login_failed" else 3
 
 
 class FixtureSite:
@@ -839,6 +916,7 @@ def run_fixtures(root, max_pages=None, today=None, categories=None, personal=Fal
                spec.get("staples", []), defaults, spec.get("kashrut"), site=FixtureSite(root),
                categories=categories if categories is not None else spec.get("categories", ["promo"]),
                max_pages=max_pages, previous_ids=set(spec.get("previous_ids", [])), personal=personal,
+               login=NoLogin(),
                today=dt.date.fromisoformat(spec["today"]) if spec.get("today") else today)
 
 
