@@ -1,0 +1,13 @@
+{
+  "name": "hapoalim-report-sync",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "check": "CHECK_ONLY=true node sync.mjs",
+    "sync": "node sync.mjs"
+  },
+  "dependencies": {
+    "israeli-bank-scrapers": "6.9.0"
+  }
+}
