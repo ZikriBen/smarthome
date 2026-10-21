@@ -972,51 +972,37 @@ function renderGrid(
         const variantButtons =
             variants
             .map(
-                variant => `
-                    <div class="variant-pair">
-                    <button
-                        class="quality-button"
-                        data-message-id="${variant.message_id}"
-                        data-quality="${escapeHtml(
-                            variant.quality
-                            || "וידאו"
-                        )}"
-                        data-size="${escapeHtml(
-                            formatSize(
-                                variant.size
-                            )
-                        )}"
-                    >
-
-                        <span class="quality-label">
-                            ${escapeHtml(
-                                variant.quality
-                                || "וידאו"
-                            )}
-                        </span>
-
-                        <small>
-                            ${formatSize(
-                                variant.size
-                            )}
-                        </small>
-
-                    </button>
-
-                    <button
-                        class="watch-button"
-                        data-watch-id="${variant.message_id}"
-                        data-watch-title="${escapeHtml(
-                            item.title || item.english_title || ""
-                        )}"
-                        data-watch-quality="${escapeHtml(
-                            variant.quality || ""
-                        )}"
-                        title="צפה עכשיו ב-Jellyfin"
-                        aria-label="צפה עכשיו"
-                    >▶</button>
+                variant => {
+                    const quality = escapeHtml(variant.quality || "וידאו");
+                    const size = escapeHtml(formatSize(variant.size));
+                    return `
+                    <div class="variant-row">
+                        <div class="variant-meta">
+                            <span class="variant-quality">${quality}</span>
+                            <span class="variant-size">${size}</span>
+                        </div>
+                        <div class="variant-actions">
+                            <button
+                                class="variant-action watch-button"
+                                type="button"
+                                data-watch-id="${variant.message_id}"
+                                data-watch-title="${escapeHtml(item.title || item.english_title || "")}"
+                                data-watch-quality="${quality}"
+                                aria-label="צפייה ישירה ${quality}"
+                            >צפייה ישירה</button>
+                            <button
+                                class="variant-action quality-button"
+                                type="button"
+                                data-mode="save"
+                                data-message-id="${variant.message_id}"
+                                data-quality="${quality}"
+                                data-size="${size}"
+                                aria-label="שמירה ${quality} (${size})"
+                            >שמירה</button>
+                        </div>
                     </div>
-                `
+                `;
+                }
             )
             .join("");
 
@@ -1238,6 +1224,13 @@ function resetButtonDisplay(
     button.disabled =
         false;
 
+    if (button.dataset.mode === "save") {
+        // card row: quality + size are shown as text next to the buttons
+        button.textContent = "שמירה";
+        button.removeAttribute("title");
+        return;
+    }
+
     button.innerHTML = `
 
         <span class="quality-label">
@@ -1316,6 +1309,11 @@ function applyJobState(
         button.title =
             job.last_error
             || "Download failed";
+    }
+
+    if (button.dataset.mode === "save") {
+        button.textContent = statusText(state);
+        return;
     }
 
     button.innerHTML = `
@@ -1561,7 +1559,7 @@ async function watchNow(variantId, button, title, quality) {
     const session = ++watchSession;
     const live = () => session === watchSession;
     const buttons = document.querySelectorAll(`.watch-button[data-watch-id="${variantId}"]`);
-    buttons.forEach(b => { b.disabled = true; b.textContent = "⏳"; });
+    buttons.forEach(b => { b.disabled = true; b.textContent = "מכינה…"; });
     const heading = [title, quality].filter(Boolean).join(" · ") || "צפייה ישירה";
     const started = Date.now();
     let libraryUrl = null, readyUrl = null, subs = null, phase = "queued", postDone = null;
@@ -1638,7 +1636,7 @@ async function watchNow(variantId, button, title, quality) {
         fail("error");
     } finally {
         watchBusy.delete(variantId);
-        buttons.forEach(b => { b.disabled = false; b.textContent = "▶"; });
+        buttons.forEach(b => { b.disabled = false; b.textContent = "צפייה ישירה"; });
     }
 }
 
@@ -1662,7 +1660,9 @@ async function selectDownload(
         "download-active"
     );
 
-    button.innerHTML = `
+    if (button.dataset.mode === "save") {
+        button.textContent = "שולח…";
+    } else button.innerHTML = `
         <span>
             שולח…
         </span>

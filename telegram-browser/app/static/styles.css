@@ -1865,45 +1865,88 @@ dialog::backdrop {
 }
 
 
-/* tg-stream: each quality is a split button [quality · size | ▶ watch].
- * Pairs wrap onto their own row when the card is narrow (2-column grid at
- * 360px), instead of squeezing several qualities + ▶ into one line. */
+/* tg-stream: one row per variant: quality + size as text, then two text
+ * buttons, "צפייה ישירה" (Watch now popup) and "שמירה" (/api/download).
+ * The buttons sit side by side when the card is wide enough and stack when it
+ * is not (2-column grid at 360px = ~170px cards). Tap targets >= 44px. */
 .variant-buttons {
-    flex-wrap: wrap;
-}
-
-.variant-pair {
-    flex: 1 1 128px;
-    min-width: 0;
-    display: flex;
+    flex-direction: column;
     align-items: stretch;
+    gap: 10px;
 }
 
-.variant-pair .quality-button {
-    border-start-end-radius: 0;
-    border-end-end-radius: 0;
+.variant-row {
+    display: grid;
+    gap: 6px;
+    padding-top: 8px;
+    border-top: 1px solid var(--border, #303641);
 }
 
-.watch-button {
-    flex: 0 0 44px;
-    min-width: 44px;
-    min-height: 48px;
-    border: 1px solid var(--border, #303641);
-    border-inline-start: 0;
-    border-start-end-radius: 12px;
-    border-end-end-radius: 12px;
-    background: var(--surface-3, #282d38);
-    color: #fff;
-    cursor: pointer;
+.variant-row:first-child {
+    padding-top: 0;
+    border-top: 0;
+}
+
+.variant-meta {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 8px;
+    min-width: 0;
+}
+
+.variant-quality {
+    font-weight: 700;
     font-size: 15px;
-    transition: background 0.15s ease;
 }
 
-.watch-button:hover:not(:disabled) {
+.variant-size {
+    font-size: 13px;
+    color: var(--muted, #9ca3af);
+    direction: ltr;
+    unicode-bidi: isolate;
+    white-space: nowrap;
+}
+
+.variant-actions {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(92px, 1fr));
+    gap: 6px;
+}
+
+.variant-action {
+    min-height: 44px;
+    min-width: 0;
+    padding: 8px 10px;
+    border-radius: 10px;
+    font-size: 14px;
+    font-weight: 600;
+    line-height: 1.2;
+    white-space: nowrap;
+    cursor: pointer;
+}
+
+.variant-action.watch-button {
+    border: 1px solid var(--blue, #2563eb);
+    background: transparent;
+    color: #fff;
+}
+
+.variant-action.watch-button:hover:not(:disabled) {
     background: var(--blue, #2563eb);
 }
 
-.watch-button:disabled {
+.variant-action.quality-button {
+    flex: none;
+    display: block;
+    border: 1px solid transparent;
+}
+
+.variant-action:disabled {
+    cursor: default;
+}
+
+.variant-action.watch-button:disabled {
     opacity: 0.6;
     cursor: progress;
 }
