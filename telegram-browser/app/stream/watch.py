@@ -243,6 +243,15 @@ async def refresh_and_find(
         await sleep(poll_interval)
 
 
+def jellyfin_api_key(env=None) -> str | None:
+    """JELLYFIN_API_KEY_FILE (if set and readable) wins, else JELLYFIN_API_KEY.
+    The value is only ever used in the Authorization header, never logged."""
+    import os as _os
+
+    env = _os.environ if env is None else env
+    return read_secret_file(env.get("JELLYFIN_API_KEY_FILE", "")) or (env.get("JELLYFIN_API_KEY", "").strip() or None)
+
+
 def read_secret_file(path: str | None) -> str | None:
     if not path:
         return None

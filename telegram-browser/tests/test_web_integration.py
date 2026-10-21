@@ -47,6 +47,7 @@ def configured(tmp_path, monkeypatch):
     monkeypatch.setattr(web, "TG_STREAM_PUBLIC_BASE", "http://<LAN_IP>:8789")
     monkeypatch.setattr(web, "TG_STREAMS_DIR", tmp_path / "streams")
     monkeypatch.setattr(web, "JELLYFIN_API_KEY_FILE", "")
+    monkeypatch.delenv("JELLYFIN_API_KEY", raising=False)
     monkeypatch.setattr(web, "stream_service", None)
     rows = {
         555: {"message_id": 555, "details_message_id": 1, "quality": "720p", "filename": "x.mp4",
@@ -147,3 +148,17 @@ def test_embedded_server_mid_stream_abort_closes_connection():
 
     asyncio.run(scenario())
     assert svc.active == {}
+
+
+def test_watch_uses_env_key_by_reference(main_client, configured, monkeypatch):
+    from tests.test_watch import FakeJellyfin
+
+    srv = FakeJellyfin(appear_after=1, item_path="/media/telegram-streams/Film (2001)/Film (2001) - 720p.strm")
+    monkeypatch.setenv("JELLYFIN_API_KEY", "env-dummy-key")
+    monkeypatch.setattr(web, "JELLYFIN_URL", srv.url)
+    try:
+        data = main_client.post("/api/watch/555").json()
+    finally:
+        srv.close()
+    assert data["status"] == "ready"
+    assert srv.requests[0][2] == 'MediaBrowser Token="env-dummy-key"'

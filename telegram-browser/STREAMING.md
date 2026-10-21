@@ -27,7 +27,7 @@ Design: `/workspace/tg-stream-design/DESIGN.md` (box). Lulu catalog only; Search
 | `TG_STREAM_CACHE_MB` / `TG_STREAM_PREFETCH_MB` | 128 / 2 | |
 | `TG_STREAMS_DIR` | /streams | |
 | `JELLYFIN_URL` / `JELLYFIN_PUBLIC_URL` | http://<LAN_IP>:8096 / = URL | |
-| `JELLYFIN_API_KEY_FILE` | — | missing → files written, refresh skipped |
+| `JELLYFIN_API_KEY_FILE` / `JELLYFIN_API_KEY` | — | file wins if readable, else env (wired by reference to an existing key, see deploy README); none → files written, refresh skipped |
 | `JELLYFIN_STREAMS_PATH` | /media/telegram-streams | path as Jellyfin sees the streams dir |
 | `JELLYFIN_STREAMS_LIBRARY_ID` | — | optional, enables the library-scoped fallback refresh |
 | `POSTER_CACHE_DIR` | /data/posters | now overridable (tests) |

@@ -8,7 +8,7 @@ are ever touched. Run inside the container (files are owned by its user):
     docker exec telegram-browser python -m app.stream.cleanup --variant 12345 --apply
 
 No Telegram client is created. Jellyfin is notified via /Library/Media/Updated
-(Deleted) if JELLYFIN_API_KEY_FILE is readable, else that step is skipped.
+(Deleted) if JELLYFIN_API_KEY_FILE or JELLYFIN_API_KEY is set, else that step is skipped.
 """
 
 import argparse
@@ -65,7 +65,7 @@ def apply_plan(items, variant: int | None) -> None:
 
 
 async def notify(items, root: Path) -> str:
-    key = watch.read_secret_file(os.getenv("JELLYFIN_API_KEY_FILE", ""))
+    key = watch.jellyfin_api_key()
     if not key:
         return "jellyfin refresh skipped (no API key)"
     jf = watch.JellyfinClient(os.getenv("JELLYFIN_URL", "http://<LAN_IP>:8096"), key)

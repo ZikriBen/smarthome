@@ -1472,7 +1472,7 @@ async def watch_now(
         # Lulu has no delivery quota (DESIGN 3b), so warming is free of slots.
         _spawn(stream_service.prefetch_edges(int(variant_id), int(TG_STREAM_PREFETCH_MB * 1024 * 1024)))
     result = {"variant_id": int(variant_id), "folder": entry.name, "written": changed}
-    api_key = stream_watch.read_secret_file(JELLYFIN_API_KEY_FILE)
+    api_key = stream_watch.jellyfin_api_key({"JELLYFIN_API_KEY_FILE": JELLYFIN_API_KEY_FILE, "JELLYFIN_API_KEY": os.getenv("JELLYFIN_API_KEY", "")})
     if not api_key:
         return {**result, "status": "refresh_skipped", "detail": "No Jellyfin API key configured"}
     jf = stream_watch.JellyfinClient(JELLYFIN_URL, api_key)

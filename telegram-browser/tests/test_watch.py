@@ -159,3 +159,12 @@ def test_read_secret_file(tmp_path):
     assert watch.read_secret_file(str(f)) == "abc"
     assert watch.read_secret_file(str(tmp_path / "none")) is None
     assert watch.read_secret_file("") is None
+
+
+def test_jellyfin_api_key_sources(tmp_path):
+    f = tmp_path / "k"
+    f.write_text("from-file\n")
+    assert watch.jellyfin_api_key({"JELLYFIN_API_KEY_FILE": str(f), "JELLYFIN_API_KEY": "from-env"}) == "from-file"
+    assert watch.jellyfin_api_key({"JELLYFIN_API_KEY_FILE": str(tmp_path / "missing"), "JELLYFIN_API_KEY": " from-env "}) == "from-env"
+    assert watch.jellyfin_api_key({"JELLYFIN_API_KEY": ""}) is None
+    assert watch.jellyfin_api_key({}) is None
