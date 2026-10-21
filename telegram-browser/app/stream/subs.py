@@ -708,6 +708,12 @@ class SubtitleJobs:
         names = (data.get("subs") or {}).get(str(int(variant_id)))
         if names is None:
             return []
+        # Only the current scheme counts as done: exactly one Hebrew sidecar
+        # flagged .default/.forced. Sidecars written by the first PoC build
+        # (<stem>.heb.srt + <stem>.eng.srt, possibly truncated by the shared
+        # in-flight cancel bug) are redone; record_sidecars then deletes them.
+        if len(names) != 1 or not names[0].endswith((".heb.default.srt", ".heb.forced.srt")):
+            return []
         return names if all((folder / n).is_file() for n in names) else []
 
     def schedule(self, variant_id: int, row: dict, folder: Path, strm_name: str, matroska: bool) -> dict:

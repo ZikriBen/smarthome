@@ -399,3 +399,30 @@ CHUNK = 4096
 
 async def _zero():
     return b"\x00" * CHUNK
+
+
+def test_first_build_sidecars_are_redone_and_removed(tmp_path):
+    """NUC ef7acdd wrote <stem>.heb.srt + <stem>.eng.srt (34810's was truncated by
+    the shared-cancel bug). Those must not count as done: redo with the current
+    scheme and delete the old files."""
+    _, e = _entry(tmp_path)
+    stem = e.strm.name[:-len(".strm")]
+    old = [f"{stem}.eng.srt", f"{stem}.heb.srt"]
+    for n in old:
+        (e.folder / n).write_text("1\n00:00:00,000 --> 00:00:01,000\ntruncated\n")
+    marker = json.loads((e.folder / watch.MARKER).read_text())
+    marker["subs"] = {"555": old}
+    (e.folder / watch.MARKER).write_text(json.dumps(marker))
+
+    async def scenario():
+        jobs = subs.SubtitleJobs(FakeSvc(make_mkv()), marker_name=watch.MARKER, max_bytes=1 << 30,
+                                 max_seconds=60, log=lambda m: None)
+        assert jobs.existing(e.folder, 555) == []
+        assert jobs.schedule(555, {"size": 1000}, e.folder, e.strm.name, True)["status"] == "queued"
+        await asyncio.gather(*jobs.tasks.values())
+        return jobs
+
+    jobs = asyncio.run(scenario())
+    assert jobs.public(555)["state"] == "done"
+    assert sorted(p.name for p in e.folder.glob("*.srt")) == [f"{stem}.heb.default.srt"]
+    assert json.loads((e.folder / watch.MARKER).read_text())["subs"] == {"555": [f"{stem}.heb.default.srt"]}
