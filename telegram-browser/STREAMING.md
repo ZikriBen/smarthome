@@ -15,7 +15,13 @@ Design: `/workspace/tg-stream-design/DESIGN.md` (box). Lulu catalog only; Search
   3. After 18 s still nothing: one `POST /Library/Refresh`. Full refreshes are guarded by a 15 min cooldown (process-wide).
   The whole thing is bounded by `JELLYFIN_POLL_TIMEOUT_S` (45 s) **including request time** (each call ≤ 8 s). The response always has `status` + `message`
   (+ `steps`, `elapsed_s`, `subtitles`): `ready` (+ `url` …/web/#/details?id=…), `pending`, `refresh_skipped` (no key), `refresh_failed` (unreachable), `auth_failed` (401/403).
-- `GET /api/watch/{variant_id}`: one cheap lookup (no refresh) → `ready`+`url` / `pending` / `not_prepared`. The UI polls it for ~60 s after a `pending`.
+- `GET /api/watch/{variant_id}`: one cheap lookup (no refresh) → `ready`+`url` / `pending` (+ `in_progress`, `phase`, `steps`, `elapsed_s` while the POST
+  job runs) / `not_prepared`, always with `library_url` and `subtitles` = `{state: queued|running|done|none|failed, hebrew, bytes, total, progress, eta_s, files}`.
+  A second POST for the same variant joins the in-flight job (no second refresh). Every GET marks the subtitle job "boosted" for 15 s (popup open).
+- UI (index.html): no new tab. An in-page popup with two live steps: (1) "מכינה את הסרט ב-Jellyfin" (phase text) and (2) "מכינה כתוביות בעברית"
+  (% bar = bytes read / bytes planned, ETA). "לצפות עכשיו" appears once step 1 is done; when both are done (or the file has no Hebrew track:
+  "אין כתוביות בעברית בקובץ הזה") the SAME tab navigates to Jellyfin. Errors: Hebrew text + "נסה שוב" + a link to the Telegram Streams library.
+  Button disabled while pending (and the server joins duplicates). Cards: each quality is a split button `[quality · size | ▶]`.
 - Jellyfin auth everywhere: `Authorization: MediaBrowser Token="<key>"` only (12.1 answers 401 to the legacy Emby token header); the key is never in a URL.
   `tests/test_jellyfin_auth_audit.py` enforces it for telegram-browser and telegram-downloader.
 - `GET/HEAD /s/{variant_id}/{sig}` is served ONLY by a second listener (`TG_STREAM_PORT`, 8789) in the same process, so it uses the app's live Telethon client.
@@ -28,12 +34,29 @@ Design: `/workspace/tg-stream-design/DESIGN.md` (box). Lulu catalog only; Search
   - Priority lane: background readers (subtitle extraction) fetch only while no foreground fetch is in flight, one chunk at a time, never into the LRU cache.
   - The file reference is refreshed once. A deleted message gives 410. FloodWait of 10 s or less is waited once; longer gives 503 + `Retry-After` and new streams pause until it expires. Errors mid-body close the connection.
   - HMAC-SHA256 per-variant signature (128-bit, constant-time compare); the signature is stripped from access logs.
-- Subtitle sidecars (`app/stream/subs.py`, MKV only, `TG_SUBS_ENABLED=1`): pure-Python Matroska reader; text tracks (`S_TEXT/UTF8`, zlib / header-stripping
-  decoded; PGS/ASS ignored) → `<strm stem>.<lang>[.forced].srt` (one per language+forced, Hebrew first, max 3), written atomically, recorded in the marker
-  (`subs`), then `POST /Items/{item}/Refresh` (non-recursive) so Jellyfin lists them; Jellyfin's default-subtitle pick puts external tracks first.
-  Cost: subtitle blocks are interleaved, so the whole file is read once (~size / 6-8 MB/s ≈ 2.5-3 min for 1.1 GB when idle; slower while someone plays).
-  Non-cluster data (attachments, cues) is skipped without download; a file with no text track stops after the header (1-2 chunks).
-  One job at a time, cap `TG_SUBS_MAX_MB` (4096) and `TG_SUBS_MAX_MINUTES` (30). Status in the watch response and `/health` (`tg_stream.subs`).
+- Shared in-flight chunk fetches (fix for the NUC truncated-srt bug, variant 34810): every Telegram chunk fetch runs in its own task with a waiter
+  refcount. A reader that is cancelled (browser seek, Jellyfin closing a range) only leaves; the fetch is cancelled only when its last waiter leaves.
+  A genuine mid-body failure is retried once (0.5 s), then the response is **aborted** (connection drop, never a clean short body; a body shorter than
+  `Content-Length` is also aborted). Note: ffmpeg 7.1 still exits 0 on an aborted HTTP body, which is why the refcount fix matters.
+  `/health` counters: `fetches_abandoned`, `mid_body_retries`, `aborted_responses`.
+- Hebrew subtitle sidecar (`app/stream/subs.py`, MKV only, `TG_SUBS_ENABLED=1`), pure-Python Matroska reader, no external subtitle site/API:
+  1. Header first (stops at the first Cluster). No Hebrew text track → state `none`, nothing written.
+  2. Else a placeholder `<strm stem>.heb.default.srt` (`.heb.forced.srt` if the only Hebrew track is forced) is written **before** the Jellyfin refresh
+     (`/api/watch` waits up to `TG_SUBS_HEADER_WAIT_S`, 6 s). Reason: Jellyfin 12.1 re-probes a `.strm` on every PlaybackInfo using a process-wide directory
+     cache that only drops after 5 min idle; a sidecar added after the first listing is invisible, and is even removed from the item, until then.
+  3. Hebrew blocks only. If the Cues index has `CueRelativePosition` for the track (ffmpeg and mkvmerge write it), only the chunks holding those blocks are read
+     (sparse); else the whole file once. The final file replaces the placeholder atomically (same name: Jellyfin reads the file per request, no refresh needed),
+     then `POST /Items/{item}/Refresh`.
+  4. Exactly ONE sidecar, Hebrew, `.default` flag. Verified on 12.1 (source + live instance): `.default`/`.forced` in the filename set IsDefault/IsForced,
+     and the default-subtitle pick orders external first, then default, then preferred language. With `.heb.default.srt` Hebrew wins for SubtitleMode
+     Default/Always/Smart, with or without a language preference. Non-Hebrew sidecars are not written (an `.eng.srt` won with no preference).
+     Embedded tracks stay selectable. Sidecars from the first PoC build (`.heb.srt` + `.eng.srt`) are redone and deleted.
+  Cost: real mkvmerge file 224 MB/10 min, 98 Hebrew cues → 100 of 449 chunks (22%); a 4 GB 2 h 1080p file ≈ ≤1200 of ~7800. Dense low-bitrate files gain little.
+  One job at a time, 6 parallel chunk reads while the popup is open (foreground playback still first), else 1 and only when no foreground fetch is in flight.
+  Cap `TG_SUBS_MAX_MB` (4096) and `TG_SUBS_MAX_MINUTES` (30). Every outcome is logged (`[subs] <vid>: queued/skipped/already done/none/done/failed`, progress every 60 s).
+- Jellyfin's own extraction cache (`/config/data/subtitles/<id[:2]>/<id GUID>/<index>.srt`) is never invalidated for `.strm` items and accepts partial ffmpeg
+  output; a truncated extraction stays. The external sidecar avoids extraction entirely. `tools/subs-audit.sh` (read-only; `ssh ben@<nuc> 'bash -s' < tools/subs-audit.sh`) finds truncated cache files and
+  prints the (approval-gated) `rm -rf` per item.
 - Cleanup: `docker exec telegram-browser python -m app.stream.cleanup --all` is a dry run; add `--apply` to delete, or use `--variant ID` (removes that variant's `.strm` and its `.srt` sidecars).
 
 ## Environment (compose sets the non-secret ones)
@@ -51,11 +74,19 @@ Design: `/workspace/tg-stream-design/DESIGN.md` (box). Lulu catalog only; Search
 | `JELLYFIN_STREAMS_LIBRARY_ID` | — | optional; else discovered by path via `/Library/VirtualFolders` (cached) |
 | `JELLYFIN_POLL_TIMEOUT_S` / `JELLYFIN_FALLBACK_AFTER_S` | 45 / 6 | wall budget incl. requests / when the library refresh kicks in |
 | `TG_SUBS_ENABLED` / `TG_SUBS_MAX_MB` / `TG_SUBS_MAX_MINUTES` | 1 / 4096 / 30 | subtitle sidecars |
+| `TG_SUBS_HEADER_WAIT_S` | 6 | how long Watch now waits for the placeholder sidecar before asking Jellyfin to scan |
 | `TG_STREAM_CORS_ORIGINS` | origin of `JELLYFIN_PUBLIC_URL` | comma list of exact origins |
 | `POSTER_CACHE_DIR` | /data/posters | now overridable (tests) |
 
 ## Tests
 `cd telegram-browser && pip install -r requirements.txt -r tests/requirements-dev.txt && PYTHONPATH=.:../shared python -m pytest -q tests`
-(fakes only: no Telegram, no Jellyfin).
+(fakes only: no Telegram, no Jellyfin). E2E with a real MKV + ffmpeg under overlapping range cancels:
+`PYTHONPATH=.:../shared python -m tests.e2e_cancel_ffmpeg file.mkv` (cue count must match a direct extraction). `python -m tests.mkv_layout file.mkv`
+prints the Cues/sparse-read cost.
+
+## Recommended Jellyfin user prefs (not applied by anything here)
+SubtitleLanguagePreference `heb` + SubtitleMode `Always` (or `Default`, which also works with the `.default` sidecar). With RememberSubtitleSelections on,
+a saved per-item choice (including "off") overrides the default; turn it off if Hebrew should always come back. `Smart` turns subtitles off when the
+audio is already Hebrew.
 
 Credits: see `NOTICE` (FileToLink, Apache-2.0, range semantics reviewed; no code copied).
