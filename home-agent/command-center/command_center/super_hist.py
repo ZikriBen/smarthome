@@ -66,9 +66,9 @@ POST_ROUTES = {"account/login/sms", "account/login/sms_validate",
                "checkout/cart/add", "checkout/cart/remove", "checkout/cart/edit"}
 GET_PATHS = {"/", "/login/"}
 POST_PATHS = {SEARCH_PATH}
-# Read-only promotions category pages (deals scan, super_hist_deals). Compared after percent-decoding; only
+# Read-only promotion category pages (deals scan, super_hist_deals). Compared after percent-decoding; only
 # page 1 (no query) or ?page=N. The page markup is NOT verified live yet: the deals scan keeps them off by default.
-PROMO_GET_PATHS = {"/משלמים-פחות-מקבלים-יותר/"}
+PROMO_GET_PATHS = {"/משלמים-פחות-מקבלים-יותר/", "/יוקר-המחייה/"}
 BLOCKED_WORDS = re.compile(
     r"checkout|cart/clear|coupon|voucher|payment|order|confirm|shipping|success|/pay|=pay|register|guest", re.I)
 # Bot-challenge / captcha markers (Cloudflare interstitial, reCAPTCHA/hCaptcha/Turnstile widgets).

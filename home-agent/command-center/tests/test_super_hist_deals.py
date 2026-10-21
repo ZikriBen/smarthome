@@ -87,26 +87,29 @@ class DealOf(unittest.TestCase):
 
 
 class Category(unittest.TestCase):
-    def test_assumed_markup(self):
-        products = deals.parse_category((FX / "promo.html").read_text())
+    def test_assumed_markup_and_pagination(self):
+        products, has_next = deals.parse_category_page((FX / "promo-p1.html").read_text(), 1)
         got = by_id(products)
-        self.assertEqual(set(got), {"910901", "910902", "910903"})
-        self.assertEqual((got["910901"]["price"], got["910901"]["shelf_price"], got["910901"]["promo"]),
-                         (8.9, 9.9, "3 ב-20"))
-        self.assertEqual(got["910902"]["name"], 'אורז פרסי 1 ק"ג')
-        self.assertTrue(got["910902"]["url"].endswith("product_id=910902"))
+        self.assertTrue(has_next)
+        self.assertEqual((got["910101"]["price"], got["910101"]["shelf_price"]), (6.2, 7.1))
+        self.assertEqual(got["910104"]["promo"], "2 ב-9")
+        self.assertEqual(got["910104"]["price"], 6.5)
+        self.assertTrue(got["910301"]["url"].endswith("product_id=910301"))
+        _p2, next2 = deals.parse_category_page((FX / "promo-p2.html").read_text(), 2)
+        self.assertFalse(next2)                                          # no ?page=3 link
+        _p, next_col = deals.parse_category_page((FX / "cost_of_living-p1.html").read_text(), 1)
+        self.assertFalse(next_col)
 
     def test_unknown_markup_is_site_changed(self):
         with self.assertRaises(sh.SiteChanged):
-            deals.parse_category("<html><body><div class='other'>אין כאן מוצרים</div></body></html>")
+            deals.parse_category_page("<html><body><div class='other'>אין כאן מוצרים</div></body></html>", 1)
+        self.assertEqual(deals.parse_category_page("<html></html>", 2), ([], False))   # past the last page
 
 
 class FakeOps:
-    """Site ops over the fixtures with switchable failures."""
-
-    def __init__(self, cart_exc=None, search_exc_at=None, search_exc=None, promo_exc=None):
+    def __init__(self, cart_exc=None, page_exc=None, page_exc_at=None):
         self.inner = deals.FixtureSite(FX)
-        self.cart_exc, self.search_exc_at, self.search_exc, self.promo_exc = cart_exc, search_exc_at, search_exc, promo_exc
+        self.cart_exc, self.page_exc, self.page_exc_at = cart_exc, page_exc, page_exc_at
         self.calls = []
 
     def cart(self):
@@ -115,17 +118,11 @@ class FakeOps:
             raise self.cart_exc
         return self.inner.cart()
 
-    def search(self, term):
-        self.calls.append(("search", term))
-        if self.search_exc_at is not None and len([c for c in self.calls if c != "cart"]) > self.search_exc_at:
-            raise self.search_exc
-        return self.inner.search(term)
-
-    def promo_page(self):
-        self.calls.append("promo")
-        if self.promo_exc:
-            raise self.promo_exc
-        return self.inner.promo_page()
+    def category_page(self, key, page):
+        self.calls.append((key, page))
+        if self.page_exc and (self.page_exc_at is None or self.page_exc_at == (key, page)):
+            raise self.page_exc
+        return self.inner.category_page(key, page)
 
 
 def scenario_run(site=None, **kw):
@@ -134,58 +131,59 @@ def scenario_run(site=None, **kw):
     d = load_defaults(str((FX / spec["defaults"]).resolve()), user_path=str(FX / "none.yaml"))
     args = dict(list_entries=[{"item": t} for t in spec["list"]], regulars=spec["regulars"],
                 staples=spec["staples"], defaults=d, kashrut_level=spec["kashrut"], site=site or FakeOps(),
-                previous_ids=set(spec["previous_ids"]), today=TODAY)
+                categories=["promo"], previous_ids=set(spec["previous_ids"]), today=TODAY)
     args.update(kw)
     return deals.run(**args)
 
 
-class Ranking(unittest.TestCase):
-    def test_interest_order_and_nonfood_skipped(self):
+class Standalone(unittest.TestCase):
+    """Default: categories only — no cart, no list, no regulars; best value first."""
+
+    def test_no_cart_no_list(self):
+        ops = FakeOps()
+        r = scenario_run(site=ops)
+        self.assertEqual(ops.calls, [("promo", 1), ("promo", 2)])          # follows the next link, no cart
+        self.assertFalse(r["personal"])
+        self.assertEqual(r["interests"], [])
+        self.assertEqual(r["notable"], [])
+        self.assertEqual(r["requests"], 2)
+
+    def test_ranking_food_first_then_pct(self):
         r = scenario_run()
-        terms = [i["term"] for i in r["interests"]]
-        self.assertEqual(terms, ["חלב", "ביצים", "קפה טורקי", "פיתות", "ממרח שוקולד", "סוכר לבן", "חומץ"])
-        self.assertNotIn("שמפו", " ".join(terms))
+        ds = r["deals"]
+        food = [d for d in ds if not d["nonfood"]]
+        self.assertEqual(ds[:len(food)], food)                            # non-food after all food
+        pcts = [d["pct_off"] for d in food]
+        self.assertEqual(pcts, sorted(pcts, reverse=True))
+        self.assertEqual(ds[0]["product_id"], "910301")                   # 1+1 = 50%
+        self.assertNotIn("910601", by_id(ds))                             # sugar: not on a deal
+        self.assertTrue(all(d["tier"] == deals.TIER_ALL for d in ds))
 
-    def test_tiers(self):
+    def test_top_cap(self):
+        saved = deals.TOP_DEALS
+        deals.TOP_DEALS = 3
+        try:
+            self.assertEqual(len(scenario_run()["deals"]), 3)
+        finally:
+            deals.TOP_DEALS = saved
+
+    def test_page_cap(self):
+        ops = FakeOps()
+        r = scenario_run(site=ops, max_pages=1)
+        self.assertEqual(ops.calls, [("promo", 1)])
+        self.assertIn("מגבלת עמודים", " ".join(r["warnings"]))
+
+    def test_second_category(self):
+        ops = FakeOps()
+        r = scenario_run(site=ops, categories=["promo", "cost_of_living"])
+        self.assertEqual(ops.calls, [("promo", 1), ("promo", 2), ("cost_of_living", 1)])
+        self.assertIn("910902", by_id(r["deals"]))
+        self.assertEqual(r["pages"], {"promo": 2, "cost_of_living": 1})
+
+    def test_no_kashrut_by_default(self):
         r = scenario_run()
-        mine = r["deals"]
-        tiers = [d["tier"] for d in mine]
-        self.assertEqual(tiers, sorted(tiers))
-        got = by_id(mine)
-        self.assertEqual(got["910101"]["tier"], deals.TIER_LIST)        # on the list (and in the cart)
-        self.assertTrue(got["910101"]["in_cart"])
-        self.assertEqual(got["910801"]["tier"], deals.TIER_CART)        # cart line shown <del>/<ins>
-        self.assertEqual(got["910401"]["tier"], deals.TIER_REGULAR)
-        self.assertEqual(got["910501"]["tier"], deals.TIER_STAPLE)
-        self.assertNotIn("910601", got)                                 # sugar is not on a deal
-        self.assertNotIn("910302", got)                                 # out of stock
-
-    def test_item_rules_keep_lookalikes_out_of_mine(self):
-        r = scenario_run()
-        mine, notable = by_id(r["deals"]), by_id(r["notable"])
-        for pid in ("910103", "910105", "910203", "910702"):            # שוקו / סויה / אטריות ביצים / בלסמי
-            self.assertNotIn(pid, mine)
-        self.assertIn("910203", notable)                                # 43% off food -> notable
-        self.assertIn("910104", notable)                                # cheese 2 ב-9 = 31%
-
-    def test_nonfood_never_listed(self):
-        r = scenario_run(promo_pages=True)
-        names = " ".join(d["name"] for d in r["deals"] + r["notable"])
-        self.assertNotIn("שמפו", names)
-        self.assertNotIn("נוזל כלים", names)
-
-    def test_notable_threshold_and_cap(self):
-        r = scenario_run(promo_pages=True)
-        self.assertTrue(all(d["pct_off"] >= deals.NOTABLE_MIN_PCT for d in r["notable"]))
-        self.assertLessEqual(len(r["notable"]), deals.NOTABLE_MAX)
-
-    def test_kashrut_flags(self):
-        got = by_id(scenario_run()["deals"] + scenario_run()["notable"])
-        self.assertIsNone(got["910101"]["kashrut_flag"])                # בד"ץ in the name
-        self.assertIsNone(got["910104"]["kashrut_flag"])                # מהדרין in the name
-        self.assertEqual(got["910301"]["kashrut_flag"], "כשרות לא ידועה")
-        no_rule = by_id(scenario_run(kashrut_level=None)["deals"])
-        self.assertIsNone(no_rule["910301"]["kashrut_flag"])
+        self.assertTrue(all(d["kashrut_flag"] is None for d in r["deals"]))
+        self.assertNotIn("🔍", r["message"])
 
     def test_new_since_last_report(self):
         got = by_id(scenario_run()["deals"])
@@ -194,68 +192,75 @@ class Ranking(unittest.TestCase):
         self.assertIsNone(by_id(scenario_run(previous_ids=set())["deals"])["910101"]["new"])
 
     def test_message(self):
-        r = scenario_run()
-        msg = r["message"]
+        msg = scenario_run()["message"]
         self.assertTrue(msg.startswith("🏷️ מבצעים בסופר החברתי — 21.10"))
-        self.assertIn("על מה שאתה קונה", msg)
-        self.assertIn("עוד מבצעים בולטים", msg)
-        self.assertIn("₪6.20 במקום ₪7.10", msg)
+        self.assertIn("המבצעים הכי משתלמים", msg)
+        self.assertNotIn("על מה שאתה קונה", msg)
         self.assertIn("1+1 (₪7.45 ליח׳ במקום ₪14.90)", msg)
         self.assertIn("עד 31.10", msg)
-        self.assertIn("https://super-hist.co.il/index.php?route=product/product&product_id=910801", msg)
-        self.assertIn("🔍", msg)
+        self.assertIn("משלמים פחות מקבלים יותר (2 עמ׳)", msg)
         self.assertNotRegex(msg, r"(?<!\d)\d{9}(?!\d)")
 
 
-class Budget(unittest.TestCase):
-    def test_cap_and_not_searched(self):
+class Personal(unittest.TestCase):
+    """Optional (flag): read the cart and match against list / regulars / staples."""
+
+    def test_tiers(self):
         ops = FakeOps()
-        r = scenario_run(site=ops, max_searches=3)
-        self.assertEqual(r["searches"], 3)
-        self.assertEqual(len([c for c in ops.calls if c != "cart"]), 3)
-        self.assertEqual(r["not_searched"], ["פיתות", "ממרח שוקולד", "סוכר", "חומץ"])
-        self.assertIn("לא נבדקו: פיתות", r["message"])
-        self.assertEqual(r["requests"], 2 + 3)
+        r = scenario_run(site=ops, personal=True)
+        self.assertEqual(ops.calls[0], "cart")
+        got = by_id(r["deals"])
+        self.assertEqual(got["910101"]["tier"], deals.TIER_LIST)
+        self.assertTrue(got["910101"]["in_cart"])
+        self.assertEqual(got["910801"]["tier"], deals.TIER_CART)          # cart line <del>/<ins>
+        self.assertEqual(got["910401"]["tier"], deals.TIER_REGULAR)
+        self.assertEqual(got["910501"]["tier"], deals.TIER_STAPLE)
+        for pid in ("910103", "910105", "910203", "910702"):             # lookalikes -> notable, not mine
+            self.assertNotIn(pid, got)
+        notable = r["notable"]
+        self.assertTrue(all(d["pct_off"] >= deals.NOTABLE_MIN_PCT for d in notable))
+        self.assertLessEqual(len(notable), deals.NOTABLE_MAX)
+        self.assertNotIn("נוזל כלים", " ".join(d["name"] for d in r["deals"] + notable))
+        self.assertIn("על מה שאתה קונה", r["message"])
 
-    def test_hard_cap(self):
-        self.assertEqual(deals.Budget(500).max_searches, deals.HARD_MAX_SEARCHES)
-
-    def test_promo_page_off_by_default(self):
-        ops = FakeOps()
-        scenario_run(site=ops)
-        self.assertNotIn("promo", ops.calls)
-
-    def test_plan(self):
-        plan = deals.plan_requests(20, 12)
-        self.assertEqual((plan["searches"], plan["requests"]), (12, 16))   # +1 account re-check after 120 s
-        self.assertGreaterEqual(plan["seconds"], 15 * sh.MIN_INTERVAL)
+    def test_kashrut_flag_only_with_env(self):
+        saved = deals.KASHRUT_ENABLED
+        deals.KASHRUT_ENABLED = True
+        try:
+            got = by_id(scenario_run(personal=True)["deals"])
+            self.assertEqual(got["910301"]["kashrut_flag"], "כשרות לא ידועה")
+            self.assertIsNone(got["910101"]["kashrut_flag"])
+        finally:
+            deals.KASHRUT_ENABLED = saved
 
 
 class Failures(unittest.TestCase):
-    def test_login_required_never_searches(self):
-        ops = FakeOps(cart_exc=sh.LoginRequired("login"))
-        r = scenario_run(site=ops)
+    def test_login_required_is_one_line(self):
+        r = scenario_run(site=FakeOps(page_exc=sh.LoginRequired("login")))
         self.assertEqual(r["status"], "login_required")
-        self.assertEqual(ops.calls, ["cart"])
+        self.assertEqual(r["message"], deals.LOGIN_LINE)
+        self.assertNotIn("\n", r["message"])
         self.assertIn("SMS", r["message"])
 
-    def test_blocked_mid_scan_stops(self):
-        ops = FakeOps(search_exc_at=2, search_exc=sh.SiteBlocked("האתר חסם את הבקשה (HTTP 429)"))
-        r = scenario_run(site=ops)
-        self.assertEqual((r["status"], r["stopped"]), ("partial", "site_blocked"))
-        self.assertEqual(len([c for c in ops.calls if c != "cart"]), 3)   # the failing one, then nothing
-        self.assertIn("עצרתי באמצע", r["message"])
-        self.assertIn("910101", by_id(r["deals"]))                       # what was found is kept
+    def test_personal_login_required_at_cart(self):
+        ops = FakeOps(cart_exc=sh.LoginRequired("login"))
+        r = scenario_run(site=ops, personal=True)
+        self.assertEqual((r["status"], ops.calls), ("login_required", ["cart"]))
 
-    def test_promo_markup_changed_is_a_warning(self):
-        ops = FakeOps(promo_exc=sh.SiteChanged("דף המבצעים באתר לא במבנה הצפוי; דילגתי עליו."))
-        r = scenario_run(site=ops, promo_pages=True)
+    def test_blocked_mid_scan_stops(self):
+        ops = FakeOps(page_exc=sh.SiteBlocked("האתר חסם את הבקשה (HTTP 429)"), page_exc_at=("promo", 2))
+        r = scenario_run(site=ops, categories=["promo", "cost_of_living"])
+        self.assertEqual((r["status"], r["stopped"]), ("partial", "site_blocked"))
+        self.assertEqual(ops.calls, [("promo", 1), ("promo", 2)])          # nothing after the stop
+        self.assertIn("עצרתי באמצע", r["message"])
+        self.assertIn("910101", by_id(r["deals"]))
+
+    def test_markup_changed_is_a_warning(self):
+        ops = FakeOps(page_exc=sh.SiteChanged("דף המבצעים באתר לא במבנה הצפוי; דילגתי עליו."),
+                      page_exc_at=("cost_of_living", 1))
+        r = scenario_run(site=ops, categories=["promo", "cost_of_living"])
         self.assertEqual(r["status"], "ok")
         self.assertIn("דילגתי", " ".join(r["warnings"]))
-
-    def test_cart_blocked(self):
-        r = scenario_run(site=FakeOps(cart_exc=sh.SiteBlocked("x")))
-        self.assertEqual(r["status"], "site_blocked")
 
 
 class Transport(unittest.TestCase):
@@ -272,63 +277,67 @@ class Transport(unittest.TestCase):
         sh._blocked_until[0] = 0.0
         sh._last_request[0] = 0.0
         self.clock = [3_000_000.0]
-        self.slept = []
         sh._now = lambda: self.clock[0]
-        sh._sleep = lambda s: (self.slept.append(s), self.clock.__setitem__(0, self.clock[0] + s))
-        self.calls, self.status_for_search = [], 200
+        sh._sleep = lambda s: self.clock.__setitem__(0, self.clock[0] + s)
+        self.calls, self.page_status, self.account_status = [], 200, 200
         sh._send = self.fake_send
 
     def tearDown(self):
         (sh.DATA_DIR, sh.COOKIES_FILE, sh._now, sh._sleep, sh._send) = self.saved
         sh._jar = None
         sh._blocked_until[0] = 0.0
-        sh._catalog.clear()
+        sh._state.update(checked_at=0.0)
         self.tmp.cleanup()
 
     def fake_send(self, method, url, form=None, ajax=False, follow=True, referer=None):
         sh.check_url(method, url)
         sh._throttle()
         u = urllib.parse.urlsplit(url)
-        self.calls.append((method, sh._route(u.query) or urllib.parse.unquote(u.path), self.clock[0]))
-        if u.path == sh.SEARCH_PATH:
-            term = (form or {}).get("search", "")
-            f = FX / "search" / f"{term}.json"
-            return self.status_for_search, {}, f.read_text() if f.exists() and self.status_for_search == 200 else "{}"
-        if sh._route(u.query) == "checkout/cart":
-            return 200, {}, (FX / "cart.html").read_text()
+        path = urllib.parse.unquote(u.path)
+        self.calls.append((method, sh._route(u.query) or path, u.query, self.clock[0]))
         if sh._route(u.query) == "account/account":
-            return 200, {}, "<html>account</html>"
-        if urllib.parse.unquote(u.path) == deals.PROMO_PATH:
-            return 200, {}, (FX / "promo.html").read_text()
+            return self.account_status, {}, "<html>account</html>"
+        for key, cat_path in deals.CATEGORY_PATHS.items():
+            if path == cat_path:
+                if self.page_status != 200:
+                    return self.page_status, {}, ""
+                page = (u.query.split("=")[1] if u.query else "1")
+                f = FX / f"{key}-p{page}.html"
+                return 200, {}, f.read_text() if f.exists() else "<html></html>"
         return 404, {}, ""
 
     def test_reads_only_and_spacing(self):
-        r = scenario_run(site=deals.SiteOps(), promo_pages=True)
+        r = scenario_run(site=deals.SiteOps(), categories=["promo", "cost_of_living"])
         self.assertEqual(r["status"], "ok")
-        methods = {(m, route) for m, route, _t in self.calls}
-        self.assertTrue(methods <= {("GET", "account/account"), ("GET", "checkout/cart"),
-                                    ("POST", sh.SEARCH_PATH), ("GET", deals.PROMO_PATH)}, methods)
-        times = [t for _m, _r, t in self.calls]
+        routes = [(m, route, q) for m, route, q, _t in self.calls]
+        self.assertEqual(routes, [("GET", "account/account", "route=account/account"), ("GET", deals.PROMO_PATH, ""),
+                                  ("GET", deals.PROMO_PATH, "page=2"), ("GET", deals.COST_OF_LIVING_PATH, "")])
+        times = [t for *_x, t in self.calls]
         self.assertTrue(all(b - a >= sh.MIN_INTERVAL for a, b in zip(times, times[1:])), times)
-        self.assertEqual(len(self.calls), 1 + 1 + 7 + 1)
+
+    def test_logged_out_never_logs_in(self):
+        self.account_status = 302
+        r = scenario_run(site=deals.SiteOps())
+        self.assertEqual(r["status"], "login_required")
+        self.assertEqual([c[1] for c in self.calls], ["account/account"])
 
     def test_429_stops_for_24h(self):
-        self.status_for_search = 429
+        self.page_status = 429
         r = scenario_run(site=deals.SiteOps())
         self.assertEqual(r["stopped"], "site_blocked")
         self.assertGreaterEqual(sh._blocked_until[0], self.clock[0] + sh.BLOCK_SECONDS - 60)
         n = len(self.calls)
         r2 = scenario_run(site=deals.SiteOps())
-        self.assertEqual(r2["status"], "site_blocked")
+        self.assertEqual(r2["stopped"], "site_blocked")
         self.assertEqual(len(self.calls), n)                              # nothing sent while stopped
 
-    def test_promo_path_policy(self):
-        sh.check_url("GET", deals.PROMO_URL)
-        sh.check_url("GET", deals.PROMO_URL + "?page=2")
-        sh.check_url("GET", sh.BASE + deals.PROMO_PATH)                   # unquoted form too
+    def test_category_policy(self):
+        for url in (deals.PROMO_URL, deals.PROMO_URL + "?page=2", sh.BASE + deals.PROMO_PATH,
+                    deals.CATEGORY_URLS["cost_of_living"], deals.CATEGORY_URLS["cost_of_living"] + "?page=3"):
+            sh.check_url("GET", url)
         for method, url in (("POST", deals.PROMO_URL), ("GET", deals.PROMO_URL + "?route=checkout/checkout"),
-                            ("GET", deals.PROMO_URL + "?page=2&x=1"),
-                            ("GET", sh.BASE + urllib.parse.quote("/יוקר-המחייה/")),
+                            ("GET", deals.PROMO_URL + "?page=2&x=1"), ("GET", deals.PROMO_URL + "?page=0"),
+                            ("GET", sh.BASE + urllib.parse.quote("/מותג-הבית-הסופר-החברתי/")),
                             ("GET", sh.BASE + "/index.php?route=product/special")):
             with self.assertRaises(sh.PolicyError, msg=url):
                 sh.check_url(method, url)
@@ -337,45 +346,65 @@ class Transport(unittest.TestCase):
 class Job(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
-        self.saved = (deals.OUT_DIR, deals.scan, deals._persisted_block)
+        self.saved = (deals.OUT_DIR, deals.scan, deals._persisted_block, os.environ.get("SUPER_HIST_DEALS_PROMO_PAGES"))
         deals.OUT_DIR = Path(self.tmp.name)
         deals._persisted_block = lambda: None
+        os.environ["SUPER_HIST_DEALS_PROMO_PAGES"] = "1"
         sh._blocked_until[0] = 0.0
 
     def tearDown(self):
-        deals.OUT_DIR, deals.scan, deals._persisted_block = self.saved
+        deals.OUT_DIR, deals.scan, deals._persisted_block, flag = self.saved
+        if flag is None:
+            os.environ.pop("SUPER_HIST_DEALS_PROMO_PAGES", None)
+        else:
+            os.environ["SUPER_HIST_DEALS_PROMO_PAGES"] = flag
         self.tmp.cleanup()
 
     def test_start_status(self):
         deals.scan = lambda p: scenario_run()
-        started = deals.start({"max_searches": 5})
+        started = deals.start({"max_pages": 3})
         self.assertEqual(started["status"], "running")
-        self.assertEqual(started["planned"]["requests"], 8)               # 3 + 5 searches, no re-check
+        self.assertEqual(started["planned"]["requests"], 1 + 3)          # account check + 3 pages
         out = deals.status({"run_id": started["run_id"], "wait_seconds": 10})
         self.assertEqual(out["status"], "ok")
         self.assertTrue(out["text"].startswith("🏷️"))
-        self.assertNotIn("interests", out)
 
-    def test_invalid_and_blocked(self):
-        self.assertEqual(deals.start({"max_searches": 99})["status"], "invalid")
-        self.assertEqual(deals.start({"max_searches": "x"})["status"], "invalid")
+    def test_disabled_invalid_blocked(self):
+        os.environ["SUPER_HIST_DEALS_PROMO_PAGES"] = "0"
+        self.assertEqual(deals.start({})["status"], "disabled")          # off until the markup is verified
+        os.environ["SUPER_HIST_DEALS_PROMO_PAGES"] = "1"
+        self.assertEqual(deals.start({"max_pages": 99})["status"], "invalid")
+        self.assertEqual(deals.start({"max_pages": "x"})["status"], "invalid")
         sh._blocked_until[0] = time.time() + 100
-        sh_now = sh._now
         try:
             self.assertEqual(deals.start({})["status"], "site_blocked")
         finally:
             sh._blocked_until[0] = 0.0
-            sh._now = sh_now
         self.assertEqual(deals.status({"run_id": "nope"})["status"], "unknown_run")
+
+    def test_standalone_scan_reads_no_personal_sources(self):
+        saved = (deals._sources, deals.run)
+        seen = {}
+        deals._sources = lambda: self.fail("standalone scan must not read list/cart/regulars")
+        real_run = saved[1]
+        deals.run = lambda *a, **k: seen.update(k) or real_run(site=FakeOps(), categories=["promo"], today=TODAY)
+        try:
+            deals.scan({})
+        finally:
+            deals._sources, deals.run = saved
+        self.assertFalse(seen["personal"])
 
     def test_save_and_last_and_previous(self):
         self.assertEqual(deals.last()["status"], "none")
-        r = scenario_run()
-        deals._save(r)
+        deals._save(scenario_run())
         self.assertTrue((deals.OUT_DIR / "last.md").read_text().startswith("🏷️"))
-        last = deals.last()
-        self.assertEqual(last["status"], "ok")
+        self.assertEqual(deals.last()["status"], "ok")
         self.assertIn("910101", deals._previous_ids())
+
+    def test_cached_list_only(self):
+        src = Path(deals.__file__).read_text()
+        self.assertNotIn("grocery_list.sync", src)
+        self.assertNotIn("sync()", src)
 
     def test_routes(self):
         router = Router()
@@ -394,7 +423,7 @@ class Wiring(unittest.TestCase):
         tools.register(mcp, client)
         registered["super_hist_deals"]()
         registered["super_hist_deals_status"]("abc", 30)
-        self.assertEqual(calls[0], ("POST", "/super-hist/deals", {"max_searches": 12}))
+        self.assertEqual(calls[0], ("POST", "/super-hist/deals", {"max_pages": 5}))
         self.assertEqual(calls[1], ("POST", "/super-hist/deals/status", {"run_id": "abc", "wait_seconds": 30}))
         self.assertIn("Nothing is added to the cart", registered["super_hist_deals"].__doc__)
 
@@ -404,15 +433,14 @@ class Wiring(unittest.TestCase):
             self.assertIn(f"- {name}\n", cfg)
 
     def test_api_registers_routes(self):
-        src = (HERE / "command_center" / "api.py").read_text()
-        self.assertIn("super_hist_deals", src)
+        self.assertIn("super_hist_deals", (HERE / "command_center" / "api.py").read_text())
 
     def test_cli_offline(self):
         buf = io.StringIO()
         with redirect_stdout(buf):
             code = deals.main(["--fixtures", str(FX)])
         self.assertEqual(code, 0)
-        self.assertIn("על מה שאתה קונה", buf.getvalue())
+        self.assertIn("המבצעים הכי משתלמים", buf.getvalue())
 
     def test_soul_snippet(self):
         text = (HERE.parent / "docs" / "SOUL_SUPER_HIST_DEALS_SNIPPET.md").read_text()
