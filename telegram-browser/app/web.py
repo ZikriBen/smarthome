@@ -167,6 +167,10 @@ JELLYFIN_FALLBACK_AFTER_S = float(os.getenv("JELLYFIN_FALLBACK_AFTER_S", "6"))
 TG_SUBS_ENABLED = os.getenv("TG_SUBS_ENABLED", "1").strip().lower() not in ("0", "false", "no", "off")
 TG_SUBS_MAX_MB = int(os.getenv("TG_SUBS_MAX_MB", "4096"))
 TG_SUBS_MAX_MINUTES = float(os.getenv("TG_SUBS_MAX_MINUTES", "30"))
+# Watch now waits this long for the subtitle job to parse the MKV header and put
+# the (placeholder) Hebrew sidecar in place BEFORE asking Jellyfin to scan, so
+# the sidecar is in Jellyfin's very first directory listing of the folder.
+TG_SUBS_HEADER_WAIT_S = float(os.getenv("TG_SUBS_HEADER_WAIT_S", "6"))
 
 
 def _origin(url: str) -> str | None:
@@ -1535,16 +1539,23 @@ WATCH_MESSAGES = {
 }
 
 
-@app.post(
-    "/api/watch/{variant_id}",
-)
-async def watch_now(
-    variant_id: int,
-):
-    key = stream_key()
-    if key is None or not TG_STREAM_PUBLIC_BASE:
-        raise HTTPException(status_code=503, detail="Streaming is not configured")
-    row = _watch_row(variant_id)
+# In-flight Watch-now jobs per variant: a double tap (or a second device)
+# joins the running job instead of starting a second refresh cycle. The job
+# is shielded, so it finishes even if the browser navigates away.
+_watch_inflight: dict[int, dict] = {}
+
+
+def library_url() -> str:
+    """Fallback link: the Telegram Streams library in Jellyfin (home if unknown)."""
+    lib = JELLYFIN_LIBRARY.configured_id or JELLYFIN_LIBRARY.discovered_id
+    if lib:
+        return (f"{JELLYFIN_PUBLIC_URL}/web/#/movies?topParentId={urllib.parse.quote(lib)}"
+                "&collectionType=movies")
+    return f"{JELLYFIN_PUBLIC_URL}/web/#/home"
+
+
+async def _do_watch(variant_id: int, row: dict, key: bytes, progress: dict) -> dict:
+    progress["phase"] = "writing"
     url = f"{TG_STREAM_PUBLIC_BASE}/s/{int(variant_id)}/{stream_signing.sign(key, variant_id)}"
     picture = await poster_bytes(row.get("poster_message_id"))
     entry, changed = await asyncio.to_thread(
@@ -1555,11 +1566,13 @@ async def watch_now(
         _spawn(stream_service.prefetch_edges(int(variant_id), int(TG_STREAM_PREFETCH_MB * 1024 * 1024)))
     if subtitle_jobs is not None and TG_SUBS_ENABLED:
         subtitle_jobs.schedule(int(variant_id), row, entry.folder, entry.strm.name, is_matroska(row))
+        subtitle_jobs.boost(int(variant_id))
+        progress["phase"] = "subs_header"
+        await subtitle_jobs.wait_header(int(variant_id), TG_SUBS_HEADER_WAIT_S)
     result = {"variant_id": int(variant_id), "folder": entry.name, "written": changed}
     jf = jellyfin_client()
     if jf is None:
-        return {**result, "status": "refresh_skipped", "message": WATCH_MESSAGES["refresh_skipped"],
-                "subtitles": _subs_status(variant_id)}
+        return {**result, "status": "refresh_skipped", "message": WATCH_MESSAGES["refresh_skipped"]}
     found = await stream_watch.refresh_and_find(
         jf,
         strm_path=stream_watch.jellyfin_path(entry.strm, TG_STREAMS_DIR, JELLYFIN_STREAMS_PATH),
@@ -1569,11 +1582,41 @@ async def watch_now(
         public_url=JELLYFIN_PUBLIC_URL,
         timeout=JELLYFIN_POLL_TIMEOUT_S,
         fallback_after=JELLYFIN_FALLBACK_AFTER_S,
+        progress=progress,
     )
     found.setdefault("message", WATCH_MESSAGES.get(found["status"], found["status"]))
     print(f"[watch] {int(variant_id)}: {found['status']} steps={','.join(found.get('steps', []))} "
           f"elapsed={found.get('elapsed_s')}", flush=True)
-    return {**result, **found, "subtitles": _subs_status(variant_id)}
+    return {**result, **found}
+
+
+@app.post(
+    "/api/watch/{variant_id}",
+)
+async def watch_now(
+    variant_id: int,
+):
+    key = stream_key()
+    if key is None or not TG_STREAM_PUBLIC_BASE:
+        raise HTTPException(status_code=503, detail="Streaming is not configured")
+    row = _watch_row(variant_id)
+    vid = int(variant_id)
+    job = _watch_inflight.get(vid)
+    joined = job is not None and not job["task"].done()
+    if not joined:
+        progress: dict = {"phase": "queued", "steps": []}
+        task = asyncio.create_task(_do_watch(vid, row, key, progress))
+        job = {"task": task, "progress": progress, "started": asyncio.get_running_loop().time()}
+        _watch_inflight[vid] = job
+        task.add_done_callback(lambda t, v=vid, j=job: _watch_inflight.pop(v, None)
+                               if _watch_inflight.get(v) is j else None)
+    try:
+        result = await asyncio.shield(job["task"])
+    except Exception as exc:  # noqa: BLE001
+        print(f"[watch] {vid}: failed {type(exc).__name__}: {exc}", flush=True)
+        return {"variant_id": vid, "status": "error", "message": "Watch now failed",
+                "library_url": library_url(), "subtitles": _subs_status(vid)}
+    return {**result, "joined": joined, "library_url": library_url(), "subtitles": _subs_status(vid)}
 
 
 @app.get(
@@ -1585,7 +1628,18 @@ async def watch_status(
     """Cheap follow-up for a 'pending' Watch now: one lookup, no refresh."""
     row = _watch_row(variant_id)
     entry = stream_watch.entry_paths(TG_STREAMS_DIR, row, row)
-    base = {"variant_id": int(variant_id), "folder": entry.name, "subtitles": _subs_status(variant_id)}
+    base = {"variant_id": int(variant_id), "folder": entry.name, "subtitles": _subs_status(variant_id),
+            "library_url": library_url()}
+    if subtitle_jobs is not None:
+        subtitle_jobs.boost(int(variant_id))  # the popup is open and polling
+        base["subtitles"] = _subs_status(variant_id)
+    job = _watch_inflight.get(int(variant_id))
+    if job is not None and not job["task"].done():
+        prog = job["progress"]
+        return {**base, "status": "pending", "in_progress": True, "phase": prog.get("phase"),
+                "steps": list(prog.get("steps", [])),
+                "elapsed_s": round(asyncio.get_running_loop().time() - job["started"], 1),
+                "message": "Watch now is in progress"}
     if not entry.strm.exists():
         return {**base, "status": "not_prepared", "message": "Press Watch now first"}
     jf = jellyfin_client()

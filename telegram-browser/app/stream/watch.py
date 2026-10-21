@@ -331,6 +331,7 @@ async def refresh_and_find(
     fallback_after: float = 6.0,
     full_refresh_after: float = 18.0,
     call_timeout: float = 8.0,
+    progress: dict | None = None,
     sleep=asyncio.sleep,
     clock=time.monotonic,
 ) -> dict:
@@ -344,7 +345,12 @@ async def refresh_and_find(
     if library is None:
         library = LibraryState(library_id, str(PurePosixPath(folder_path).parent))
     start = clock()
-    steps: list[str] = []
+    # ``progress`` (optional, shared with GET /api/watch/{id}): live phase + steps.
+    progress = progress if progress is not None else {}
+    steps: list[str] = progress.setdefault("steps", [])
+
+    def mark(phase: str) -> None:
+        progress["phase"] = phase
 
     def remaining() -> float:
         return timeout - (clock() - start)
@@ -357,12 +363,14 @@ async def refresh_and_find(
             steps.append("full_refresh:cooldown")
             return
         library.mark_full_refresh()
+        mark("full_refresh")
         try:
             await jf.refresh_all(timeout=ct())
             steps.append(f"full_refresh:{reason}")
         except _ERRORS as exc:
             steps.append(f"full_refresh:error:{_http_code(exc) or type(exc).__name__}")
 
+    mark("media_updated")
     try:
         await jf.report_path(folder_path, "Created", timeout=ct())
         steps.append("media_updated")
@@ -377,6 +385,7 @@ async def refresh_and_find(
         steps.append(f"media_updated:error:{code}")
     fallback_done = False
     full_done = False
+    mark("polling")
     while True:
         try:
             item_id = await jf.find_by_path(strm_path, search_term, library.configured_id or library.discovered_id,
@@ -395,6 +404,7 @@ async def refresh_and_find(
             fallback_done = True
             lib = await library.library_id(jf, timeout=ct())
             if lib:
+                mark("library_refresh")
                 try:
                     await jf.refresh_library(lib, timeout=ct())
                     steps.append("library_refresh")
@@ -410,6 +420,7 @@ async def refresh_and_find(
         elif fallback_done and not full_done and elapsed >= full_refresh_after:
             full_done = True
             await full_refresh("not_found")
+        mark("polling")
         await sleep(max(0.0, min(poll_interval, remaining())))
 
 

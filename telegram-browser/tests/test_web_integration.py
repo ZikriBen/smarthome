@@ -201,10 +201,62 @@ def test_watch_schedules_subtitles_for_mkv(main_client, configured, monkeypatch)
         def public(self, vid):
             return {"status": "queued"}
 
+        def boost(self, vid, seconds=15):
+            calls.append(("boost", vid))
+
+        async def wait_header(self, vid, timeout):
+            calls.append(("wait_header", vid, timeout))
+            return {"status": "queued"}
+
     monkeypatch.setattr(web, "subtitle_jobs", Jobs())
     data = main_client.post("/api/watch/555").json()
     assert data["status"] == "refresh_skipped" and data["subtitles"] == {"status": "queued"}
-    assert calls == [(555, "Film (2001)", "Film (2001) - 720p.strm", False)]  # x.mp4 -> not Matroska
+    # scheduled, boosted (popup open) and the header awaited BEFORE the Jellyfin refresh
+    assert calls == [(555, "Film (2001)", "Film (2001) - 720p.strm", False), ("boost", 555),
+                     ("wait_header", 555, web.TG_SUBS_HEADER_WAIT_S)]  # x.mp4 -> not Matroska
+    main_client.get("/api/watch/555")
+    assert calls[-1] == ("boost", 555)  # polling keeps the boost alive
+    n = len(calls)
     monkeypatch.setattr(web, "TG_SUBS_ENABLED", False)
     main_client.post("/api/watch/555")
-    assert len(calls) == 1
+    assert len(calls) == n
+
+
+def test_watch_double_tap_joins_inflight_job_and_reports_phase(configured, monkeypatch):
+    import asyncio
+
+    import httpx
+
+    from tests.test_watch import FakeJellyfin
+
+    srv = FakeJellyfin(mode="never", item_path="/media/telegram-streams/Film (2001)/Film (2001) - 720p.strm")
+    monkeypatch.setenv("JELLYFIN_API_KEY", "env-dummy-key")
+    monkeypatch.setattr(web, "JELLYFIN_URL", srv.url)
+    monkeypatch.setattr(web, "JELLYFIN_POLL_TIMEOUT_S", 1.5)
+    monkeypatch.setattr(web, "JELLYFIN_FALLBACK_AFTER_S", 5)
+    monkeypatch.setattr(web, "JELLYFIN_LIBRARY", web.stream_watch.LibraryState("lib42", "/media/telegram-streams"))
+
+    async def go():
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=web.app), base_url="http://t") as c:
+            first = asyncio.ensure_future(c.post("/api/watch/555"))
+            st = None
+            for _ in range(50):
+                await asyncio.sleep(0.05)
+                st = (await c.get("/api/watch/555")).json()
+                if st.get("in_progress"):
+                    break
+            second = await c.post("/api/watch/555")  # second tap joins the running job
+            return (await first).json(), second.json(), st
+
+    try:
+        a, b, st = asyncio.run(go())
+    finally:
+        srv.close()
+    assert st["in_progress"] and st["status"] == "pending" and st["phase"] in ("media_updated", "polling")
+    assert "lib42" in st["library_url"]
+    assert b["joined"] is True and a["joined"] is False
+    assert a["status"] == b["status"] == "pending"
+    assert a["library_url"].endswith("topParentId=lib42&collectionType=movies")
+    reports = [r for r in srv.requests if r[1].startswith("/Library/Media/Updated")]
+    assert len(reports) == 1  # one refresh cycle, not two
+    assert not web._watch_inflight
