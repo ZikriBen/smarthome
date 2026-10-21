@@ -87,23 +87,47 @@ class DealOf(unittest.TestCase):
 
 
 class Category(unittest.TestCase):
-    def test_assumed_markup_and_pagination(self):
-        products, has_next = deals.parse_category_page((FX / "promo-p1.html").read_text(), 1)
+    def test_real_markup(self):
+        products, more = deals.parse_category_page((FX / "promo-p1.html").read_text(), 1)
         got = by_id(products)
-        self.assertTrue(has_next)
-        self.assertEqual((got["910101"]["price"], got["910101"]["shelf_price"]), (6.2, 7.1))
-        self.assertEqual(got["910104"]["promo"], "2 ב-9")
-        self.assertEqual(got["910104"]["price"], 6.5)
-        self.assertTrue(got["910301"]["url"].endswith("product_id=910301"))
-        _p2, next2 = deals.parse_category_page((FX / "promo-p2.html").read_text(), 2)
-        self.assertFalse(next2)                                          # no ?page=3 link
-        _p, next_col = deals.parse_category_page((FX / "cost_of_living-p1.html").read_text(), 1)
-        self.assertFalse(next_col)
+        self.assertFalse(more)                                           # no pagination on the page
+        self.assertEqual(len(products), 9)                               # the JS template is not a card
+        self.assertEqual((got["910101"]["price"], got["910101"]["shelf_price"]), (5.9, 7.1))
+        self.assertTrue(got["910101"]["on_sale"])
+        self.assertEqual(got["910101"]["unit_text"], "1 ליטר (₪5.9 ל 1 ליטר)")
+        self.assertTrue(got["910101"]["url"].endswith("/משלמים-פחות-מקבלים-יותר/חלב-3-1-ליטר/"))
+        self.assertEqual(got["910103"]["sticker"], "2 ב-18")             # alt text kept
+        self.assertIsNone(got["910105"]["sticker"])                      # image-only sticker: no text
+        self.assertFalse(got["910104"]["on_sale"])                       # no <del> = no deal
+        self.assertIsNone(deals.deal_of(got["910104"]))
+        self.assertTrue(got["910107"]["out_of_stock"])                   # from the embedded product JSON
+        self.assertTrue(got["910108"]["in_cart"])                        # data-cart-id present (value not kept)
+        self.assertNotIn("11111111", json.dumps(products))
+
+    def test_live_sample_cards(self):
+        promo, more = deals.parse_category_page((FX / "live-sample-promo-p1.html").read_text(), 1)
+        self.assertFalse(more)
+        self.assertEqual([p["product_id"] for p in promo], ["1041340", "1055977", "1070134", "940733"])
+        rice = promo[0]
+        self.assertEqual((rice["name"], rice["price"], rice["shelf_price"]), ("אורז יסמין - DAAWAT", 7.9, 9.9))
+        self.assertEqual(rice["unit_text"], '1 ק"ג (₪7.9 ל 1 ק"ג)')
+        self.assertIsNone(rice["sticker"])                               # live stickers: alt=""
+        col, _ = deals.parse_category_page((FX / "live-sample-cost_of_living-p1.html").read_text(), 1)
+        self.assertEqual(by_id(col)["988259"]["shelf_price"], 19.9)
+        self.assertEqual(deals.deal_of(by_id(col)["988259"])["pct_off"], 60)
+
+    def test_pagination_only_warns(self):
+        page = (FX / "promo-p1.html").read_text().replace(
+            "</body>", '<ul class="pagination"><li><a href="?page=2">2</a></li></ul></body>')
+        _p, more = deals.parse_category_page(page, 1)
+        self.assertTrue(more)
 
     def test_unknown_markup_is_site_changed(self):
         with self.assertRaises(sh.SiteChanged):
             deals.parse_category_page("<html><body><div class='other'>אין כאן מוצרים</div></body></html>", 1)
-        self.assertEqual(deals.parse_category_page("<html></html>", 2), ([], False))   # past the last page
+        with self.assertRaises(sh.SiteChanged):                           # template-only = no real cards
+            deals.parse_category_page('<script type="text/template"><div data-product_id="{{id}}" '
+                                      'class="product-item"></div></script>', 1)
 
 
 class FakeLogin:
@@ -154,16 +178,16 @@ def scenario_run(site=None, **kw):
 
 
 class Standalone(unittest.TestCase):
-    """Default: categories only — no cart, no list, no regulars; best value first."""
+    """Default: both categories, page 1 only — no cart, no list, no regulars; best value first."""
 
     def test_no_cart_no_list(self):
         ops = FakeOps()
         r = scenario_run(site=ops)
-        self.assertEqual(ops.calls, [("promo", 1), ("promo", 2)])          # follows the next link, no cart
+        self.assertEqual(ops.calls, [("promo", 1)])                       # page 1 only, no cart
         self.assertFalse(r["personal"])
         self.assertEqual(r["interests"], [])
         self.assertEqual(r["notable"], [])
-        self.assertEqual(r["requests"], 2)
+        self.assertEqual(r["requests"], 1)
 
     def test_ranking_food_first_then_pct(self):
         r = scenario_run()
@@ -172,8 +196,10 @@ class Standalone(unittest.TestCase):
         self.assertEqual(ds[:len(food)], food)                            # non-food after all food
         pcts = [d["pct_off"] for d in food]
         self.assertEqual(pcts, sorted(pcts, reverse=True))
-        self.assertEqual(ds[0]["product_id"], "910301")                   # 1+1 = 50%
-        self.assertNotIn("910601", by_id(ds))                             # sugar: not on a deal
+        self.assertEqual(ds[0]["product_id"], "910105")                   # 7.45 instead of 14.90 = 50%
+        self.assertEqual(ds[-1]["product_id"], "910106")                  # shampoo: non-food, last
+        self.assertNotIn("910104", by_id(ds))                             # no <del>: not a deal
+        self.assertNotIn("910107", by_id(ds))                             # out of stock
         self.assertTrue(all(d["tier"] == deals.TIER_ALL for d in ds))
 
     def test_top_cap(self):
@@ -184,18 +210,36 @@ class Standalone(unittest.TestCase):
         finally:
             deals.TOP_DEALS = saved
 
-    def test_page_cap(self):
-        ops = FakeOps()
-        r = scenario_run(site=ops, max_pages=1)
+    def test_pagination_warning_reads_page_1_only(self):
+        class PagedOps(FakeOps):
+            def category_page(self, key, page):
+                products, _ = super().category_page(key, page)
+                return products, True
+        ops = PagedOps()
+        r = scenario_run(site=ops)
         self.assertEqual(ops.calls, [("promo", 1)])
-        self.assertIn("מגבלת עמודים", " ".join(r["warnings"]))
+        self.assertIn("נקרא רק עמוד 1", " ".join(r["warnings"]))
 
-    def test_second_category(self):
+    def test_both_categories_dedupe(self):
         ops = FakeOps()
         r = scenario_run(site=ops, categories=["promo", "cost_of_living"])
-        self.assertEqual(ops.calls, [("promo", 1), ("promo", 2), ("cost_of_living", 1)])
-        self.assertIn("910902", by_id(r["deals"]))
-        self.assertEqual(r["pages"], {"promo": 2, "cost_of_living": 1})
+        self.assertEqual(ops.calls, [("promo", 1), ("cost_of_living", 1)])
+        ids = [d["product_id"] for d in r["deals"]]
+        self.assertIn("910901", ids)
+        self.assertEqual(ids.count("910101"), 1)                          # in both categories: once
+        self.assertEqual(r["pages"], {"promo": 1, "cost_of_living": 1})
+
+    def test_both_categories_on_by_default(self):
+        saved = {k: os.environ.pop(k, None) for k in deals.CATEGORY_FLAGS.values()}
+        try:
+            self.assertEqual(deals.enabled_categories(), ["promo", "cost_of_living"])
+            os.environ["SUPER_HIST_DEALS_COST_OF_LIVING"] = "0"
+            self.assertEqual(deals.enabled_categories(), ["promo"])
+        finally:
+            for k, v in saved.items():
+                os.environ.pop(k, None)
+                if v is not None:
+                    os.environ[k] = v
 
     def test_no_kashrut_by_default(self):
         r = scenario_run()
@@ -213,10 +257,18 @@ class Standalone(unittest.TestCase):
         self.assertTrue(msg.startswith("🏷️ מבצעים בסופר החברתי — 21.10"))
         self.assertIn("המבצעים הכי משתלמים", msg)
         self.assertNotIn("על מה שאתה קונה", msg)
-        self.assertIn("1+1 (₪7.45 ליח׳ במקום ₪14.90)", msg)
-        self.assertIn("עד 31.10", msg)
-        self.assertIn("משלמים פחות מקבלים יותר (2 עמ׳)", msg)
+        self.assertIn("ממרח שוקולד - השחר — ₪7.45 במקום ₪14.90 (‎-50%)", msg)
+        self.assertIn("מדבקה: 2 ב-18", msg)
+        self.assertIn("200 גרם (₪4.95 ל 100 גרם)", msg)
+        self.assertNotIn("תוקף לא מוצג", msg)
+        self.assertIn("נסרקו: משלמים פחות מקבלים יותר ·", msg)
         self.assertNotRegex(msg, r"(?<!\d)\d{9}(?!\d)")
+
+    def test_live_sample_run(self):
+        r = deals.run_fixtures(FX, prefix="live-sample-")
+        self.assertEqual(r["status"], "ok")
+        self.assertEqual(len(r["deals"]), 8)
+        self.assertEqual(r["deals"][0]["product_id"], "1062130")          # canola oil ₪2.50 instead of ₪9.90
 
 
 class Personal(unittest.TestCase):
@@ -225,19 +277,18 @@ class Personal(unittest.TestCase):
     def test_tiers(self):
         ops = FakeOps()
         r = scenario_run(site=ops, personal=True)
-        self.assertEqual(ops.calls[0], "cart")
+        self.assertEqual(ops.calls, ["cart", ("promo", 1)])
         got = by_id(r["deals"])
         self.assertEqual(got["910101"]["tier"], deals.TIER_LIST)
         self.assertTrue(got["910101"]["in_cart"])
+        self.assertEqual(got["910103"]["tier"], deals.TIER_LIST)
         self.assertEqual(got["910801"]["tier"], deals.TIER_CART)          # cart line <del>/<ins>
-        self.assertEqual(got["910401"]["tier"], deals.TIER_REGULAR)
-        self.assertEqual(got["910501"]["tier"], deals.TIER_STAPLE)
-        for pid in ("910103", "910105", "910203", "910702"):             # lookalikes -> notable, not mine
+        self.assertEqual(got["910108"]["tier"], deals.TIER_CART)          # data-cart-id on the category card
+        self.assertEqual(got["910105"]["tier"], deals.TIER_STAPLE)
+        self.assertEqual(got["910401"]["tier"], deals.TIER_STAPLE)
+        for pid in ("910104", "910106", "910107"):                       # no del / non-food / out of stock
             self.assertNotIn(pid, got)
-        notable = r["notable"]
-        self.assertTrue(all(d["pct_off"] >= deals.NOTABLE_MIN_PCT for d in notable))
-        self.assertLessEqual(len(notable), deals.NOTABLE_MAX)
-        self.assertNotIn("נוזל כלים", " ".join(d["name"] for d in r["deals"] + notable))
+        self.assertEqual(r["notable"], [])
         self.assertIn("על מה שאתה קונה", r["message"])
 
     def test_kashrut_flag_only_with_env(self):
@@ -245,10 +296,11 @@ class Personal(unittest.TestCase):
         deals.KASHRUT_ENABLED = True
         try:
             got = by_id(scenario_run(personal=True)["deals"])
-            self.assertEqual(got["910301"]["kashrut_flag"], "כשרות לא ידועה")
-            self.assertIsNone(got["910101"]["kashrut_flag"])
+            self.assertEqual(got["910101"]["kashrut_flag"], "כשרות לא ידועה")
+            self.assertIsNone(got["910801"]["kashrut_flag"])               # בד"ץ in the name
         finally:
             deals.KASHRUT_ENABLED = saved
+        self.assertTrue(all(d["kashrut_flag"] is None for d in scenario_run(personal=True)["deals"]))
 
 
 class Failures(unittest.TestCase):
@@ -257,7 +309,7 @@ class Failures(unittest.TestCase):
         login = FakeLogin(ok=True, on_success=lambda: setattr(ops, "logged_out", False))
         r = scenario_run(site=ops, login=login)
         self.assertEqual((r["status"], login.calls), ("ok", 1))
-        self.assertEqual(ops.calls, [("promo", 1), ("promo", 1), ("promo", 2)])   # same page once more
+        self.assertEqual(ops.calls, [("promo", 1), ("promo", 1)])          # same page once more
         self.assertTrue(r["auto_login"])
         self.assertIn("התחברתי אוטומטית", r["message"])
         self.assertNotIn("לשלוח קוד", r["message"])
@@ -339,10 +391,10 @@ class AutoLoginFlow(unittest.TestCase):
         self.assertEqual(calls["start"], 1)
 
     def test_blocked_mid_scan_stops(self):
-        ops = FakeOps(page_exc=sh.SiteBlocked("האתר חסם את הבקשה (HTTP 429)"), page_exc_at=("promo", 2))
+        ops = FakeOps(page_exc=sh.SiteBlocked("האתר חסם את הבקשה (HTTP 429)"), page_exc_at=("cost_of_living", 1))
         r = scenario_run(site=ops, categories=["promo", "cost_of_living"])
         self.assertEqual((r["status"], r["stopped"]), ("partial", "site_blocked"))
-        self.assertEqual(ops.calls, [("promo", 1), ("promo", 2)])          # nothing after the stop
+        self.assertEqual(ops.calls, [("promo", 1), ("cost_of_living", 1)])
         self.assertIn("עצרתי באמצע", r["message"])
         self.assertIn("910101", by_id(r["deals"]))
 
@@ -392,8 +444,7 @@ class Transport(unittest.TestCase):
             if path == cat_path:
                 if self.page_status != 200:
                     return self.page_status, {}, ""
-                page = (u.query.split("=")[1] if u.query else "1")
-                f = FX / f"{key}-p{page}.html"
+                f = FX / f"{key}-p1.html"
                 return 200, {}, f.read_text() if f.exists() else "<html></html>"
         return 404, {}, ""
 
@@ -402,7 +453,7 @@ class Transport(unittest.TestCase):
         self.assertEqual(r["status"], "ok")
         routes = [(m, route, q) for m, route, q, _t in self.calls]
         self.assertEqual(routes, [("GET", "account/account", "route=account/account"), ("GET", deals.PROMO_PATH, ""),
-                                  ("GET", deals.PROMO_PATH, "page=2"), ("GET", deals.COST_OF_LIVING_PATH, "")])
+                                  ("GET", deals.COST_OF_LIVING_PATH, "")])
         times = [t for *_x, t in self.calls]
         self.assertTrue(all(b - a >= sh.MIN_INTERVAL for a, b in zip(times, times[1:])), times)
 
@@ -423,12 +474,25 @@ class Transport(unittest.TestCase):
         self.assertEqual(r2["stopped"], "site_blocked")
         self.assertEqual(len(self.calls), n)                              # nothing sent while stopped
 
+    def test_limit_flag_unverified_off_by_default(self):
+        self.assertFalse(deals.LIMIT_100)
+        deals.LIMIT_100 = True
+        try:
+            scenario_run(site=deals.SiteOps())
+        finally:
+            deals.LIMIT_100 = False
+        self.assertEqual([q for _m, _r, q, _t in self.calls], ["route=account/account", "limit=100"])
+        with self.assertRaises(sh.PolicyError):
+            deals.SiteOps().category_page("promo", 2)
+
     def test_category_policy(self):
-        for url in (deals.PROMO_URL, deals.PROMO_URL + "?page=2", sh.BASE + deals.PROMO_PATH,
-                    deals.CATEGORY_URLS["cost_of_living"], deals.CATEGORY_URLS["cost_of_living"] + "?page=3"):
+        for url in (deals.PROMO_URL, sh.BASE + deals.PROMO_PATH, deals.PROMO_URL + "?limit=100",
+                    deals.CATEGORY_URLS["cost_of_living"], deals.CATEGORY_URLS["cost_of_living"] + "?limit=100"):
             sh.check_url("GET", url)
         for method, url in (("POST", deals.PROMO_URL), ("GET", deals.PROMO_URL + "?route=checkout/checkout"),
-                            ("GET", deals.PROMO_URL + "?page=2&x=1"), ("GET", deals.PROMO_URL + "?page=0"),
+                            ("GET", deals.PROMO_URL + "?page=2"), ("GET", deals.PROMO_URL + "?limit=1000"),
+                            ("GET", deals.PROMO_URL + "?limit=100&page=2"),
+                            ("GET", deals.PROMO_URL + "?sort=p.price&order=ASC"),
                             ("GET", sh.BASE + urllib.parse.quote("/מותג-הבית-הסופר-החברתי/")),
                             ("GET", sh.BASE + "/index.php?route=product/special")):
             with self.assertRaises(sh.PolicyError, msg=url):
@@ -454,18 +518,22 @@ class Job(unittest.TestCase):
 
     def test_start_status(self):
         deals.scan = lambda p: scenario_run()
-        started = deals.start({"max_pages": 3})
+        started = deals.start({})
         self.assertEqual(started["status"], "running")
-        self.assertEqual(started["planned"]["requests"], 1 + 3)          # account check + 3 pages
+        self.assertEqual(started["planned"]["requests"], 1 + 2)          # account check + 2 category pages
         out = deals.status({"run_id": started["run_id"], "wait_seconds": 10})
         self.assertEqual(out["status"], "ok")
         self.assertTrue(out["text"].startswith("🏷️"))
 
     def test_disabled_invalid_blocked(self):
         os.environ["SUPER_HIST_DEALS_PROMO_PAGES"] = "0"
-        self.assertEqual(deals.start({})["status"], "disabled")          # off until the markup is verified
+        os.environ["SUPER_HIST_DEALS_COST_OF_LIVING"] = "0"
+        try:
+            self.assertEqual(deals.start({})["status"], "disabled")      # both switched off
+        finally:
+            os.environ.pop("SUPER_HIST_DEALS_COST_OF_LIVING", None)
         os.environ["SUPER_HIST_DEALS_PROMO_PAGES"] = "1"
-        self.assertEqual(deals.start({"max_pages": 99})["status"], "invalid")
+        self.assertEqual(deals.start({"max_pages": 2})["status"], "invalid")    # page 1 only
         self.assertEqual(deals.start({"max_pages": "x"})["status"], "invalid")
         sh._blocked_until[0] = time.time() + 100
         try:
@@ -516,7 +584,7 @@ class Wiring(unittest.TestCase):
         tools.register(mcp, client)
         registered["super_hist_deals"]()
         registered["super_hist_deals_status"]("abc", 30)
-        self.assertEqual(calls[0], ("POST", "/super-hist/deals", {"max_pages": 5}))
+        self.assertEqual(calls[0], ("POST", "/super-hist/deals", {}))
         self.assertEqual(calls[1], ("POST", "/super-hist/deals/status", {"run_id": "abc", "wait_seconds": 30}))
         self.assertIn("Nothing is added to the cart", registered["super_hist_deals"].__doc__)
 
@@ -548,7 +616,11 @@ class FixturePrivacy(unittest.TestCase):
             self.assertIsNone(re.search(r"(?<!\d)05\d[- ]?\d{7}(?!\d)", text), path.name)
             self.assertIsNone(re.search(r"[\w.+-]+@[\w-]+\.[\w.]+", text), path.name)
             self.assertIsNone(re.search(r"PHPSESSID|Set-Cookie|cf_clearance|__cf_bm", text, re.I), path.name)
-            self.assertIn("SYNTHETIC", text, path.name)
+            self.assertNotIn("data-cart-id=\"4", text, path.name)          # no real cart-line ids
+            if path.name.startswith("live-sample-"):
+                self.assertIn("LIVE SAMPLE 2026-10-21", text, path.name)
+            else:
+                self.assertIn("SYNTHETIC", text, path.name)
 
 
 if __name__ == "__main__":

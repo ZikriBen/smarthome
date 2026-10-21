@@ -109,7 +109,7 @@ def check_url(method, url):
         raise PolicyError("נתיב חסום (קופה/תשלום/הזמנה/קופון/משלוח) לא נשלח")
     if method == "GET":
         ok = ((u.path in GET_PATHS and not u.query) or (u.path == "/index.php" and route in GET_ROUTES)
-              or (urllib.parse.unquote(u.path) in PROMO_GET_PATHS and re.fullmatch(r"(?:page=[1-9]\d?)?", u.query)))
+              or (urllib.parse.unquote(u.path) in PROMO_GET_PATHS and re.fullmatch(r"(?:limit=100)?", u.query)))
     elif method == "POST":
         ok = (u.path in POST_PATHS and not u.query) or (u.path == "/index.php" and route in POST_ROUTES)
     else:

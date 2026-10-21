@@ -54,9 +54,9 @@ def register(mcp, client):
     # ------------------------------------------------------------------ deals (read-only scan)
 
     @mcp.tool()
-    def super_hist_deals(max_pages: int = 5) -> dict:
-        """Read-only: scan הסופר החברתי's promotion category pages and match them against Ben's grocery list, cart, regulars and staples ('על מה שאתה קונה'), plus a few other big food deals. Takes a minute or more (>=10s between site requests; ~1 + pages requests; up to 3 more minutes if it has to log in — it does that once by itself, the SMS code arrives through the relay), so it starts a background run: tell Ben `text`, then call super_hist_deals_status(run_id). Nothing is added to the cart. disabled/site_blocked/already_running/invalid: relay `text`."""
-        return client.request("POST", "/super-hist/deals", {"max_pages": max_pages}, timeout=60)
+    def super_hist_deals() -> dict:
+        """Read-only: scan הסופר החברתי's two promotion category pages ('משלמים פחות מקבלים יותר', 'מתמודדים עם יוקר המחיה') and list the best-value deals (sale price vs regular price, % off; food first). Does not read the grocery list or the cart. Takes about a minute (>=10s between site requests; 3 requests; up to 3 more minutes if it has to log in — it does that once by itself, the SMS code arrives through the relay), so it starts a background run: tell Ben `text`, then call super_hist_deals_status(run_id). Nothing is added to the cart. disabled/site_blocked/already_running/invalid: relay `text`."""
+        return client.request("POST", "/super-hist/deals", {}, timeout=60)
 
     @mcp.tool()
     def super_hist_deals_status(run_id: str, wait_seconds: int = 60) -> dict:

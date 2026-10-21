@@ -1,12 +1,14 @@
 """הסופר החברתי (super-hist.co.il) deals scan — READ-ONLY. "Don't miss the promotions on what Ben buys."
 
 Source = the site's promotion CATEGORIES, not per-item searches (Ben, 2026-10-21):
-  * /משלמים-פחות-מקבלים-יותר/  (SUPER_HIST_DEALS_PROMO_PAGES=1; OFF until its markup is verified live, then on)
-  * /יוקר-המחייה/               (SUPER_HIST_DEALS_COST_OF_LIVING=1; candidate second category, off by default)
-  Page 1, then ?page=N only while the page itself links to the next page, up to SUPER_HIST_DEALS_MAX_PAGES (5).
+  * /משלמים-פחות-מקבלים-יותר/  (on; SUPER_HIST_DEALS_PROMO_PAGES=0 turns it off)
+  * /יוקר-המחייה/               (on; SUPER_HIST_DEALS_COST_OF_LIVING=0 turns it off)
+  Markup verified live 2026-10-21 (31 / 25 server-rendered cards, identical structure, no pagination):
+  page 1 only, one GET per category; products in both are counted once (by product_id). A deal = the card's
+  <ins> sale price under its <del> regular price (% off); a card without <del> is not a deal.
 Plus Ben's cart page (2-3 requests: account check, cart, mini-cart canary only when it reads empty), read live
 because it is cheap; a cart line showing <del>shelf</del><ins>sale</ins> is a deal by itself.
-Everything goes through super_hist's transport: the URL allowlist (GET of the two categories, page 1 / ?page=N),
+Everything goes through super_hist's transport: the URL allowlist (GET of the two categories, no query, or ?limit=100 behind the UNVERIFIED flag),
 >= MIN_INTERVAL (10 s) between requests, the 24 h stop on 403/429/captcha (also persisted in grocery_site_state),
 and at most ONE automatic login per run when logged out (the existing SMS flow, code via the Telegram relay,
 bounded to 3 minutes; failure/timeout -> one line and stop; never a resend or a retry).
@@ -40,8 +42,11 @@ NOTABLE_MAX = 6
 MINE_MAX = 25
 STATUS_WAIT_MAX = 90
 STALE_SECONDS = 20 * 60
-HARD_MAX_PAGES = 10
-MAX_PAGES = max(1, min(int(os.environ.get("SUPER_HIST_DEALS_MAX_PAGES", "5") or 5), HARD_MAX_PAGES))
+HARD_MAX_PAGES = 1            # page 1 only: no pagination seen live (2026-10-21); see parse_category_page
+MAX_PAGES = 1
+# UNVERIFIED option: OpenCart category pages accept &limit=N; SUPER_HIST_DEALS_LIMIT_100=1 asks for ?limit=100 so
+# a longer category still fits one GET. Not tested on the live site; off by default.
+LIMIT_100 = os.environ.get("SUPER_HIST_DEALS_LIMIT_100", "0") == "1"
 KASHRUT_ENABLED = os.environ.get("SUPER_HIST_DEALS_KASHRUT", "0") == "1"
 PERSONAL_DEFAULT = os.environ.get("SUPER_HIST_DEALS_PERSONAL", "0") == "1"   # match list/cart/regulars
 TOP_DEALS = max(1, int(os.environ.get("SUPER_HIST_DEALS_TOP", "15") or 15))
@@ -55,7 +60,8 @@ PROMO_URL = CATEGORY_URLS["promo"]
 
 
 def enabled_categories():
-    return [k for k in CATEGORY_PATHS if os.environ.get(CATEGORY_FLAGS[k], "0") == "1"]
+    """Both categories ON by default (markup verified live 2026-10-21, identical); "0" turns one off."""
+    return [k for k in CATEGORY_PATHS if os.environ.get(CATEGORY_FLAGS[k], "1") != "0"]
 
 
 OUT_DIR = Path(os.environ.get("SUPER_HIST_DEALS_DIR", "/workspace/grocery/super_hist_deals"))
@@ -165,7 +171,8 @@ def deal_of(product, today=None):
             "multi_total": (promo or {}).get("total"), "until": (promo or {}).get("until"),
             "url": product.get("url") or product_link(product.get("product_id")),
             "out_of_stock": bool(product.get("out_of_stock")), "in_cart": bool(product.get("in_cart")),
-            "weighted": bool(product.get("weighted"))}
+            "weighted": bool(product.get("weighted")), "sticker": product.get("sticker"),
+            "unit_text": product.get("unit_text")}
 
 
 def product_link(product_id):
@@ -174,44 +181,44 @@ def product_link(product_id):
     return f"{sh.BASE}/index.php?route=product/product&product_id={pid}" if pid.isdigit() else None
 
 
-# =========================================================================== promo category page (pure, ASSUMED)
+# =========================================================================== promo category page (pure, VERIFIED)
 
 class _CategoryParser(sh.html.parser.HTMLParser):
-    """ASSUMED istores/OpenCart grid markup (not seen live): a card element with class product-thumb /
-    product-layout / product-item carrying data-product_id (or a link with product_id=); name = the card's
-    first link text inside .name/.caption/.product-description (else the first link text); price = ins/del
-    inside .price (or .price-new/.price-old); ribbon = .ribbonbgfn / .product-ribbonbgfn text."""
+    """The real, server-rendered category grid (verified live 2026-10-21, both categories identical):
+      <div data-product_id="N" class="... product-item" [data-cart-id="…" when in Ben's cart]>
+        <div class="sticker-container"><div class="sticker custom"><img src=… alt=""></div></div>   (optional)
+        <div class="price"><ins>₪7.90</ins> <del>₪9.90</del></div>     (repeated lower down; first one used)
+        <h3 class="caption-title"><a href="…/<category path>/<slug>/" class="product-link">name</a></h3>
+        <div class="caption-weight"> 1 ק"ג (₪7.9 ל 1 ק"ג) </div>
+    A card without <del> = no deal. The sticker is an IMAGE (promo terms like 1+1 may be only in the picture):
+    its alt/title text is kept only when non-empty. JS templates (<script>) are not parsed as markup."""
 
-    CARD = {"product-thumb", "product-layout", "product-item"}
     VOID = sh._CartParser.VOID
 
     def __init__(self):
         super().__init__(convert_charrefs=True)
         self.stack, self.cards, self.card = [], [], None
-        self.page_links = set()
 
-    def _in(self, *classes):
-        return any(c in cls for _t, cls, _m in self.stack for c in classes)
+    def _in(self, cls):
+        return any(cls in classes for _t, classes, _m in self.stack)
 
     def handle_starttag(self, tag, attrs):
         a = dict(attrs)
         classes = set((a.get("class") or "").split())
         mark = None
-        if self.card is None and classes & self.CARD:
-            self.card = {"product_id": a.get("data-product_id") or "", "href": "", "name": "", "any_name": "",
-                         "ins": "", "del": "", "price": "", "new": "", "old": "", "ribbon": ""}
+        pid = a.get("data-product_id") or ""
+        if self.card is None and tag == "div" and "product-item" in classes and pid.isdigit():
+            self.card = {"product_id": pid, "in_cart": "data-cart-id" in a, "href": "", "name": "", "ins": "",
+                         "del": "", "weight": "", "sticker": "", "price_blocks": 0}
             mark = "card"
-        if tag == "a":
-            m_page = re.search(r"[?&]page=(\d{1,3})(?:&|$)", a.get("href") or "")
-            if m_page:
-                self.page_links.add(int(m_page.group(1)))
-        if self.card is not None and tag == "a":
-            href = a.get("href") or ""
-            m = re.search(r"product_id=(\d+)", href)
-            if m and not self.card["product_id"]:
-                self.card["product_id"] = m.group(1)
-            if not self.card["href"] and (m or href.startswith(sh.BASE)):
-                self.card["href"] = href
+        elif self.card is not None:
+            if tag == "div" and "price" in classes:
+                self.card["price_blocks"] += 1
+                mark = "price"
+            if tag == "img" and self._in("sticker-container") and not self.card["sticker"]:
+                self.card["sticker"] = (a.get("alt") or a.get("title") or "").strip()
+            if tag == "a" and self._in("caption-title") and not self.card["href"]:
+                self.card["href"] = a.get("href") or ""
         if tag in self.VOID:
             return
         self.stack.append((tag, classes, mark))
@@ -231,43 +238,57 @@ class _CategoryParser(sh.html.parser.HTMLParser):
         if self.card is None or not data.strip():
             return
         top = self.stack[-1][0] if self.stack else ""
-        if self._in("ribbonbgfn", "product-ribbonbgfn"):
-            self.card["ribbon"] += data
-        elif self._in("price", "price_span", "product-price"):
-            key = "ins" if top == "ins" else "del" if top == "del" else (
-                "new" if self._in("price-new", "special-price") else "old" if self._in("price-old") else "price")
-            self.card[key] += data
-        elif top == "a":
-            if self._in("name", "caption", "product-description", "product-name"):
-                self.card["name"] += data
-            elif not self.card["any_name"]:
-                self.card["any_name"] += data
+        if self.card["price_blocks"] == 1 and self._in("price") and top in ("ins", "del"):
+            self.card[top] += data
+        elif top == "a" and self._in("caption-title"):
+            self.card["name"] += data
+        elif self._in("caption-weight"):
+            self.card["weight"] += data
+
+
+_JSON_PID = re.compile(r'"product_id":"(\d+)"')
+_JSON_OOS = re.compile(r'"out_of_stock":(true|false)')
+_PAGINATION = re.compile(r"class=[\"'][^\"']*\bpagination\b|href=[\"'][^\"']*[?&](?:amp;)?page=2\b")
+
+
+def _stock_map(page):
+    """The page also embeds the products as JSON (verified keys "product_id", "out_of_stock"): pid -> out."""
+    out, marks = {}, list(_JSON_PID.finditer(page or ""))
+    for i, m in enumerate(marks):
+        seg = page[m.end(): marks[i + 1].start() if i + 1 < len(marks) else m.end() + 6000]
+        oos = _JSON_OOS.search(seg)
+        if oos:
+            out[m.group(1)] = oos.group(1) == "true"
+    return out
 
 
 def parse_category_page(page, current=1):
-    """Category HTML -> (products in the parse_search shape, has_next). has_next = the page links to
-    ?page=current+1. Raises SiteChanged when page 1 has no product cards (markup differs from the assumption:
-    the scan skips that category with a warning)."""
+    """Category HTML -> (products in the parse_search shape, has_more). has_more = the page shows pagination
+    (none seen live on 2026-10-21: we read page 1 only and only WARN when it appears). Raises SiteChanged when
+    page 1 has no product cards (the scan skips that category with a warning)."""
     parser = _CategoryParser()
     parser.feed(page or "")
     parser.close()
-    out = []
+    stock = _stock_map(page)
+    out, seen = [], set()
     for c in parser.cards:
-        pid = str(c["product_id"] or "")
-        if not pid.isdigit():
+        pid = c["product_id"]
+        if pid in seen:
             continue
-        sale = sh._money(c["ins"]) or sh._money(c["new"])
-        shelf = sh._money(c["del"]) or sh._money(c["old"])
-        plain = sh._money(c["price"])
-        shelf = shelf if shelf is not None else plain
-        out.append({"product_id": pid, "name": sh._clean(sh.html.unescape(c["name"] or c["any_name"]), 120),
+        seen.add(pid)
+        sale, shelf = sh._money(c["ins"]), sh._money(c["del"])
+        if shelf is None:                       # no <del> = regular price, not a deal
+            shelf, sale = sale, None
+        out.append({"product_id": pid, "name": sh._clean(sh.html.unescape(c["name"]), 120),
                     "price": sale if sale is not None else shelf, "shelf_price": shelf,
                     "on_sale": sale is not None and shelf is not None and sale < shelf,
-                    "promo": sh._clean(c["ribbon"], 60) or None, "in_cart": False, "out_of_stock": False,
+                    "promo": None, "sticker": sh._clean(c["sticker"], 40) or None,
+                    "unit_text": sh._clean(c["weight"], 60) or None,
+                    "in_cart": bool(c["in_cart"]), "out_of_stock": bool(stock.get(pid)),
                     "minimum": 1, "weighted": False, "url": sh._product_url(c["href"]) or product_link(pid)})
     if not out and int(current) == 1:
         raise sh.SiteChanged("דף המבצעים באתר לא במבנה הצפוי; דילגתי עליו.")
-    return out, (int(current) + 1) in parser.page_links and bool(out)
+    return out, bool(_PAGINATION.search(page or "")) and bool(out)
 
 
 def parse_category(page):
@@ -375,7 +396,9 @@ class SiteOps:
             return sh._read_cart()
 
     def category_page(self, key, page):
-        url = CATEGORY_URLS[key] + (f"?page={int(page)}" if int(page) > 1 else "")
+        if int(page) != 1:
+            raise sh.PolicyError("page 1 only")
+        url = CATEGORY_URLS[key] + ("?limit=100" if LIMIT_100 else "")
         with sh._lock:
             sh._require_login()
             return parse_category_page(sh._cart_send("GET", url, referer=sh.BASE + "/"), page)
@@ -561,7 +584,7 @@ def run(list_entries=(), regulars=(), staples=(), defaults=None, kashrut_level=N
                 break
             page += 1
         if page > max_pages and pages_read.get(key) == max_pages:
-            warnings.append(f"{CATEGORY_HE.get(key, key)}: נקראו רק {max_pages} עמודים (מגבלת עמודים).")
+            warnings.append(f"{CATEGORY_HE.get(key, key)}: בדף יש מעבר לעמודים נוספים — נקרא רק עמוד 1.")
         if stopped:
             break
 
@@ -615,12 +638,14 @@ def _deal_line(i, d):
     pct = f" (‎-{d['pct_off']}%)" if d.get("pct_off") else ""
     extra_cart = "בעגלה" if d.get("in_cart") and d.get("tier") not in (TIER_CART, TIER_NOTABLE) else None
     tags = [t for t in (d.get("why"), extra_cart, "חדש" if d.get("new") else None) if t]
-    until = f"עד {dt.date.fromisoformat(d['until']).strftime('%d.%m')}" if d.get("until") else "תוקף לא מוצג"
+    until = f"עד {dt.date.fromisoformat(d['until']).strftime('%d.%m')}" if d.get("until") else None
     flag = f" 🔍 {d['kashrut_flag']}" if d.get("kashrut_flag") else ""
     weighted = " · במשקל" if d.get("weighted") else ""
+    sticker = f"מדבקה: {d['sticker']}" if d.get("sticker") else None
     head = f"{i}. {sh._clip(d['name'], 60)} — {price}{pct}"
-    meta = " · ".join(tags + [until])
-    return f"{head}\n   {meta}{weighted}{flag}\n   {d.get('url') or ''}".rstrip()
+    meta = " · ".join(t for t in tags + [sticker, d.get("unit_text"), until] if t)
+    lines = [head] + ([f"   {meta}{weighted}{flag}"] if meta or weighted or flag else []) + [f"   {d.get('url') or ''}"]
+    return "\n".join(lines).rstrip()
 
 
 def login_failed_line(reason):
@@ -653,7 +678,7 @@ def render(result, error_status=None):
         flagged = sum(1 for d in mine + notable if d.get("kashrut_flag"))
         if flagged:
             out += ["", f"🔍 {flagged} מבצעים בלי כשרות מהדרין/בד״ץ בשם המוצר — לבדוק בדף המוצר לפני קנייה."]
-    read = ", ".join(f"{CATEGORY_HE.get(k, k)} ({n} עמ׳)" for k, n in (result.get("pages") or {}).items())
+    read = ", ".join(CATEGORY_HE.get(k, k) for k in (result.get("pages") or {}))
     out += ["", f"נסרקו: {read or 'אף עמוד'} · כ-{result['requests']} פניות לאתר."]
     if result.get("auto_login"):
         out.append("🔑 החיבור לאתר פג — התחברתי אוטומטית עם קוד SMS.")
@@ -661,7 +686,7 @@ def render(result, error_status=None):
         out.append(f"⚠️ עצרתי באמצע: {result['warnings'][-1] if result['warnings'] else result['stopped']}")
     elif result.get("warnings"):
         out.append("⚠️ " + " ".join(w for w in result["warnings"] if w)[:300])
-    out.append("המחירים מהאתר בזמן הבדיקה; תוקף המבצעים לרוב לא מוצג באתר.")
+    out.append("המחירים (מבצע מול מחיר רגיל) מהאתר בזמן הבדיקה; תנאים כמו 1+1 ותוקף מופיעים לפעמים רק בתמונה באתר.")
     return "\n".join(out)
 
 
@@ -857,23 +882,25 @@ def main(argv=None):
         python -m command_center.super_hist_deals --fixtures tests/fixtures/super-hist-deals [--json]
       Against the running Command Center (all site traffic stays in that one process, so its throttle and
       24 h stop apply; token from COMMAND_CENTER_TOKEN):
-        python -m command_center.super_hist_deals --api http://command-center:8080/v1 [--max-pages 5] [--json]
+        python -m command_center.super_hist_deals --api http://command-center:8080/v1 [--json]
     Prints the Hebrew message (or the JSON result). Exit 0 ok/partial, 2 login_failed, 3 blocked/error."""
     import argparse
     ap = argparse.ArgumentParser(prog="super_hist_deals")
     src = ap.add_mutually_exclusive_group(required=True)
     src.add_argument("--fixtures", help="directory with SYNTHETIC fixtures (offline)")
     src.add_argument("--api", help="Command Center base URL, e.g. http://command-center:8080/v1")
-    ap.add_argument("--max-pages", type=int, default=MAX_PAGES)
+    ap.add_argument("--live-sample", action="store_true",
+                    help="with --fixtures: use the live-sample-* pages (real cards from 2026-10-21)")
     ap.add_argument("--personal", action="store_true", help="also match against list/cart/regulars")
     ap.add_argument("--json", action="store_true")
     a = ap.parse_args(argv)
     if a.fixtures:
-        result = run_fixtures(a.fixtures, a.max_pages, personal=a.personal)
+        result = run_fixtures(a.fixtures, personal=a.personal,
+                              prefix="live-sample-" if a.live_sample else "")
     else:
         from .mcp_tools.client import CommandCenterClient
         client = CommandCenterClient(a.api)
-        started = client.request("POST", "/super-hist/deals", {"max_pages": a.max_pages, "personal": a.personal},
+        started = client.request("POST", "/super-hist/deals", {"personal": a.personal},
                                  timeout=60)
         if started.get("status") != "running":
             result = started
@@ -889,10 +916,12 @@ def main(argv=None):
 
 
 class FixtureSite:
-    """Offline site from a directory (all SYNTHETIC): cart.html and <category>-p<N>.html pages."""
+    """Offline site from a directory: cart.html and <prefix><category>-p<N>.html pages (prefix "" = SYNTHETIC,
+    "live-sample-" = the real cards captured on 2026-10-21)."""
 
-    def __init__(self, root):
+    def __init__(self, root, prefix=""):
         self.root = Path(root)
+        self.prefix = prefix
         self.calls = []
 
     def cart(self):
@@ -901,11 +930,11 @@ class FixtureSite:
 
     def category_page(self, key, page):
         self.calls.append(("GET", key, page))
-        f = self.root / f"{key}-p{page}.html"
+        f = self.root / f"{self.prefix}{key}-p{page}.html"
         return parse_category_page(f.read_text(encoding="utf-8") if f.exists() else "", page)
 
 
-def run_fixtures(root, max_pages=None, today=None, categories=None, personal=False):
+def run_fixtures(root, max_pages=None, today=None, categories=None, personal=False, prefix=""):
     root = Path(root)
     spec = json.loads((root / "scenario.json").read_text(encoding="utf-8"))
     defaults = None
@@ -913,8 +942,8 @@ def run_fixtures(root, max_pages=None, today=None, categories=None, personal=Fal
         from grocery.defaults import load_defaults
         defaults = load_defaults(str((root / spec["defaults"]).resolve()), user_path=str(root / "none.yaml"))
     return run([{"item": t} for t in spec.get("list", [])], spec.get("regulars", []),
-               spec.get("staples", []), defaults, spec.get("kashrut"), site=FixtureSite(root),
-               categories=categories if categories is not None else spec.get("categories", ["promo"]),
+               spec.get("staples", []), defaults, spec.get("kashrut"), site=FixtureSite(root, prefix),
+               categories=categories if categories is not None else spec.get("categories", list(CATEGORY_PATHS)),
                max_pages=max_pages, previous_ids=set(spec.get("previous_ids", [])), personal=personal,
                login=NoLogin(),
                today=dt.date.fromisoformat(spec["today"]) if spec.get("today") else today)
