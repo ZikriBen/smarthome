@@ -1,0 +1,46 @@
+{
+ "_comment": "SYNTHETIC. Keys/types as the real /search-results/ JSON (live 2026-10-20); every value is fake. Ribbon TEXT formats are assumptions.",
+ "text": "מעבר לכל ה (12) תוצאות",
+ "results": "12",
+ "button_cart": "הוספה לסל",
+ "text_loading": "טוען...",
+ "button_more_details": "פרטים נוספים",
+ "search_input": "ממרח שוקולד",
+ "out_of_stock_text": "אזל מהמלאי",
+ "data": [
+  {
+   "bgfnribbon_text": "השני ב-50%",
+   "product_id": "910501",
+   "name": "ממרח שוקולד 350 גרם",
+   "price": "₪17.90",
+   "price_number": "17.9000",
+   "special": false,
+   "tax": "₪17.90",
+   "minimum": "1",
+   "rating": 0,
+   "out_of_stock": false,
+   "weight": false,
+   "weight_unit_price_text": "",
+   "in_cart": false,
+   "href": "https://super-hist.co.il/index.php?route=product/product&product_id=910501",
+   "thumb": "https://super-hist.co.il/image/cache/fake-910501-200x200.jpg"
+  },
+  {
+   "bgfnribbon_text": false,
+   "product_id": "910502",
+   "name": "שמפו לשיער יבש 700 מ\"ל",
+   "price": "₪24.90",
+   "price_number": "24.9000",
+   "special": "₪9.90",
+   "tax": "₪9.90",
+   "minimum": "1",
+   "rating": 0,
+   "out_of_stock": false,
+   "weight": false,
+   "weight_unit_price_text": "",
+   "in_cart": false,
+   "href": "https://super-hist.co.il/index.php?route=product/product&product_id=910502",
+   "thumb": "https://super-hist.co.il/image/cache/fake-910502-200x200.jpg"
+  }
+ ]
+}

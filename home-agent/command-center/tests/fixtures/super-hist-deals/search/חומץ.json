@@ -1,0 +1,46 @@
+{
+ "_comment": "SYNTHETIC. Keys/types as the real /search-results/ JSON (live 2026-10-20); every value is fake. Ribbon TEXT formats are assumptions.",
+ "text": "מעבר לכל ה (12) תוצאות",
+ "results": "12",
+ "button_cart": "הוספה לסל",
+ "text_loading": "טוען...",
+ "button_more_details": "פרטים נוספים",
+ "search_input": "חומץ",
+ "out_of_stock_text": "אזל מהמלאי",
+ "data": [
+  {
+   "bgfnribbon_text": false,
+   "product_id": "910701",
+   "name": "חומץ 5% 1 ליטר",
+   "price": "₪4.90",
+   "price_number": "4.9000",
+   "special": "₪3.90",
+   "tax": "₪3.90",
+   "minimum": "1",
+   "rating": 0,
+   "out_of_stock": false,
+   "weight": false,
+   "weight_unit_price_text": "",
+   "in_cart": false,
+   "href": "https://super-hist.co.il/index.php?route=product/product&product_id=910701",
+   "thumb": "https://super-hist.co.il/image/cache/fake-910701-200x200.jpg"
+  },
+  {
+   "bgfnribbon_text": false,
+   "product_id": "910702",
+   "name": "חומץ בלסמי 250 מ\"ל",
+   "price": "₪19.90",
+   "price_number": "19.9000",
+   "special": "₪12.90",
+   "tax": "₪12.90",
+   "minimum": "1",
+   "rating": 0,
+   "out_of_stock": false,
+   "weight": false,
+   "weight_unit_price_text": "",
+   "in_cart": false,
+   "href": "https://super-hist.co.il/index.php?route=product/product&product_id=910702",
+   "thumb": "https://super-hist.co.il/image/cache/fake-910702-200x200.jpg"
+  }
+ ]
+}

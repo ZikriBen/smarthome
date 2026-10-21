@@ -66,6 +66,9 @@ POST_ROUTES = {"account/login/sms", "account/login/sms_validate",
                "checkout/cart/add", "checkout/cart/remove", "checkout/cart/edit"}
 GET_PATHS = {"/", "/login/"}
 POST_PATHS = {SEARCH_PATH}
+# Read-only promotions category pages (deals scan, super_hist_deals). Compared after percent-decoding; only
+# page 1 (no query) or ?page=N. The page markup is NOT verified live yet: the deals scan keeps them off by default.
+PROMO_GET_PATHS = {"/משלמים-פחות-מקבלים-יותר/"}
 BLOCKED_WORDS = re.compile(
     r"checkout|cart/clear|coupon|voucher|payment|order|confirm|shipping|success|/pay|=pay|register|guest", re.I)
 # Bot-challenge / captcha markers (Cloudflare interstitial, reCAPTCHA/hCaptcha/Turnstile widgets).
@@ -105,7 +108,8 @@ def check_url(method, url):
     if BLOCKED_WORDS.search(scrubbed):
         raise PolicyError("נתיב חסום (קופה/תשלום/הזמנה/קופון/משלוח) לא נשלח")
     if method == "GET":
-        ok = (u.path in GET_PATHS and not u.query) or (u.path == "/index.php" and route in GET_ROUTES)
+        ok = ((u.path in GET_PATHS and not u.query) or (u.path == "/index.php" and route in GET_ROUTES)
+              or (urllib.parse.unquote(u.path) in PROMO_GET_PATHS and re.fullmatch(r"(?:page=[1-9]\d?)?", u.query)))
     elif method == "POST":
         ok = (u.path in POST_PATHS and not u.query) or (u.path == "/index.php" and route in POST_ROUTES)
     else:

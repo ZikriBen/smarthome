@@ -1,0 +1,23 @@
+{
+ "_comment": "SYNTHETIC scenario for the deals scan (offline). No personal data.",
+ "today": "2026-10-21",
+ "kashrut": "mehadrin",
+ "defaults": "../../../grocery-defaults.yaml",
+ "list": [
+  "חלב",
+  "ביצים",
+  "קפה טורקי",
+  "שמפו"
+ ],
+ "regulars": [
+  "פיתות"
+ ],
+ "staples": [
+  "ממרח שוקולד",
+  "סוכר",
+  "חומץ"
+ ],
+ "previous_ids": [
+  "910401"
+ ]
+}

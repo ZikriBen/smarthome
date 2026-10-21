@@ -77,6 +77,8 @@ mcp_servers:
         - super_hist_cart_add
         - super_hist_cart_set_qty
         - super_hist_cart_remove
+        - super_hist_deals
+        - super_hist_deals_status
 
 browser:
   # "off" = built-in browser_* tools on local Chromium (default auto-picks the Browser Use CLI,

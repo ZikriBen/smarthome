@@ -50,3 +50,16 @@ def register(mcp, client):
     def super_hist_cart_remove(product_id: str) -> dict:
         """Propose (do not execute) removing one product line from Ben's הסופר החברתי cart — only when Ben explicitly asked to remove that item. Show `text`, append [[CC_APPROVAL:<approval_id>]]. Never remove items on your own initiative and never empty the cart."""
         return client.request("POST", "/proposals/super-hist-cart/remove", {"product_id": product_id}, timeout=120)
+
+    # ------------------------------------------------------------------ deals (read-only scan)
+
+    @mcp.tool()
+    def super_hist_deals(max_searches: int = 12) -> dict:
+        """Read-only: scan הסופר החברתי for promotions on what Ben buys (his grocery list, his cart, regulars, staples), plus a few other big food deals. Takes minutes (>=10s between site requests; ~max_searches+3 requests), so it starts a background run: tell Ben 'בודק מבצעים בסופר החברתי (~N דק׳)' using `text`, then call super_hist_deals_status(run_id). Nothing is added to the cart. site_blocked/already_running/invalid: relay `text`."""
+        return client.request("POST", "/super-hist/deals", {"max_searches": max_searches}, timeout=60)
+
+    @mcp.tool()
+    def super_hist_deals_status(run_id: str, wait_seconds: int = 60) -> dict:
+        """Result of a super_hist_deals run (waits up to wait_seconds, max 90). running: wait and call again (don't start a new scan). ok/partial: send `text` to Ben as-is (Hebrew; deals with links; 🔍 = kashrut not shown in the product name). login_required: ask Ben whether to send an SMS code; only after he says yes call super_hist_login_start, then run super_hist_deals again. site_blocked/site_changed: relay `text`, do not retry."""
+        return client.request("POST", "/super-hist/deals/status",
+                              {"run_id": run_id, "wait_seconds": wait_seconds}, timeout=120)
