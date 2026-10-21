@@ -14,3 +14,4 @@ services:
       - /home/ben/media/incoming:/media/telegram
       - /home/ben/media/tv:/media/tv
       - /home/ben/media/movies:/media/movies
+      - /home/ben/media/streams:/media/telegram-streams:ro

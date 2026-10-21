@@ -969,6 +969,13 @@ function renderGrid(
                         </small>
 
                     </button>
+
+                    <button
+                        class="watch-button"
+                        data-watch-id="${variant.message_id}"
+                        title="צפה עכשיו ב-Jellyfin"
+                        aria-label="צפה עכשיו"
+                    >▶</button>
                 `
             )
             .join("");
@@ -1142,6 +1149,23 @@ function renderGrid(
                     }
                 );
 
+            }
+        );
+
+        card.querySelectorAll(
+            ".watch-button"
+        ).forEach(
+            button => {
+                button.addEventListener(
+                    "click",
+                    async event => {
+                        event.stopPropagation();
+                        await watchNow(
+                            Number(button.dataset.watchId),
+                            button
+                        );
+                    }
+                );
             }
         );
 
@@ -1392,6 +1416,44 @@ function stopDownloadPolling() {
 
     downloadPollTimer =
         null;
+}
+
+
+async function watchNow(
+    variantId,
+    button
+) {
+    // Open the tab now (user gesture), point it at Jellyfin when ready.
+    const tab = window.open("about:blank", "_blank");
+    button.disabled = true;
+    button.textContent = "…";
+    try {
+        const response = await fetch(
+            `/api/watch/${variantId}`,
+            { method: "POST" }
+        );
+        const data = await response.json();
+        if (!response.ok) {
+            throw new Error(data.detail || "Watch error");
+        }
+        if (data.status === "ready" && data.url) {
+            if (tab) { tab.location.href = data.url; } else { window.location.href = data.url; }
+        } else {
+            if (tab) { tab.close(); }
+            alert(
+                data.status === "pending"
+                    ? "נוסף ל-Jellyfin, יופיע תוך דקה"
+                    : "הקובץ נוצר, אבל רענון Jellyfin דולג"
+            );
+        }
+    } catch (error) {
+        console.error(error);
+        if (tab) { tab.close(); }
+        alert("שגיאה בהכנת הצפייה");
+    } finally {
+        button.disabled = false;
+        button.textContent = "▶";
+    }
 }
 
 

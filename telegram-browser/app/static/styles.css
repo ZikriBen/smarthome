@@ -1863,3 +1863,21 @@ dialog::backdrop {
             13px;
     }
 }
+
+
+/* tg-stream PoC: "Watch now" button next to each quality */
+.watch-button {
+    flex: 0 0 auto;
+    min-width: 40px;
+    border: 1px solid var(--muted, #888);
+    border-radius: 10px;
+    background: transparent;
+    color: inherit;
+    cursor: pointer;
+    font-size: 16px;
+}
+
+.watch-button:disabled {
+    opacity: 0.5;
+    cursor: progress;
+}

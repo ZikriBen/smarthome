@@ -29,6 +29,12 @@ from telethon import TelegramClient
 
 from app.database import CatalogDatabase
 from app.searchgram import SearchGram
+from app.stream import signing as stream_signing
+from app.stream import watch as stream_watch
+from app.stream.cache import ChunkCache
+from app.stream.server import EmbeddedServer, build_stream_app
+from app.stream.service import StreamService, is_media_mime
+from app.stream.telegram_source import TelegramChunkSource
 from app.sync import CatalogSyncer
 
 
@@ -130,8 +136,31 @@ BASE_DIR = (
 )
 
 POSTER_CACHE_DIR = Path(
-    "/data/posters"
+    os.getenv(
+        "POSTER_CACHE_DIR",
+        "/data/posters",
+    )
 )
+
+
+# ---------------------------------------------------------------- tg-stream PoC
+# Direct watch (Lulu catalog only). Served on a SEPARATE listener (default
+# :8789) by the same process, so it uses this app's live Telethon client.
+TG_STREAM_HMAC_KEY_FILE = os.getenv("TG_STREAM_HMAC_KEY_FILE", "")
+TG_STREAM_BIND = os.getenv("TG_STREAM_BIND", "0.0.0.0")  # container-internal; publish LAN-only in compose
+TG_STREAM_PORT = int(os.getenv("TG_STREAM_PORT", "8789"))
+TG_STREAM_PUBLIC_BASE = os.getenv("TG_STREAM_PUBLIC_BASE", "").rstrip("/")
+TG_STREAM_CONNECTIONS = min(2, max(1, int(os.getenv("TG_STREAM_CONNECTIONS", "2"))))
+TG_STREAM_MAX_STREAMS = min(2, max(1, int(os.getenv("TG_STREAM_MAX_STREAMS", "2"))))
+TG_STREAM_CACHE_MB = int(os.getenv("TG_STREAM_CACHE_MB", "128"))
+TG_STREAM_PREFETCH_MB = float(os.getenv("TG_STREAM_PREFETCH_MB", "2"))
+TG_STREAMS_DIR = Path(os.getenv("TG_STREAMS_DIR", "/streams"))
+JELLYFIN_URL = os.getenv("JELLYFIN_URL", "http://<LAN_IP>:8096").rstrip("/")
+JELLYFIN_PUBLIC_URL = os.getenv("JELLYFIN_PUBLIC_URL", JELLYFIN_URL).rstrip("/")
+JELLYFIN_API_KEY_FILE = os.getenv("JELLYFIN_API_KEY_FILE", "")
+JELLYFIN_STREAMS_PATH = os.getenv("JELLYFIN_STREAMS_PATH", "/media/telegram-streams")
+JELLYFIN_STREAMS_LIBRARY_ID = os.getenv("JELLYFIN_STREAMS_LIBRARY_ID", "").strip() or None
+JELLYFIN_POLL_TIMEOUT_S = float(os.getenv("JELLYFIN_POLL_TIMEOUT_S", "45"))
 
 POSTER_CACHE_DIR.mkdir(
     parents=True,
@@ -152,6 +181,40 @@ searchgram: SearchGram | None = None
 background_sync_task: (
     asyncio.Task | None
 ) = None
+
+stream_service: StreamService | None = None
+
+stream_server: EmbeddedServer | None = None
+
+stream_source: TelegramChunkSource | None = None
+
+_stream_tasks: set = set()
+
+
+def stream_key() -> bytes | None:
+    # Re-read lazily so a rotated key file is picked up without restart;
+    # the value is never logged or returned.
+    try:
+        return stream_signing.load_key(TG_STREAM_HMAC_KEY_FILE)
+    except stream_signing.HmacKeyError as exc:
+        print(f"tg-stream disabled: {exc}", flush=True)
+        return None
+
+
+def make_stream_service(tg_client) -> StreamService:
+    async def fetch_message(variant_id: int):
+        # Chat is fixed to the Lulu source; callers can only pass a variant id.
+        return await tg_client.get_messages(SOURCE_CHAT_ID, ids=int(variant_id))
+
+    global stream_source
+    stream_source = TelegramChunkSource(tg_client, connections=TG_STREAM_CONNECTIONS)
+    return StreamService(
+        catalog_lookup=database.get_variant_details,
+        fetch_message=fetch_message,
+        source=stream_source,
+        cache=ChunkCache(TG_STREAM_CACHE_MB * 1024 * 1024),
+        max_streams=TG_STREAM_MAX_STREAMS,
+    )
 
 
 def cleanup_poster_cache() -> None:
@@ -483,6 +546,22 @@ async def lifespan(
 
     cleanup_poster_cache()
 
+    global stream_service
+    global stream_server
+
+    stream_service = make_stream_service(client)
+
+    if stream_key():
+        stream_server = EmbeddedServer(
+            build_stream_app(stream_service, stream_key),
+            TG_STREAM_BIND,
+            TG_STREAM_PORT,
+        )
+        stream_server.start()
+        print(f"tg-stream listening on container port {TG_STREAM_PORT}", flush=True)
+    else:
+        print("tg-stream disabled: no TG_STREAM_HMAC_KEY_FILE", flush=True)
+
     background_sync_task = (
         asyncio.create_task(
             syncer.run_background(
@@ -511,6 +590,12 @@ async def lifespan(
 
             except asyncio.CancelledError:
                 pass
+
+        if stream_server is not None:
+            await stream_server.stop()
+
+        if stream_source is not None:
+            await stream_source.close()
 
         await client.disconnect()
 
@@ -1338,6 +1423,71 @@ async def poster(
     )
 
 
+@app.api_route(
+    "/s/{rest:path}",
+    methods=["GET", "HEAD", "POST"],
+)
+async def no_streams_here(rest: str):
+    # Streams are served ONLY by the separate LAN-only listener.
+    raise HTTPException(status_code=404, detail="Not Found")
+
+
+async def poster_bytes(poster_message_id: int | None) -> bytes | None:
+    if not poster_message_id:
+        return None
+    cached = POSTER_CACHE_DIR / f"{int(poster_message_id)}.jpg"
+    if cached.exists():
+        return cached.read_bytes()
+    try:
+        response = await poster(int(poster_message_id))
+    except HTTPException:
+        return None
+    return bytes(response.body)
+
+
+def _spawn(coro) -> None:
+    task = asyncio.create_task(coro)
+    _stream_tasks.add(task)
+    task.add_done_callback(_stream_tasks.discard)
+
+
+@app.post(
+    "/api/watch/{variant_id}",
+)
+async def watch_now(
+    variant_id: int,
+):
+    key = stream_key()
+    if key is None or not TG_STREAM_PUBLIC_BASE:
+        raise HTTPException(status_code=503, detail="Streaming is not configured")
+    row = database.get_variant_details(variant_id)
+    if not row or not is_media_mime(row.get("mime_type")):
+        raise HTTPException(status_code=404, detail="Unknown variant")
+    url = f"{TG_STREAM_PUBLIC_BASE}/s/{int(variant_id)}/{stream_signing.sign(key, variant_id)}"
+    picture = await poster_bytes(row.get("poster_message_id"))
+    entry, changed = await asyncio.to_thread(
+        stream_watch.write_entry, TG_STREAMS_DIR, row, row, url, picture
+    )
+    if stream_service is not None and TG_STREAM_PREFETCH_MB > 0:
+        # Lulu has no delivery quota (DESIGN 3b), so warming is free of slots.
+        _spawn(stream_service.prefetch_edges(int(variant_id), int(TG_STREAM_PREFETCH_MB * 1024 * 1024)))
+    result = {"variant_id": int(variant_id), "folder": entry.name, "written": changed}
+    api_key = stream_watch.read_secret_file(JELLYFIN_API_KEY_FILE)
+    if not api_key:
+        return {**result, "status": "refresh_skipped", "detail": "No Jellyfin API key configured"}
+    jf = stream_watch.JellyfinClient(JELLYFIN_URL, api_key)
+    found = await stream_watch.refresh_and_find(
+        jf,
+        strm_path=stream_watch.jellyfin_path(entry.strm, TG_STREAMS_DIR, JELLYFIN_STREAMS_PATH),
+        folder_path=stream_watch.jellyfin_path(entry.folder, TG_STREAMS_DIR, JELLYFIN_STREAMS_PATH),
+        search_term=row.get("english_title") or row.get("title"),
+        library_id=JELLYFIN_STREAMS_LIBRARY_ID,
+        public_url=JELLYFIN_PUBLIC_URL,
+        timeout=JELLYFIN_POLL_TIMEOUT_S,
+    )
+    return {**result, **found}
+
+
 @app.get(
     "/health",
 )
@@ -1407,6 +1557,12 @@ async def health():
 
         "searchgram":
             searchgram is not None,
+
+        "tg_stream":
+            stream_service.health()
+            if stream_server is not None
+            and stream_service is not None
+            else None,
     }
 
 

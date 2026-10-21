@@ -11,10 +11,24 @@ services:
 
     environment:
       PYTHONPATH: /shared
+      # tg-stream PoC (non-secret settings; secrets are files under ./secrets)
+      TG_STREAM_HMAC_KEY_FILE: /run/secrets/tgstream/tg_stream_hmac.key
+      TG_STREAM_PORT: "8789"
+      TG_STREAM_PUBLIC_BASE: "http://${TG_STREAM_LAN_IP:-127.0.0.1}:8789"
+      TG_STREAMS_DIR: /streams
+      JELLYFIN_URL: "${JELLYFIN_URL:-http://<LAN_IP>:8096}"
+      JELLYFIN_API_KEY_FILE: /run/secrets/tgstream/jellyfin_api_key
+      JELLYFIN_STREAMS_PATH: /media/telegram-streams
+      JELLYFIN_STREAMS_LIBRARY_ID: "${JELLYFIN_STREAMS_LIBRARY_ID:-}"
 
     ports:
       - "8788:8788"
+      # Stream listener: LAN IP only. If TG_STREAM_LAN_IP is unset this binds
+      # to host loopback (i.e. not reachable from the LAN), never 0.0.0.0.
+      - "${TG_STREAM_LAN_IP:-127.0.0.1}:8789:8789"
 
     volumes:
       - ./data:/data
       - ../shared:/shared:ro
+      - ./secrets:/run/secrets/tgstream:ro
+      - /home/ben/media/streams:/streams
