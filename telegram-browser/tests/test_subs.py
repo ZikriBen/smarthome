@@ -60,7 +60,10 @@ def test_bad_input():
 def test_names_and_langs():
     t = subs.SubTrack(2, "S_TEXT/UTF8", "heb")
     assert subs.sidecar_name("A (2001) - 720p.strm", t) == "A (2001) - 720p.heb.default.srt"
-    t.forced = True
+    t.forced = True  # the MKV flag is NOT trusted (Lulu flags full tracks forced)
+    assert subs.sidecar_name("A (2001) - 720p.strm", t) == "A (2001) - 720p.heb.default.srt"
+    assert subs.sidecar_name("A (2001) - 720p.strm", t, forced=True) == "A (2001) - 720p.heb.forced.srt"
+    t.name = "Hebrew (Forced)"
     assert subs.sidecar_name("A (2001) - 720p.strm", t) == "A (2001) - 720p.heb.forced.srt"
     assert subs.norm_lang("he") == subs.norm_lang("iw") == subs.norm_lang("he-IL") == "heb"
     assert subs.norm_lang("") == "und" and subs.norm_lang("fre") == "fre" and subs.norm_lang("x1") == "und"
@@ -426,3 +429,76 @@ def test_first_build_sidecars_are_redone_and_removed(tmp_path):
     assert jobs.public(555)["state"] == "done"
     assert sorted(p.name for p in e.folder.glob("*.srt")) == [f"{stem}.heb.default.srt"]
     assert json.loads((e.folder / watch.MARKER).read_text())["subs"] == {"555": [f"{stem}.heb.default.srt"]}
+
+
+LULU_AD = 'להצטרפות לקבוצה שלחו "צירוף" - t.me/LuluTest1\nלערוץ עדכונים - t.me/LuluTestOfficial'
+
+
+def test_forced_heuristic_ignores_the_mkv_flag():
+    # NUC audit: full Hebrew tracks flagged default+forced, 1003-1348 cues over 82-138 min
+    for cues, minutes in ((1003, 82), (1018, 90), (1348, 138)):
+        assert not subs.looks_forced(cues, minutes * 60, LULU_AD)
+    assert subs.looks_forced(60, 100 * 60)          # 0.6 cues/min: real forced (signs/foreign lines)
+    assert not subs.looks_forced(160, 100 * 60)     # 1.6/min: above 15% of a full track
+    assert subs.looks_forced(900, 90 * 60, "Hebrew Forced")
+    assert subs.looks_forced(900, 90 * 60, "עברית מאולצות")
+    assert subs.looks_forced(10, None) and not subs.looks_forced(500, None)
+    lulu = subs.SubTrack(3, "S_TEXT/UTF8", "heb", name=LULU_AD, default=True, forced=True)
+    real_forced = subs.SubTrack(4, "S_TEXT/UTF8", "heb", name="Forced", default=False, forced=True)
+    assert subs.hebrew_track([real_forced, lulu]) is lulu
+
+
+def _srt(n, minutes):
+    step = minutes * 60 / n
+    out = []
+    for i in range(n):
+        a = i * step
+        out.append(f"{i + 1}\n00:{int(a // 60):02d}:{a % 60:06.3f} --> 00:{int(a // 60):02d}:{a % 60:06.3f}\nx\n".replace(".", ","))
+    return "\n".join(out)
+
+
+def test_round1_forced_sidecars_are_renamed_in_place(tmp_path):
+    """Round 1 wrote <stem>.heb.forced.srt for Lulu's full tracks: renamed to
+    .heb.default.srt with no Telegram read; a sparse (truly forced) one stays."""
+    root = tmp_path / "streams"
+    full, _ = watch.write_entry(root, MOVIE, MOVIE, "http://x/s/555/a", None)
+    other = dict(MOVIE, message_id=556, english_title="Other", title="אחר")
+    sparse, _ = watch.write_entry(root, other, other, "http://x/s/556/a", None)
+    for e, vid, body in ((full, 555, _srt(1003, 59)), (sparse, 556, _srt(40, 59))):
+        stem = e.strm.name[:-len(".strm")]
+        (e.folder / f"{stem}.heb.forced.srt").write_text(body)
+        subs.record_sidecars(e.folder, watch.MARKER, vid, [f"{stem}.heb.forced.srt"])
+    logs = []
+    out = subs.migrate_all_sidecars(root, watch.MARKER, logs.append)
+    stem = full.strm.name[:-len(".strm")]
+    assert out == [(555, full.folder, [f"{stem}.heb.default.srt"])]
+    assert sorted(p.name for p in full.folder.glob("*.srt")) == [f"{stem}.heb.default.srt"]
+    assert (full.folder / f"{stem}.heb.default.srt").read_text().count("-->") == 1003
+    assert json.loads((full.folder / watch.MARKER).read_text())["subs"] == {"555": [f"{stem}.heb.default.srt"]}
+    sstem = sparse.strm.name[:-len(".strm")]
+    assert [p.name for p in sparse.folder.glob("*.srt")] == [f"{sstem}.heb.forced.srt"]
+    assert any("renamed" in m for m in logs) and any("kept" in m for m in logs)
+    # idempotent, and the renamed file counts as done (no new Telegram read)
+    assert subs.migrate_all_sidecars(root, watch.MARKER, logs.append) == []
+
+    async def scenario():
+        jobs = subs.SubtitleJobs(FakeSvc(b""), marker_name=watch.MARKER, max_bytes=1 << 30, max_seconds=60, log=logs.append)
+        return jobs.schedule(555, {"size": 1000}, full.folder, full.strm.name, True)
+
+    assert asyncio.run(scenario())["status"] == "ready"
+
+
+def test_schedule_renames_a_round1_forced_sidecar_without_reading(tmp_path):
+    _, e = _entry(tmp_path)
+    stem = e.strm.name[:-len(".strm")]
+    (e.folder / f"{stem}.heb.forced.srt").write_text(_srt(1348, 138))
+    subs.record_sidecars(e.folder, watch.MARKER, 555, [f"{stem}.heb.forced.srt"])
+
+    async def scenario():
+        svc = FakeSvc(b"")
+        jobs = subs.SubtitleJobs(svc, marker_name=watch.MARKER, max_bytes=1 << 30, max_seconds=60, log=lambda m: None)
+        st = jobs.schedule(555, {"size": 1000}, e.folder, e.strm.name, True)
+        return st, svc.calls
+
+    st, calls = asyncio.run(scenario())
+    assert st["status"] == "ready" and st["files"] == [f"{stem}.heb.default.srt"] and calls == 0

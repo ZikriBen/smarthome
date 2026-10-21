@@ -260,3 +260,23 @@ def test_watch_double_tap_joins_inflight_job_and_reports_phase(configured, monke
     reports = [r for r in srv.requests if r[1].startswith("/Library/Media/Updated")]
     assert len(reports) == 1  # one refresh cycle, not two
     assert not web._watch_inflight
+
+
+def test_startup_migration_renames_and_refreshes(tmp_path, monkeypatch):
+    from app.stream import subs as stream_subs, watch as stream_watch
+    folder = tmp_path / "streams" / "Film (2001)"
+    folder.mkdir(parents=True)
+    name = "Film (2001) - 720p.heb.forced.srt"
+    (folder / name).write_text("".join(f"{i}\n00:{i // 60:02d}:{i % 60:02d},000 --> 00:{i // 60:02d}:{i % 60:02d},500\nx\n\n"
+                                       for i in range(1, 900)))
+    stream_subs.record_sidecars(folder, stream_watch.MARKER, 555, [name])
+    seen = []
+
+    async def fake_refresh(vid, f, names):
+        seen.append((vid, f.name, names))
+
+    monkeypatch.setattr(web, "TG_STREAMS_DIR", tmp_path / "streams")
+    monkeypatch.setattr(web, "refresh_item_for_subs", fake_refresh)
+    asyncio.run(web.migrate_round1_sidecars())
+    assert seen == [(555, "Film (2001)", ["Film (2001) - 720p.heb.default.srt"])]
+    assert [p.name for p in folder.glob("*.srt")] == ["Film (2001) - 720p.heb.default.srt"]

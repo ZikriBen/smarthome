@@ -202,14 +202,38 @@ def pick_tracks(tracks: list[SubTrack], limit: int = MAX_TRACKS) -> list[SubTrac
     return out[:limit]
 
 
+# The MKV forced flag is not trusted: Lulu uploads flag their FULL Hebrew track
+# default=1 forced=1 (NUC audit 2026-10-21: 1003-1348 cues, a channel ad as the
+# track name). A track is treated as truly forced only if its title says so or it
+# is sparse: fewer than FORCED_MAX_RATIO of a full track's cue density.
+FULL_CUES_PER_MIN = 10.0     # full subtitles: ~8-15 cues/min (NUC: 11-12/min)
+FORCED_MAX_RATIO = 0.15      # -> forced below 1.5 cues/min
+FORCED_MIN_CUES = 50         # runtime unknown: forced below this many cues
+FORCED_TITLE_WORDS = ("forced", "מאולצ", "foreign")
+
+
+def title_says_forced(title: str) -> bool:
+    t = (title or "").lower()
+    return any(w in t for w in FORCED_TITLE_WORDS)
+
+
+def looks_forced(n_cues: int, runtime_s: float | None, title: str = "") -> bool:
+    """True only for a genuinely forced (sparse) track; the container flag is ignored."""
+    if title_says_forced(title):
+        return True
+    if not runtime_s or runtime_s <= 0:
+        return n_cues < FORCED_MIN_CUES
+    return n_cues < FULL_CUES_PER_MIN * FORCED_MAX_RATIO * (runtime_s / 60.0)
+
+
 def hebrew_track(tracks: list[SubTrack]) -> SubTrack | None:
-    """The ONE Hebrew text track we turn into a sidecar: a full (non-forced)
-    track, default-flagged first, else lowest number; a forced-only Hebrew
-    track is used only when there is no full one."""
+    """The ONE Hebrew text track we turn into a sidecar. The forced FLAG is not
+    trusted (see above), so: a title that does not say forced first, then
+    unflagged, then default-flagged, then lowest number."""
     heb = [t for t in tracks if t.lang == "heb"]
     if not heb:
         return None
-    return sorted(heb, key=lambda t: (t.forced, not t.default, t.number))[0]
+    return sorted(heb, key=lambda t: (title_says_forced(t.name), t.forced, not t.default, t.number))[0]
 
 
 @dataclass
@@ -614,14 +638,80 @@ def to_srt(cues: list) -> bytes:
     return "\n".join(out).encode("utf-8")
 
 
-def sidecar_name(strm_name: str, track: SubTrack) -> str:
+def sidecar_name(strm_name: str, track: SubTrack, forced: bool | None = None) -> str:
     """``<stem>.heb.default.srt``: Jellyfin 12.1's ExternalPathParser turns the
-    ``.default`` flag into IsDefault, and MediaStreamSelector orders external
-    first, then IsDefault, so this one file wins in every SubtitleMode/language
-    preference combination (verified against a 12.1.0 server, see STREAMING.md).
-    A forced-only Hebrew track becomes ``<stem>.heb.forced.srt`` (no default)."""
+    ``.default`` flag into IsDefault and MediaStreamSelector orders external
+    first, so this file wins in every SubtitleMode/language combination (verified
+    on 12.1.0, STREAMING.md); its DisplayTitle is "Hebrew - Default - SUBRIP -
+    External" (no channel ad). ``.heb.forced.srt`` only for a truly forced track
+    (``forced``: decided by ``looks_forced``; default: the track title only,
+    never the MKV flag)."""
     stem = strm_name[:-5] if strm_name.endswith(".strm") else strm_name
-    return f"{stem}.{track.lang}.{'forced' if track.forced else 'default'}.srt"
+    if forced is None:
+        forced = title_says_forced(track.name)
+    return f"{stem}.{track.lang}.{'forced' if forced else 'default'}.srt"
+
+
+def srt_stats(text: str) -> tuple[int, float]:
+    """(cue count, end of the last cue in seconds) of an .srt."""
+    n, last = 0, 0.0
+    for line in text.splitlines():
+        if "-->" not in line:
+            continue
+        n += 1
+        try:
+            end = line.split("-->", 1)[1].strip().split()[0].replace(",", ".")
+            h, m, sec = end.split(":")
+            last = max(last, int(h) * 3600 + int(m) * 60 + float(sec))
+        except (ValueError, IndexError):
+            pass
+    return n, last
+
+
+def migrate_forced_sidecars(folder: Path, marker_name: str, log=print) -> list[tuple[int, list[str]]]:
+    """Round-1 builds named a full Hebrew track ``<stem>.heb.forced.srt`` because
+    of the MKV flag. Rename such files to ``.heb.default.srt`` in place (no new
+    Telegram read) when the file itself is dense enough to be a full track.
+    Returns ``[(variant_id, [new_name])]`` for the renamed ones."""
+    marker = folder / marker_name
+    try:
+        data = json.loads(marker.read_text())
+    except (OSError, ValueError):
+        return []
+    out = []
+    for key, names in list((data.get("subs") or {}).items()):
+        if not (isinstance(names, list) and len(names) == 1 and str(names[0]).endswith(".heb.forced.srt")):
+            continue
+        old = str(names[0])
+        if "/" in old:
+            continue
+        src = folder / old
+        try:
+            n, last = srt_stats(src.read_text(encoding="utf-8", errors="replace"))
+        except OSError:
+            continue
+        if looks_forced(n, last):
+            log(f"[subs] {key}: kept {old} ({n} cues over {last / 60:.0f} min: sparse, truly forced)")
+            continue
+        new = old[: -len(".heb.forced.srt")] + ".heb.default.srt"
+        src.replace(folder / new)
+        record_sidecars(folder, marker_name, int(key), [new])
+        log(f"[subs] {key}: renamed {old} -> {new} ({n} cues over {last / 60:.0f} min: a full track; "
+            f"the MKV forced flag is ignored)")
+        out.append((int(key), [new]))
+    return out
+
+
+def migrate_all_sidecars(root: Path, marker_name: str, log=print) -> list[tuple[int, Path, list[str]]]:
+    out = []
+    if not root.is_dir():
+        return out
+    for marker in sorted(root.glob(f"*/{marker_name}")):
+        try:
+            out += [(vid, marker.parent, names) for vid, names in migrate_forced_sidecars(marker.parent, marker_name, log)]
+        except Exception as exc:  # noqa: BLE001 - one bad folder must not stop the sweep
+            log(f"[subs] migrate {marker.parent.name}: {type(exc).__name__}")
+    return out
 
 
 # Same file name as the final sidecar, so Jellyfin lists it from the first scan;
@@ -728,6 +818,10 @@ class SubtitleJobs:
             self.log(f"[subs] {vid}: skipped: not Matroska "
                      f"(filename ext / mime {str(row.get('mime_type') or '-')})")
             return self.state[vid]
+        try:
+            migrate_forced_sidecars(folder, self.marker_name, self.log)
+        except Exception as exc:  # noqa: BLE001
+            self.log(f"[subs] {vid}: migrate failed: {type(exc).__name__}")
         done = self.existing(folder, vid)
         if done or (cur and cur["status"] == "none"):
             self.state[vid] = cur if cur and cur["status"] == "none" else {"status": "ready", "files": done}
@@ -813,7 +907,7 @@ class SubtitleJobs:
                 watchdog = asyncio.create_task(self._progress_log(vid, st, t0))
                 hdr = await asyncio.wait_for(read_header(reader), timeout=min(120.0, self.max_seconds))
                 heb = hebrew_track(hdr.tracks)
-                langs = sorted({t.lang + (".forced" if t.forced else "") for t in hdr.tracks})
+                langs = sorted({t.lang + (".forced-flag" if t.forced else "") for t in hdr.tracks})
                 if heb is None:
                     self.state[vid] = {"status": "none", "hebrew": False, "detail": "no Hebrew text subtitle track",
                                        "text_tracks": langs, "read_mb": round(reader.fetched_bytes / 1048576, 1)}
@@ -865,6 +959,11 @@ class SubtitleJobs:
                 if not folder.is_dir():
                     self.state[vid] = {"status": "failed", "detail": "entry removed"}
                     return
+                runtime_s = (hdr.duration_ns or 0) / 1e9 or max(c[0] for c in heb.cues) / 1e9
+                final = sidecar_name(strm_name, heb, forced=looks_forced(len(heb.cues), runtime_s, heb.name))
+                if final != name:
+                    self.log(f"[subs] {vid}: {len(heb.cues)} cues over {runtime_s / 60:.0f} min: truly forced -> {final}")
+                    name = final
                 await asyncio.to_thread(write_sidecar, folder / name, to_srt(heb.cues))
                 await asyncio.to_thread(record_sidecars, folder, self.marker_name, vid, [name])
                 self.state[vid] = {"status": "ready", "hebrew": True, "files": [name], "file": name, "mode": mode,

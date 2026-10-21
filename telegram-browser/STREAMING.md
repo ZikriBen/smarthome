@@ -21,7 +21,7 @@ Design: `/workspace/tg-stream-design/DESIGN.md` (box). Lulu catalog only; Search
 - UI (index.html): no new tab. An in-page popup with two live steps: (1) "מכינה את הסרט ב-Jellyfin" (phase text) and (2) "מכינה כתוביות בעברית"
   (% bar = bytes read / bytes planned, ETA). "לצפות עכשיו" appears once step 1 is done; when both are done (or the file has no Hebrew track:
   "אין כתוביות בעברית בקובץ הזה") the SAME tab navigates to Jellyfin. Errors: Hebrew text + "נסה שוב" + a link to the Telegram Streams library.
-  Button disabled while pending (and the server joins duplicates). Cards: each quality is a split button `[quality · size | ▶]`.
+  Button disabled while pending (and the server joins duplicates). Cards: one row per variant: quality + size as text and two text buttons, "צפייה ישירה" (this popup) and "שמירה" (download, unchanged); side by side on wide cards, stacked on the ~170px cards at 360px; ≥ 44px tap targets.
 - Jellyfin auth everywhere: `Authorization: MediaBrowser Token="<key>"` only (12.1 answers 401 to the legacy Emby token header); the key is never in a URL.
   `tests/test_jellyfin_auth_audit.py` enforces it for telegram-browser and telegram-downloader.
 - `GET/HEAD /s/{variant_id}/{sig}` is served ONLY by a second listener (`TG_STREAM_PORT`, 8789) in the same process, so it uses the app's live Telethon client.
@@ -47,10 +47,18 @@ Design: `/workspace/tg-stream-design/DESIGN.md` (box). Lulu catalog only; Search
   3. Hebrew blocks only. If the Cues index has `CueRelativePosition` for the track (ffmpeg and mkvmerge write it), only the chunks holding those blocks are read
      (sparse); else the whole file once. The final file replaces the placeholder atomically (same name: Jellyfin reads the file per request, no refresh needed),
      then `POST /Items/{item}/Refresh`.
-  4. Exactly ONE sidecar, Hebrew, `.default` flag. Verified on 12.1 (source + live instance): `.default`/`.forced` in the filename set IsDefault/IsForced,
-     and the default-subtitle pick orders external first, then default, then preferred language. With `.heb.default.srt` Hebrew wins for SubtitleMode
-     Default/Always/Smart, with or without a language preference. Non-Hebrew sidecars are not written (an `.eng.srt` won with no preference).
-     Embedded tracks stay selectable. Sidecars from the first PoC build (`.heb.srt` + `.eng.srt`) are redone and deleted.
+  4. Exactly ONE sidecar, Hebrew: `<stem>.heb.default.srt`. The MKV **forced flag is ignored**: Lulu uploads flag their FULL Hebrew track
+     default=1 forced=1 with a channel ad as the track name (NUC audit: 1003-1348 cues). `.heb.forced.srt` only for a truly forced track:
+     the track title says forced/מאולצ/foreign, or it is sparse (< 15% of a full track's ~10 cues/min, i.e. < 1.5 cues/min; runtime unknown: < 50 cues).
+     Round-1 `.heb.forced.srt` files that are dense are renamed in place to `.heb.default.srt` at startup and on Watch now (no Telegram read),
+     then the Jellyfin item is refreshed. Sidecars from the first PoC build (`.heb.srt` + `.eng.srt`) are redone and deleted.
+     Verified on 12.1.0 with a Lulu-style file (embedded heb subrip default+forced, ad title, eng audio): with `.heb.default.srt` the external
+     track is DefaultSubtitleStreamIndex (/Items and PlaybackInfo, which jellyfin-web uses) for SubtitleMode Default/Always/Smart, pref '' or heb,
+     RememberSubtitleSelections on or off, as long as nothing is remembered for the item. Exceptions: a remembered selection for the item
+     (`-1` = Off, or the embedded index) wins while RememberSubtitleSelections is on; the stale directory cache (≤ 5 min after the file changed)
+     hides the sidecar from PlaybackInfo; Smart with Hebrew AUDIO behaves like OnlyForced and would pick the embedded forced-flagged track.
+     DisplayTitle of ours: "Hebrew - Default - SUBRIP - External" (no ad). The embedded ad title cannot be edited in Jellyfin; it can only be
+     hidden with the library option AllowEmbeddedSubtitles=AllowNone (verified: hides ALL embedded subs of that library) or by remuxing.
   Cost: real mkvmerge file 224 MB/10 min, 98 Hebrew cues → 100 of 449 chunks (22%); a 4 GB 2 h 1080p file ≈ ≤1200 of ~7800. Dense low-bitrate files gain little.
   One job at a time, 6 parallel chunk reads while the popup is open (foreground playback still first), else 1 and only when no foreground fetch is in flight.
   Cap `TG_SUBS_MAX_MB` (4096) and `TG_SUBS_MAX_MINUTES` (30). Every outcome is logged (`[subs] <vid>: queued/skipped/already done/none/done/failed`, progress every 60 s).
@@ -85,8 +93,7 @@ Design: `/workspace/tg-stream-design/DESIGN.md` (box). Lulu catalog only; Search
 prints the Cues/sparse-read cost.
 
 ## Recommended Jellyfin user prefs (not applied by anything here)
-SubtitleLanguagePreference `heb` + SubtitleMode `Always` (or `Default`, which also works with the `.default` sidecar). With RememberSubtitleSelections on,
-a saved per-item choice (including "off") overrides the default; turn it off if Hebrew should always come back. `Smart` turns subtitles off when the
-audio is already Hebrew.
-
-Credits: see `NOTICE` (FileToLink, Apache-2.0, range semantics reviewed; no code copied).
+`RememberSubtitleSelections` **off** (the NUC's The Fix / Half Baked showed -1: a remembered "Off"; with it off the server ignores the saved
+choice and clears it on the next play), `SubtitleMode` Default or Always, `SubtitleLanguagePreference` `heb` (optional with `.heb.default.srt`;
+it keeps the right pick for files without our sidecar). Avoid Smart for Hebrew-audio titles. Keep RememberSubtitleSelections on only if
+per-title choices matter more; then pick "Hebrew - Default - External" once per title.

@@ -170,6 +170,14 @@ for it in items:
             summary["hebrew_default"] += 1
         else:
             print("  !! Hebrew text sub exists but the per-user default subtitle index is %r" % (d,))
+            if d == -1:
+                ud = it.get("UserData") or {}
+                print("     -1 = a REMEMBERED 'Off' for this user (RememberSubtitleSelections; Jellyfin 12.1 never computes -1"
+                      " when an external sub exists). LastPlayedDate=%s. Cleared by playing once with"
+                      " RememberSubtitleSelections off, or by picking Hebrew in the player once." % ud.get("LastPlayedDate"))
+            elif any(s.get("Index") == d and not s.get("IsExternal") for s in subs) and any(s.get("IsExternal") for s in heb):
+                print("     embedded track chosen over the external sidecar: a remembered selection, or Jellyfin's directory"
+                      " cache hid the sidecar (restart Jellyfin / wait 5 min idle)")
     else:
         summary["no_hebrew"] += 1
 print("\n-- summary: %s" % summary)
@@ -185,7 +193,14 @@ if [[ -d "$STREAMS_HOST" ]]; then
     f="$STREAMS_HOST/${line#*B  }"
     cues="$(grep -c -- '-->' "$f" 2>/dev/null || echo 0)"
     last="$(grep -- '-->' "$f" 2>/dev/null | tail -1 | awk '{print $3}')"
-    printf '%s  cues=%s last=%s\n' "$line" "$cues" "${last:-?}"
+    note=""
+    if [[ "$f" == *.heb.forced.srt && -n "$last" ]]; then
+      secs=$(( 10#${last:0:2} * 3600 + 10#${last:3:2} * 60 + 10#${last:6:2} ))
+      if (( secs > 0 && cues * 600 >= 15 * secs )); then
+        note="  !! a FULL track named .forced (round 1 trusted the MKV flag): round 2 renames it to .heb.default.srt at startup"
+      fi
+    fi
+    printf '%s  cues=%s last=%s%s\n' "$line" "$cues" "${last:-?}" "$note"
   done
   n_strm="$(find "$STREAMS_HOST" -type f -name '*.strm' </dev/null 2>/dev/null | wc -l)"
   n_srt="$(find "$STREAMS_HOST" -type f -iname '*.srt' </dev/null 2>/dev/null | wc -l)"

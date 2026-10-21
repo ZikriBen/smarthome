@@ -276,6 +276,22 @@ async def refresh_item_for_subs(variant_id: int, folder: Path, names: list[str])
         print(f"[subs] {int(variant_id)}: jellyfin library refreshed (item not indexed yet)", flush=True)
 
 
+async def migrate_round1_sidecars() -> None:
+    """Startup sweep: rename full Hebrew tracks that round 1 named .heb.forced.srt
+    (MKV forced flag) to .heb.default.srt in place, then refresh those items."""
+    try:
+        renamed = await asyncio.to_thread(
+            stream_subs.migrate_all_sidecars, TG_STREAMS_DIR, stream_watch.MARKER,
+            lambda m: print(m, flush=True))
+        for vid, folder, names in renamed:
+            try:
+                await refresh_item_for_subs(vid, folder, names)
+            except Exception as exc:  # noqa: BLE001
+                print(f"[subs] {vid}: jellyfin refresh after rename failed: {type(exc).__name__}", flush=True)
+    except Exception as exc:  # noqa: BLE001
+        print(f"[subs] sidecar migration failed: {type(exc).__name__}: {exc}", flush=True)
+
+
 def make_subtitle_jobs(service: StreamService) -> stream_subs.SubtitleJobs:
     return stream_subs.SubtitleJobs(
         service,
@@ -621,6 +637,7 @@ async def lifespan(
 
     stream_service = make_stream_service(client)
     subtitle_jobs = make_subtitle_jobs(stream_service)
+    asyncio.create_task(migrate_round1_sidecars())
 
     if stream_key():
         stream_server = EmbeddedServer(
