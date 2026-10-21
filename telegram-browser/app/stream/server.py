@@ -112,15 +112,33 @@ def build_stream_app(service: StreamService, key_provider, cors_origins: frozens
             service.log(f"[stream] open failed: {type(exc).__name__}")
             return JSONResponse({"detail": "Upstream error"}, status_code=502)
 
+        expected = end - start + 1
+
         async def body():
+            # Never finish a response cleanly with fewer bytes than its
+            # Content-Length: a clean short body looks like EOF to ffmpeg, which
+            # then caches a truncated subtitle extraction forever. Any failure
+            # after the headers raises out of the ASGI app, so uvicorn drops the
+            # connection (no terminating chunk, Content-Length unmet) and the
+            # client sees an error and retries.
+            sent = 0
             try:
                 yield first
+                sent += len(first)
                 async for piece in rest:
                     yield piece
+                    sent += len(piece)
+                if sent != expected:
+                    raise StreamError(502, f"body length mismatch {sent}/{expected}")
             except StreamError as exc:
-                # Headers are already sent: abort the connection so the
-                # player retries with a new Range instead of hanging.
-                service.log(f"[stream] mid-stream abort: {exc.status}")
+                service.stats["aborted_responses"] += 1
+                service.log(f"[stream] mid-stream abort: {exc.status} {exc.detail} at {sent}/{expected}")
+                raise
+            except asyncio.CancelledError:
+                raise  # client went away: nothing to tell it
+            except Exception as exc:
+                service.stats["aborted_responses"] += 1
+                service.log(f"[stream] mid-stream abort: {type(exc).__name__} at {sent}/{expected}")
                 raise
             finally:
                 with contextlib.suppress(Exception):
