@@ -473,7 +473,7 @@ def _pricier_lines(ev: dict, limit: int = MAX_PRICIER) -> List[str]:
 
 def weekly_message(res: dict, other_urls: List[str], generated: str = "", sh_cart: Optional[dict] = None,
                    runtime: Optional[dict] = None, history: Optional[str] = None,
-                   mode: str = "price") -> str:
+                   mode: str = "price", login_question: bool = False, login: Optional[str] = None) -> str:
     """The ready Hebrew Telegram message: part 1 Super-Hist, part 2 ONE other store, evidence, 'לבדיקה'.
     res = weekly.compute(); other_urls = cart link(s) for part 2; sh_cart = the cart-build proposal result
     (mode "cart"); runtime = {"seconds", "requests": {site: n}}."""
@@ -481,9 +481,18 @@ def weekly_message(res: dict, other_urls: List[str], generated: str = "", sh_car
     sh, other = res["super_hist"], res.get("other")
     out = [f"🛒 סל שבועי · {res['items']} פריטים" + (f" · {generated}" if generated else "")]
     # ---- part 1
-    if res.get("sh_error"):
-        out.append(f"1️⃣ הסופר החברתי: לא זמין — {res['sh_error'][:90]}. כל הרשימה עברה לחנות השנייה.")
+    err = str(res.get("sh_error") or "")
+    if err.startswith("דילגתי: 🔐"):                 # the one automatic login of this run failed / timed out
+        to = f" ל{other['name']}" if other else ""
+        out.append(f"1️⃣ {err[len('דילגתי: '):][:110]} — לא חיפשתי בסופר; כל הרשימה הושוותה ברמי לוי ובשופרסל "
+                   f"ועברה{to}.")
+    elif err:
+        out.append(f"1️⃣ הסופר החברתי: לא זמין — {err[:90]}. כל הרשימה עברה לחנות השנייה.")
+        if login_question:
+            out.append("🔐 לא התחברתי שוב באמצע (ניסיון אחד לריצה); בריצה הבאה אתחבר אוטומטית.")
     else:
+        if login == "auto":
+            out.append("🔐 החיבור לסופר החברתי פג — התחברתי מחדש אוטומטית (קוד ה-SMS הגיע דרך הממסר).")
         fee = "" if sh["fee"] is None else (f" + משלוח {_money(sh['fee'])} = {_money(sh['final'])}")
         out.append(f"1️⃣ הסופר החברתי — {len(sh['lines'])} פריטים · {_money(sh['total'])}{fee}"
                    + ("" if sh["fee"] is not None else " (בלי משלוח)"))
@@ -517,7 +526,8 @@ def weekly_message(res: dict, other_urls: List[str], generated: str = "", sh_car
         if o["lines"] and not other_urls:
             out.append(f"{o['name']}: אין פריטים לקישור")
         for r in o["lines"]:
-            out.append(f"• {r['item']}: {r['name']}{_wqty(r)} {_money(r['cost'])} (בסופר: {r['why_not_sh']})")
+            why = "" if res.get("sh_error") else f" (בסופר: {r['why_not_sh']})"    # whole-store reason: said once
+            out.append(f"• {r['item']}: {r['name']}{_wqty(r)} {_money(r['cost'])}{why}")
     elif res.get("remainder"):
         out.append("2️⃣ אין חנות שנייה זמינה לשאר הפריטים (רמי לוי ושופרסל נכשלו/דולגו).")
     else:

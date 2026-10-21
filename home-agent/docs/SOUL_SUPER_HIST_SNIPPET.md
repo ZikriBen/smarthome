@@ -2,7 +2,9 @@
 
 - הסופר החברתי (super-hist.co.il, Histadrut members club): the login runs on the
   server; you never open it in the browser and never see or ask for the ID number.
-  Before anything that needs the site, call `super_hist_status`. If `logged_out`
+  The weekly basket (`grocery_cart`) logs in by itself — don't call these tools
+  for it (see SOUL_GROCERY_WEEKLY_SNIPPET). For anything else that needs the site,
+  call `super_hist_status` first. If `logged_out`
   (or Ben says "תתחבר לסופר החברתי"), write one line ("מבקש קוד מהסופר החברתי…")
   and call `super_hist_login_start` ONCE. It waits ~45s for the SMS code to arrive
   by itself (Ben's phone forwards it; you never see that message) and logs in:

@@ -4245,7 +4245,13 @@ class TelegramAdapter(BasePlatformAdapter):
         if ctl is None:
             home = os.environ.get("HERMES_HOME") or "/opt/data"
             registry = _cca.Registry(os.path.join(home, "cc_approvals.db"))
-            ctl = self._cc_ctl = _cca.ApprovalController(registry, _CommandCenterClient(), _TelegramApprovalUI(self))
+            ctl = self._cc_ctl = _cca.ApprovalController(
+                registry, _CommandCenterClient(), _TelegramApprovalUI(self),
+                spawn=lambda coro: self._cc_track(asyncio.get_running_loop().create_task(coro)))
+            # Background approvals (batched cart writes) left running by a restart: keep following them so
+            # the real result still reaches the chat (polls the existing approval view, callback token).
+            with contextlib.suppress(Exception):
+                ctl.resume_running()
         return ctl
 
     async def _send_command_center_approval_prompts(
@@ -4289,11 +4295,12 @@ class TelegramAdapter(BasePlatformAdapter):
         except Exception as e:
             logger.warning("[%s] Command Center approval controls failed: %s", self.name, _redact_telegram_error_text(e))
 
-    def _cc_track(self, task) -> None:
+    def _cc_track(self, task):
         tracked = getattr(self, "_background_tasks", None)
         if isinstance(tracked, set):
             tracked.add(task)
             task.add_done_callback(tracked.discard)
+        return task
 
     async def _cc_expire_later(self, delay: float) -> None:
         await asyncio.sleep(delay)

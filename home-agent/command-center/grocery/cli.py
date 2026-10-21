@@ -218,19 +218,20 @@ def cmd_weekly(args) -> int:
     defaults = load_defaults(args.defaults)
     have_text = args.list or args.text or args.text_file
     override = (load_items(args, defaults)[0], defaults) if have_text else None
-    skipped = {}
+    skipped, gate = {}, None
     if not args.fixtures_root:
         try:
             from command_center import super_hist as SHC      # inside the Command Center container only
             from .sites import super_hist as SHA
             SHA.set_transport(SHC.grocery_transport)
+            gate = SHC.grocery_gate                            # checks only; never logs in / sends an SMS
         except Exception:
             skipped["super_hist"] = "חיפוש בסופר החברתי רק דרך Command Center (grocery_cart)"
     data_dir = os.environ.get("GROCERY_DATA_DIR") or os.path.join(HERE, "data")
     hist = args.history if args.history else (None if args.fixtures_root else
                                                os.path.join(data_dir, "weekly-history.jsonl"))
     r = api.weekly(fixtures=args.fixtures_root, store=args.store, out_dir=args.out, defaults_path=args.defaults,
-                   log=log, skipped=skipped, history_path=hist, items_override=override)
+                   log=log, skipped=skipped, history_path=hist, items_override=override, super_hist_gate=gate)
     print(open(r["report_path"], encoding="utf-8").read() if args.full and r.get("report_path") else r["message"])
     if r.get("report_path"):
         print(f"\nweekly report: {r['report_path']}")

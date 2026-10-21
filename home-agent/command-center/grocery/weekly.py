@@ -5,7 +5,8 @@ Assignment (per list item, same order on every site):
     "Usable" never depends on price: the default stays Super-Hist even where Rami/Shufersal is cheaper.
   * Super-Hist found something but is not sure (low confidence)                    -> part 1, 'לבדיקה'.
   * Super-Hist needs a choice among candidates                                     -> part 1, '❓ לבחירה'.
-  * Not at Super-Hist (not found / out of stock / no acceptable kosher match / search failed / site down)
+  * Not at Super-Hist (not found / out of stock / search failed / site down; with GROCERY_KASHRUT=1 also
+    no acceptable kosher match — kashrut is OFF by default)
                                                                                     -> the remainder.
   The remainder goes to exactly ONE other store: whichever of Rami Levy / Shufersal is cheaper for it
   (items found at both + that store's delivery fee; a tie goes to the store that has more of the items).
@@ -43,7 +44,8 @@ LATENCY = {SH: 1.0, "rami_levy": 0.5, "shufersal": 1.0}   # per request, rough
 
 
 def kosher_failed(p: Optional[Pick]) -> bool:
-    return bool(p) and any(f in KOSHER_FAIL for f in p.flags)
+    """Only with GROCERY_KASHRUT=1 (off by default: no line moves for kashrut)."""
+    return K.enabled() and bool(p) and any(f in KOSHER_FAIL for f in p.flags)
 
 
 def usable(p: Optional[Pick]) -> bool:

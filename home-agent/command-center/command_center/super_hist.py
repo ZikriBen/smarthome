@@ -919,32 +919,67 @@ def grocery_transport(term):
         raise HttpError(str(exc)[:160]) from None
 
 
-def grocery_gate(send_sms=True):
-    """Before a weekly run: one read-only login check. Logged out -> at most ONE login start (one SMS; the
-    relay may complete it by itself). Returns {"status": logged_in | login_required | site_blocked | site_error,
-    "text", "login"?}. Never loops, never resends: a pending code is reused (Ben pastes it)."""
+LOGIN_BUDGET = 180          # seconds the weekly run waits for an automatic login (start + relayed code)
+LOGIN_POLL = 5.0            # local state / relay inbox poll (no site request)
+LOGIN_FAIL = {"not_configured": "חסר מספר ת״ז בשרת", "cooldown": "קוד נשלח לפני פחות מדקה",
+              "site_changed": "דף ההתחברות השתנה", "site_error": "שגיאת אתר", "rate_limited": "האתר חסם שליחת קודים",
+              "rejected": "האתר לא שלח קוד", "wrong_code": "הקוד נדחה", "too_many_attempts": "הקוד נדחה 3 פעמים",
+              "no_pending_login": "פג תוקף הקוד", "invalid_code": "קוד לא תקין"}
+
+
+def _login_failed(reason):
+    return _result("login_failed", f"🔐 ההתחברות האוטומטית לסופר החברתי נכשלה ({reason})", login="failed")
+
+
+def grocery_gate(budget=None):
+    """Before every weekly run (on demand or a routine): make sure Super-Hist is logged in.
+
+    Logged in → go. Logged out → ONE automatic login per run: start_login (one SMS; the code arrives through the
+    #OTP relay and is submitted by itself, or Ben pastes it → super_hist_login_code), then wait for the session
+    up to LOGIN_BUDGET (3 min) by polling the local login state and the relay inbox (no site requests while
+    waiting), then one verifying read. Never a second SMS, never a retry. A code already pending from an
+    earlier start is waited for instead of sending another. Returns {"status": logged_in | login_failed |
+    site_blocked | site_error, "text", "login": none|auto|failed, "requests"}."""
+    budget = LOGIN_BUDGET if budget is None else budget
+    t0 = _now()
     with _lock:
         try:
             _require_login(fresh=True)
-            return _result("logged_in", "מחובר לסופר החברתי.")
+            return _result("logged_in", "מחובר לסופר החברתי.", login="none", requests=1)
         except LoginRequired:
-            pass
+            pending = _state["phase"] == "code_sent" and _now() - _state["sent_at"] <= CODE_WINDOW
         except SiteBlocked as exc:
-            return _result("site_blocked", str(exc))
+            return _result("site_blocked", str(exc), requests=1)
         except SiteError as exc:
-            return _result("site_error", str(exc)[:200])
-        pending = _state["phase"] == "code_sent" and _now() - _state["sent_at"] <= CODE_WINDOW
-    if pending:
-        return _result("login_required", "החיבור לסופר החברתי פג וכבר נשלח קוד SMS. תדביק את הקוד "
-                       "(super_hist_login_code) ואז להריץ שוב.", login="code_already_sent")
-    if not send_sms:
-        return _result("login_required", "החיבור לסופר החברתי פג. צריך להתחבר מחדש (SMS) ואז להריץ שוב.",
-                       login="not_started")
-    started = start_login()
-    if started.get("status") in ("logged_in", "already_logged_in"):
-        return _result("logged_in", started.get("text") or "מחובר לסופר החברתי.", login=started.get("status"))
-    return _result("login_required", "החיבור לסופר החברתי פג. " + str(started.get("text") or "")
-                   + " אחרי ההתחברות (super_hist_login_code) להריץ שוב.", login=started.get("status"))
+            return _result("site_error", str(exc)[:200], requests=1)
+    requests = 1
+    if not pending:
+        started = start_login({"wait_seconds": min(AUTO_WAIT, max(0, int(budget)))})
+        requests += 2
+        st = started.get("status")
+        if st in ("logged_in", "already_logged_in"):
+            return _result("logged_in", "התחברתי לסופר החברתי אוטומטית.", login="auto", requests=requests + 2)
+        if st != "code_sent":
+            return dict(_login_failed(LOGIN_FAIL.get(st, st)), requests=requests)
+    deadline = t0 + budget
+    while True:                                       # wait: relay inbox (auto-submit) or Ben's pasted code
+        if _state["phase"] == "logged_in":
+            break
+        if _state["phase"] != "code_sent":            # e.g. 3 wrong codes / window passed
+            return dict(_login_failed("הקוד נדחה או פג"), requests=requests)
+        if _inbox_enabled():
+            auto = _auto_submit(0)
+            if auto is not None:
+                requests += 1
+                if auto.get("status") == "logged_in":
+                    break
+                if auto.get("status") not in ("wrong_code",):
+                    return dict(_login_failed(LOGIN_FAIL.get(auto.get("status"), auto.get("status"))),
+                                requests=requests)
+        if _now() >= deadline:
+            return dict(_login_failed(f"לא הגיע קוד תוך {int(budget // 60) or 1} דק׳"), requests=requests)
+        _sleep(min(LOGIN_POLL, max(0.0, deadline - _now())) or LOGIN_POLL)
+    return _result("logged_in", "התחברתי לסופר החברתי אוטומטית.", login="auto", requests=requests)
 
 
 def _batch_qty(value):
@@ -1050,6 +1085,9 @@ def _batch_text(result):
             "unverified": "⚠️ שלחתי עדכונים אבל לא הצלחתי לקרוא שוב את העגלה"}.get(result["status"], result["status"])
     out = [f"{head}: {len(w)}/{total} שורות" + (f" · סה״כ עגלה {_fmt(result.get('total'))}" if result.get("total")
                                                is not None else "")]
+    if w:
+        out.append("נכתב בעגלה: " + " · ".join(f"{x['name']} ×{x['quantity']}" for x in w[:15])
+                   + (f" … ועוד {len(w) - 15}" if len(w) > 15 else ""))
     if f:
         out.append("לא עודכנו: " + " · ".join(f"{x['name']} ({x['reason']})" for x in f))
     if result["changed"]:
@@ -1128,13 +1166,21 @@ def _run_batch(ident, payload):
                 res["status"] = "failed"
             res["text"] = _batch_text(res)
             _batches[ident] = res
+            if payload.get("_approval_id"):        # → Telegram: Hermes pushes this text under the prompt
+                try:
+                    _approvals().finish_background(payload["_approval_id"], res["status"] == "done", res["text"])
+                except Exception:
+                    pass
             _publish(run_id, res)
 
 
-def apply_batch(payload, _ident=None):
-    """Approved batch: validates and starts the writes in the background (one POST per line, never retried,
-    re-read and verified at the end). The result goes to the grocery run (grocery_cart_status)."""
-    p = payload if isinstance(payload, dict) else {}
+def apply_batch(payload, approval_id=None):
+    """Approved batch (a background approval action): validates and starts the writes in the background (one
+    POST per line, never retried, re-read and verified at the end). The result goes to the grocery run
+    (grocery_cart_status) AND to the approval (approvals.finish_background), which Hermes pushes to Telegram."""
+    p = dict(payload) if isinstance(payload, dict) else {}
+    if approval_id:
+        p["_approval_id"] = str(approval_id)
     changes = p.get("changes")
     if not isinstance(changes, list) or not changes or len(changes) > MAX_BATCH:
         raise ValueError("הצעת עגלה לא תקינה")
@@ -1149,7 +1195,7 @@ def apply_batch(payload, _ident=None):
     threading.Thread(target=_run_batch, args=(ident, p), daemon=True).start()
     eta = int((len(changes) + 3) * MIN_INTERVAL)
     return {"status": "started", "batch_id": ident, "changes": len(changes), "eta_seconds": eta,
-            "text": f"מעדכן {len(changes)} שורות בעגלה ברקע (~{eta} שנ׳). התוצאה ב-grocery_cart_status."}
+            "text": f"מאושר, מעדכן {len(changes)} שורות בעגלה ברקע (~{eta} שנ׳). התוצאה תישלח לכאן כשיסתיים."}
 
 
 def batch_status(ident):
@@ -1158,7 +1204,7 @@ def batch_status(ident):
 
 def register_actions():
     _approvals().register_action(CART_ACTION, apply_write)
-    _approvals().register_action(CART_BATCH_ACTION, apply_batch)
+    _approvals().register_action(CART_BATCH_ACTION, apply_batch, background=True)
 
 
 def register_routes(router):

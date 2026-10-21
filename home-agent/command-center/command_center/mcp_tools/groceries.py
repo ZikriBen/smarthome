@@ -55,7 +55,7 @@ def register(mcp, client):
 
     @mcp.tool()
     def grocery_cart_status(run_id: str, wait_seconds: int = 0) -> dict:
-        """Check a grocery_cart job (running/done/failed). needs_choice non-empty: choose per SOUL and rerun with choices; send only the final message. Send `message` VERBATIM (never rebuild URLs; '---' = separate parts). super_hist_cart.status pending_approval: end the last part with [[CC_APPROVAL:<approval_id>]]; after approval, check again for super_hist_cart_result. login_required: relay; no retry by yourself."""
+        """Check a grocery_cart job (running/done/failed). needs_choice non-empty: choose per SOUL and rerun with choices; send only the final message. Send `message` VERBATIM (never rebuild URLs; '---' = separate parts). super_hist_cart.status pending_approval: end the last part with [[CC_APPROVAL:<approval_id>]]; the cart result is posted to Telegram by itself after approval. Super-Hist login is automatic (one try, ≤3 min); super_hist_login failed: relay the message, no retry."""
         wait_seconds = max(0, min(int(wait_seconds), 90))
         return client.request("POST", "/grocery/cart-status",
                               {"run_id": run_id, "wait_seconds": wait_seconds},

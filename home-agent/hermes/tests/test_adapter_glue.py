@@ -186,6 +186,53 @@ class GlueTests(unittest.TestCase):
         self.assertEqual(len(self.cc.calls), 8)
         self.assertIn("8 פעולות", a._bot.edit_message_text.await_args.kwargs["text"])
 
+    def test_background_write_pushes_result_through_tracked_task(self):
+        """Real _cc_controller wiring: running prompt, then the result pushed by a task the adapter tracks.
+        Telegram is the mocked bot; Command Center is a fake client (no network, no token use)."""
+        import tempfile
+        a, sent = self.make()
+        del a._cc_ctl
+        state = {"status": "pending", "polls": 0}
+
+        class BgCC:
+            async def get(self, ident):
+                if state["status"] == "running":
+                    state["polls"] += 1
+                    if state["polls"] >= 2:
+                        state.update(status="executed", result_text="✅ העגלה עודכנה: 1/1\nנכתב בעגלה: חלב ×2")
+                return {"approval_id": ident, "status": state["status"], "summary": "עגלת הסופר החברתי",
+                        "expires_at": 9e12, "result_text": state.get("result_text")}
+
+            async def decide(self, ident, decision, via, actor):
+                state["status"] = "running"
+                return {"status": "running", "decided": {"via": via, "actor": actor, "decided_at": 1}}
+        ident = "d4" * 9
+        with tempfile.TemporaryDirectory() as home, \
+                mock.patch.dict(os.environ, {"HERMES_HOME": home, "COMMAND_CENTER_CALLBACK_TOKEN": "x"}), \
+                mock.patch.object(ADAPTER, "_CommandCenterClient", BgCC):
+            async def scenario():
+                ctl = a._cc_controller()
+                ctl.poll_seconds = 0
+                await a._send_command_center_approval_prompts("1", [ident], "99", None)
+                query = mock.MagicMock()
+                query.answer = mock.AsyncMock()
+                query.from_user.first_name = "Ben"
+                query.message.message_id = 101
+                a._callback_authorized = mock.AsyncMock(return_value=True)
+                await a._handle_command_center_approval_callback(query, f"cc:a:{ident}", {"chat_id": 1})
+                self.assertEqual(query.answer.await_args.kwargs["text"], "⏳ מאושר, מבצע ברקע…")
+                self.assertIn("מאושר, מבצע ברקע…", a._bot.edit_message_text.await_args.kwargs["text"])
+                followers = [t for t in a._background_tasks if "follow" in t.get_coro().__qualname__]
+                self.assertEqual(len(followers), 1)            # the follower is an adapter-tracked task
+                await asyncio.wait_for(asyncio.gather(*followers), 5)
+                for t in a._background_tasks:                  # the (far) expiry timer
+                    t.cancel()
+            asyncio.run(scenario())
+        push = a._send_message_with_thread_fallback.await_args.kwargs     # the existing control-message path
+        self.assertIn("נכתב בעגלה: חלב ×2", push["text"])
+        self.assertEqual(push["reply_to_message_id"], 101)                # under the prompt
+        self.assertIn("✅ אושר ובוצע", a._bot.edit_message_text.await_args.kwargs["text"])
+
     def test_invalid_callback_data_rejected(self):
         a, _ = self.make()
         query = mock.MagicMock()

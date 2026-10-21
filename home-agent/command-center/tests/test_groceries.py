@@ -302,14 +302,27 @@ class WeeklyJobTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             g.start_cart({"sites": "both", "build_super_hist_cart": True}, {})
 
-    def test_weekly_login_required(self):
-        g._sh_hooks = lambda ident: ((lambda: {"status": "login_required", "text": "נשלח קוד"}), None)
+    def test_weekly_auto_login_failed_goes_on_without_super_hist(self):
+        from command_center import super_hist as shc
+        calls = []
+        g._sh_hooks = lambda ident: ((lambda: calls.append(1) or shc._login_failed("לא הגיע קוד תוך 3 דק׳")), None)
         g.add_item({"text": "חלב"}, {})
         st = self.wait(g.start_cart({}, {}))
         self.assertEqual(st["status"], "done")
-        self.assertTrue(st["login_required"])
-        self.assertIn("🔐", st["message"])
-        self.assertEqual(db.run_lines(conn(), st["run_id"]), [])
+        self.assertEqual(calls, [1])
+        self.assertEqual(st["super_hist_login"], "failed")
+        self.assertIn("ההתחברות האוטומטית לסופר החברתי נכשלה", st["message"])
+        self.assertNotIn("login_required", st)
+
+    def test_weekly_hooks_use_auto_login_gate(self):
+        from command_center import super_hist as shc
+        saved = g.FIXTURES, g._sh_hooks
+        g.FIXTURES = ""
+        try:
+            gate, _builder = self.real_hooks(1)
+            self.assertIs(gate, shc.grocery_gate)
+        finally:
+            g.FIXTURES, g._sh_hooks = saved
 
     def test_weekly_super_hist_breaker(self):
         db.set_blocked(conn(), "super_hist", "HTTP 429")

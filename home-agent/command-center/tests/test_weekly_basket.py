@@ -6,6 +6,7 @@ import os
 import shutil
 import sys
 import tempfile
+import threading
 import time
 import unittest
 from pathlib import Path
@@ -162,7 +163,7 @@ class Assignment(Base):
         self.assertEqual(list(r["urls"]), ["shufersal"])
         self.assertIn("2️⃣ שופרסל", r["message"])
 
-    def test_not_kosher_goes_to_remainder(self):
+    def kosher_run(self):
         root = Path(self.partial_root())
         items, d = self.items()
         soup = next(i for i in items if i.name == "מרק עוף")
@@ -174,7 +175,25 @@ class Assignment(Base):
                 rows = [dict(rows[0], name="אבקת מרק עוף 400 גרם לא כשר")]
             return rows
         SHA.set_transport(transport)
-        res = self.run_weekly(fixtures=str(root), override=(items, d))["result"]
+        return self.run_weekly(fixtures=str(root), override=(items, d))
+
+    def test_kashrut_off_by_default_stays_at_super_hist_unmarked(self):
+        from grocery import kashrut as K
+        os.environ.pop(K.ENV_FLAG, None)
+        r = self.kosher_run()
+        res = r["result"]
+        self.assertIn("מרק עוף", [x["item"] for x in res["super_hist"]["lines"]])
+        self.assertFalse(any(x["kashrut_unknown"] for x in res["super_hist"]["lines"]))
+        self.assertNotIn("כשרות", r["message"])
+        self.assertNotIn("כשר", r["message"].replace("לא כשר", ""))     # only the (synthetic) product name
+
+    def test_kashrut_flag_on_not_kosher_goes_to_remainder(self):
+        from grocery import kashrut as K
+        os.environ[K.ENV_FLAG] = "1"
+        try:
+            res = self.kosher_run()["result"]
+        finally:
+            os.environ.pop(K.ENV_FLAG, None)
         rem = {x["item"]: x["why_not_sh"] for x in res["remainder"]}
         self.assertEqual(rem.get("מרק עוף"), "אין התאמה כשרה")
 
@@ -200,14 +219,36 @@ class Assignment(Base):
 
 
 class SuperHistFailures(Base):
-    def test_login_required_gate_stops_everything(self):
+    def test_check_only_gate_login_required_stops_everything(self):
         gate_calls = []
         r = self.run_weekly(super_hist_gate=lambda: gate_calls.append(1) or
-                            {"status": "login_required", "text": "נשלח קוד SMS", "login": "code_sent"})
+                            {"status": "login_required", "text": "🔐 צריך להתחבר"})
         self.assertEqual(r["status"], "login_required")
         self.assertEqual(gate_calls, [1])
-        self.assertIn("🔐", r["message"])
         self.assertFalse([m for m in r["_log"] if "start (" in m])   # no site was searched
+
+    def test_auto_login_failed_whole_list_to_other_store(self):
+        gate_calls = []
+        r = self.run_weekly(super_hist_gate=lambda: gate_calls.append(1) or sh._login_failed("לא הגיע קוד תוך 3 דק׳"))
+        self.assertEqual(gate_calls, [1])                         # one gate = one login attempt per run
+        self.assertEqual(r["status"], "done")
+        self.assertFalse([m for m in r["_log"] if "[super_hist] start" in m or "super_hist start" in m])
+        self.assertEqual(len(r["result"]["remainder"]), 13)
+        self.assertEqual(r["super_hist_login"], "failed")
+        lines = [ln for ln in r["message"].splitlines() if "ההתחברות האוטומטית" in ln]
+        self.assertEqual(len(lines), 1)
+        self.assertIn("כל הרשימה", lines[0])
+        self.assertIn(r["result"]["other"]["name"], lines[0])
+
+    def test_auto_login_success_line(self):
+        root = self.partial_root()
+        SHA.set_transport(sh_fixture)
+        r = self.run_weekly(fixtures=root, super_hist_gate=lambda: {"status": "logged_in", "login": "auto",
+                                                                    "requests": 4})
+        self.assertEqual(r["super_hist_login"], "auto")
+        self.assertIn("התחברתי מחדש אוטומטית", r["message"])
+        self.assertTrue(r["result"]["super_hist"]["lines"])
+        self.assertGreaterEqual(r["runtime"]["requests"]["super_hist"], 4)
 
     def test_gate_blocked_skips_super_hist_only(self):
         r = self.run_weekly(super_hist_gate=lambda: {"status": "site_blocked", "text": "HTTP 403"})
@@ -230,6 +271,7 @@ class SuperHistFailures(Base):
         self.assertIn("החיבור פג באמצע", r["site_errors"]["super_hist"])
         self.assertNotIn("super_hist", r["blocked"])              # login is not a 24 h block
         self.assertEqual(len(r["result"]["remainder"]), 13)
+        self.assertEqual(sum("פג באמצע הריצה" in ln for ln in r["message"].splitlines()), 1)
 
     def test_blocked_mid_run_goes_to_breaker(self):
         SHA.set_transport(lambda term: (_ for _ in ()).throw(CloudflareBlocked("HTTP 429")))
@@ -334,10 +376,13 @@ class Batch(FakeSite):
         results = []
         sh._batch_listeners[:] = [lambda run_id, res: results.append((run_id, res))]
         out = self.decide(r["approval_id"])
-        self.assertEqual(out["status"], "executed")
+        self.assertIn(out["status"], ("running", "executed"))     # background: not "done" yet (fast fake site)
         self.assertEqual(out["result"]["status"], "started")
         res = self.wait_batch(results)
         self.assertEqual(res["status"], "done", res)
+        view = self.ap.get(r["approval_id"])
+        self.assertEqual(view["status"], "executed")
+        self.assertEqual(view["result_text"], res["text"])          # what Hermes pushes to Telegram
         self.assertEqual(len(res["written"]), 2)
         self.assertEqual(results[-1][0], "run1")
         self.assertEqual({ln["pid"]: ln["qty"] for ln in self.lines}, {"900101": 3, "900404": 2})
@@ -356,6 +401,51 @@ class Batch(FakeSite):
         self.assertEqual([x["name"] for x in res["written"]], ["חטיף"])
         self.assertEqual([x["name"] for x in res["failed"]], ["חלב"])
         self.assertEqual(len([c for c in self.posts() if c[1] == "checkout/cart/edit"]), 1)   # no retry
+
+    def test_prompt_running_until_worker_finishes(self):
+        self.search()
+        r = sh.propose_batch([self.line("900404", 2, "חטיף")], "run1")
+        gate = threading.Event()
+        real = sh._run_batch
+        sh._run_batch = lambda ident, payload: (gate.wait(5), real(ident, payload))
+        results = []
+        sh._batch_listeners[:] = [lambda run_id, res: results.append((run_id, res))]
+        try:
+            out = self.decide(r["approval_id"])
+            self.assertEqual(out["status"], "running")
+            self.assertEqual(self.ap.get(r["approval_id"])["status"], "running")
+            again = self.decide(r["approval_id"])                   # second tap: the recorded state, no rerun
+            self.assertTrue(again["already_decided"])
+            self.assertEqual(again["status"], "running")
+            gate.set()
+            res = self.wait_batch(results)
+        finally:
+            sh._run_batch = real
+        for _ in range(100):
+            if self.ap.get(r["approval_id"])["status"] != "running":
+                break
+            time.sleep(0.02)
+        view = self.ap.get(r["approval_id"])
+        self.assertEqual(view["status"], "executed")
+        self.assertIn("חטיף", view["result_text"])
+        self.assertEqual(res["status"], "done")
+
+    def test_partial_result_marks_failed_with_details(self):
+        self.search()
+        r = sh.propose_batch([self.line("900404", 2, "חטיף"), self.line("900101", 3, "חלב")], "run1")
+        results = []
+        sh._batch_listeners[:] = [lambda run_id, res: results.append((run_id, res))]
+        self.override["checkout/cart/edit"] = (200, {}, json.dumps({"error": "כמות לא זמינה"}))
+        self.decide(r["approval_id"])
+        self.wait_batch(results)
+        for _ in range(100):
+            if self.ap.get(r["approval_id"])["status"] != "running":
+                break
+            time.sleep(0.02)
+        view = self.ap.get(r["approval_id"])
+        self.assertEqual(view["status"], "failed")
+        self.assertIn("לא עודכנו: חלב", view["result_text"])
+        self.assertIn("עודכנה חלקית", view["result_text"])
 
     def test_cart_changed_line_untouched(self):
         self.search()
@@ -398,20 +488,101 @@ class Batch(FakeSite):
         with self.assertRaises(ValueError):
             sh.apply_batch({"changes": [{"op": "add", "product_id": "1", "qty_before": 2, "qty_after": 1}]})
 
-    def test_gate_logged_out_starts_one_login(self):
+    # ---- the one automatic login of a weekly run (all mocked: no SMS, no site, fake clock)
+    def mock_login(self, start_status="code_sent", relay_after=None, relay_status="logged_in"):
+        """start_login → start_status (code_sent sets the pending phase); the relay delivers a code after
+        `relay_after` polls (None = never)."""
         self.logged_in = False
-        started = []
-        saved = sh.start_login
-        sh.start_login = lambda payload=None, _q=None: started.append(1) or {"status": "code_sent", "text": "נשלח"}
-        try:
-            g = sh.grocery_gate()
-            self.assertEqual(g["status"], "login_required")
-            self.assertEqual(started, [1])
-            g2 = sh.grocery_gate()                              # a pending code: no second SMS
-            self.assertEqual(g2["status"], "login_required")
-        finally:
-            sh.start_login = saved
-        self.assertLessEqual(len(started), 2)
+        self.starts, self.relay_polls = [], []
+        saved = sh.start_login, sh._auto_submit, sh._inbox_enabled
+        self.addCleanup(lambda: setattr(sh, "start_login", saved[0]) or setattr(sh, "_auto_submit", saved[1])
+                        or setattr(sh, "_inbox_enabled", saved[2]))
+
+        def start(payload=None, _q=None):
+            self.starts.append(dict(payload or {}))
+            if start_status == "code_sent":
+                sh._state.update(phase="code_sent", sent_at=sh._now(), started_at=sh._now())
+            if start_status == "logged_in":
+                self.logged_in = True
+                sh._state.update(phase="logged_in", logged_in_at=sh._now())
+            return {"status": start_status, "text": "x"}
+
+        def relay(seconds):
+            self.relay_polls.append(seconds)
+            if relay_after is None or len(self.relay_polls) < relay_after:
+                return None
+            if relay_status == "logged_in":
+                self.logged_in = True
+                sh._state.update(phase="logged_in", logged_in_at=sh._now())
+            return {"status": relay_status, "text": "x"}
+        sh.start_login, sh._auto_submit, sh._inbox_enabled = start, relay, (lambda: True)
+
+    def test_gate_auto_login_success_via_relay(self):
+        self.mock_login(relay_after=3)
+        t0 = sh._now()
+        g = sh.grocery_gate()
+        self.assertEqual((g["status"], g["login"]), ("logged_in", "auto"))
+        self.assertEqual(len(self.starts), 1)                    # one SMS
+        self.assertLessEqual(sh._now() - t0, sh.LOGIN_BUDGET)
+
+    def test_gate_auto_login_success_inside_start(self):
+        self.mock_login(start_status="logged_in")
+        g = sh.grocery_gate()
+        self.assertEqual((g["status"], g["login"]), ("logged_in", "auto"))
+        self.assertEqual(len(self.starts), 1)
+        self.assertEqual(self.relay_polls, [])
+
+    def test_gate_ben_pastes_code_meanwhile(self):
+        self.mock_login(relay_after=None)
+        real_sleep = sh._sleep
+
+        def sleep(sec):                                           # super_hist_login_code from chat
+            real_sleep(sec)
+            if len(self.slept) == 2:
+                sh._state.update(phase="logged_in", logged_in_at=sh._now())
+        sh._sleep = sleep
+        self.assertEqual(sh.grocery_gate()["status"], "logged_in")
+        self.assertEqual(len(self.starts), 1)
+
+    def test_gate_auto_login_timeout_bounded(self):
+        self.mock_login(relay_after=None)
+        t0 = sh._now()
+        g = sh.grocery_gate()
+        self.assertEqual((g["status"], g["login"]), ("login_failed", "failed"))
+        self.assertIn("3 דק׳", g["text"])
+        self.assertEqual(len(self.starts), 1)                    # no second SMS, no retry
+        self.assertLessEqual(sh._now() - t0, sh.LOGIN_BUDGET + 1)
+        self.assertGreaterEqual(sh._now() - t0, sh.LOGIN_BUDGET - sh.LOGIN_POLL)
+        self.assertEqual(len(self.starts), 1)
+
+    def test_gate_auto_login_failure_no_retry(self):
+        for status in ("rate_limited", "not_configured", "site_changed", "rejected"):
+            with self.subTest(status=status):
+                self.mock_login(start_status=status)
+                g = sh.grocery_gate()
+                self.assertEqual(g["status"], "login_failed")
+                self.assertEqual(len(self.starts), 1)
+                self.assertEqual(self.relay_polls, [])
+
+    def test_gate_wrong_relayed_codes_end_the_attempt(self):
+        self.mock_login(relay_after=1, relay_status="too_many_attempts")
+        g = sh.grocery_gate()
+        self.assertEqual(g["status"], "login_failed")
+        self.assertIn("3 פעמים", g["text"])
+        self.assertEqual(len(self.starts), 1)
+
+    def test_gate_pending_code_is_waited_for_not_resent(self):
+        self.mock_login(relay_after=2)
+        sh._state.update(phase="code_sent", sent_at=sh._now(), started_at=sh._now())
+        self.assertEqual(sh.grocery_gate()["status"], "logged_in")
+        self.assertEqual(self.starts, [])                        # an SMS already went out: never a second one
+
+    def test_gate_logged_in_no_login(self):
+        self.mock_login()
+        self.logged_in = True
+        g = sh.grocery_gate()
+        self.assertEqual((g["status"], g["login"]), ("logged_in", "none"))
+        self.assertEqual(self.starts, [])
 
     def test_transport_maps_errors(self):
         self.assertTrue(sh.grocery_transport("חטיף"))

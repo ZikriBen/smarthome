@@ -8,6 +8,12 @@ The Telegram adapter injects two small I/O objects:
 * ``ui``  — ``await ui.edit_prompt(chat_id, message_id, text)`` (edit + remove the keyboard) and
   ``await ui.send_control(chat_id, text, reply_to_message_id)`` (a control reply, never sent to the LLM).
 
+Background actions (e.g. the batched Super-Hist cart write): Command Center answers the decision with
+``status="running"``. The prompt then says "⏳ מאושר, מבצע ברקע…" (never "✅ אושר ובוצע" before the work is
+done) and the controller follows it: it polls the same ``cc.get`` view (the existing callback token; no new
+secret, no new endpoint) until ``executed``/``failed``, re-edits the prompt and pushes the result text (what was
+written / failed / changed in the app) as a control reply under the prompt. Followed again after a restart.
+
 Rules
 -----
 * First decision wins. A local atomic claim stops a button tap and a chat reply racing inside this
@@ -25,6 +31,7 @@ Rules
 
 from __future__ import annotations
 
+import asyncio
 import os
 import re
 import sqlite3
@@ -261,6 +268,11 @@ class Registry:
                 "UPDATE cc_prompts SET status=?,outcome=?,decided_via=?,decided_by=?,decided_at=?,detail=? "
                 "WHERE approval_id=?", (status, outcome, via, by, at, detail, approval_id))
 
+    def running(self) -> List[Dict[str, Any]]:
+        with self._lock:
+            rows = self._db.execute("SELECT * FROM cc_prompts WHERE status='running' ORDER BY seq").fetchall()
+        return [dict(r) for r in rows]
+
     def expire(self, approval_id) -> bool:
         with self._lock:
             cur = self._db.execute(
@@ -290,6 +302,7 @@ def _s(value) -> Optional[str]:
 
 STATUS_TEXT = {
     "executed": "✅ אושר ובוצע",
+    "running": "⏳ מאושר, מבצע ברקע…",
     "denied": "❌ נדחה",
     "expired": "⌛ פג תוקף — לא בוצע",
     "failed": "⚠️ אושר, אבל הביצוע נכשל",
@@ -351,12 +364,83 @@ class TextResult:
 
 def _cc_status(result: Dict[str, Any]) -> str:
     status = str(result.get("status") or "")
-    return status if status in STATUS_TEXT else ("failed" if status == "failed" else "unknown")
+    if status == "executing":      # claimed, handler still starting: same as running for the prompt
+        return "running"
+    return status if status in STATUS_TEXT else "unknown"
+
+
+FOLLOW_POLL_SECONDS = 15.0
+FOLLOW_MAX_SECONDS = 30 * 60
+STILL_RUNNING_TEXT = ("⚠️ העדכון עדיין לא הסתיים אחרי 30 דק׳ — לא ידוע מה נכתב. "
+                      "בדוק את העגלה באפליקציה או ב-grocery_cart_status.")
 
 
 class ApprovalController:
-    def __init__(self, registry: Registry, cc, ui, clock=time.time, ttl: int = DEFAULT_TTL_SECONDS):
+    def __init__(self, registry: Registry, cc, ui, clock=time.time, ttl: int = DEFAULT_TTL_SECONDS,
+                 spawn=None, sleep=None, poll_seconds: float = FOLLOW_POLL_SECONDS,
+                 follow_seconds: float = FOLLOW_MAX_SECONDS):
         self.registry, self.cc, self.ui, self.clock, self.ttl = registry, cc, ui, clock, ttl
+        self.spawn = spawn or self._default_spawn      # spawn(coroutine) → task (the adapter tracks it)
+        self.sleep = sleep or asyncio.sleep
+        self.poll_seconds, self.follow_seconds = poll_seconds, follow_seconds
+        self._following: set = set()
+        self._tasks: set = set()
+
+    def _default_spawn(self, coro):
+        task = asyncio.get_running_loop().create_task(coro)
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
+        return task
+
+    # ---- background results
+    def watch(self, approval_id: str) -> bool:
+        """Follow one running approval until its result arrives (once per process)."""
+        if approval_id in self._following:
+            return False
+        self._following.add(approval_id)
+        try:
+            self.spawn(self.follow(approval_id))
+        except Exception:
+            self._following.discard(approval_id)
+            return False
+        return True
+
+    def resume_running(self) -> List[str]:
+        """After a Hermes restart: keep following prompts that were left running."""
+        return [r["approval_id"] for r in self.registry.running() if self.watch(r["approval_id"])]
+
+    async def follow(self, approval_id: str) -> Optional[str]:
+        """Poll Command Center's approval view until executed/failed, then edit the prompt and push the result."""
+        deadline = self.clock() + self.follow_seconds
+        try:
+            while True:
+                await self.sleep(self.poll_seconds)
+                try:
+                    info = await self.cc.get(approval_id)
+                except Exception:          # Command Center unreachable for a moment: keep trying until the deadline
+                    info = None
+                status = str((info or {}).get("status") or "") if isinstance(info, dict) else ""
+                row = self.registry.get(approval_id)
+                if row is None or row.get("status") != "running":
+                    return None            # finished elsewhere
+                if status in ("", "running", "executing"):
+                    if self.clock() >= deadline:
+                        await self.ui.send_control(row["chat_id"], STILL_RUNNING_TEXT, row.get("prompt_message_id"))
+                        return "timeout"
+                    continue
+                final = status if status in STATUS_TEXT and status != "running" else "unknown"
+                decided = info.get("decided") or {}
+                text = str(info.get("result_text") or decided.get("error") or "").strip()
+                self.registry.finish(approval_id, final, outcome=final, via=row.get("decided_via"),
+                                     by=row.get("decided_by"), at=row.get("decided_at"),
+                                     detail=(text.split("\n")[0][:300] or None) if final == "failed" else None)
+                await self._render(self.registry.get(approval_id) or row)
+                summary = row.get("summary") or ""
+                push = text or decided_text(summary, final, None, None, None)
+                await self.ui.send_control(row["chat_id"], push, row.get("prompt_message_id"))
+                return final
+        finally:
+            self._following.discard(approval_id)
 
     # ---- outbound
     async def summary_for(self, approval_id: str) -> Dict[str, Any]:
@@ -400,6 +484,8 @@ class ApprovalController:
             via=decided.get("via") or via, by=decided.get("actor") or actor,
             at=decided.get("decided_at") or self.clock(), detail=result.get("error"))
         final = self.registry.get(approval_id) or row
+        if status == "running":
+            self.watch(approval_id)
         return dict(final, already=already)
 
     async def _render(self, row: Dict[str, Any]) -> None:
@@ -460,6 +546,8 @@ class ApprovalController:
             return "כבר הוחלט"
         if any(r.get("status") == "pending" for r in results):
             return "חלק לא הגיעו ל-Command Center. נסה שוב."
+        if decision == "approve" and any(r.get("status") == "running" for r in results):
+            return STATUS_TEXT["running"]
         return STATUS_TEXT["executed" if decision == "approve" else "denied"]
 
     async def on_text(self, chat_id, text: str, reply_to_message_id, actor: str) -> TextResult:

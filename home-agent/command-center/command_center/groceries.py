@@ -4,8 +4,9 @@ The working list lives in Google Tasks (see grocery_list.py); state/current_list
 Default job ("weekly"): הסופר החברתי FIRST, the remainder at ONE other store (Rami Levy or Shufersal, whichever
 is cheaper for it), every line priced on all three sites for the evidence section. All searches are READ-ONLY
 and run in parallel (Super-Hist >= 10 s, Rami 1.5 s, Shufersal >= 10 s between requests). Super-Hist goes
-through command_center.super_hist (its login session, URL policy, 24 h breaker); a logged-out session gets ONE
-login start (one SMS) and the job returns login_required. Optional build mode proposes ONE batched Super-Hist
+through command_center.super_hist (its login session, URL policy, 24 h breaker). Logged out → the job logs in
+by itself ONCE (super_hist.grocery_gate: start_login, code via the #OTP relay, ≤3 min); if that fails or times
+out, Super-Hist is skipped and the whole list goes to Rami/Shufersal. Optional build mode proposes ONE batched Super-Hist
 cart approval; nothing is written before Ben approves, and nothing here ever orders or pays. "both" / one site
 = the older Rami+Shufersal links flow.
 """
@@ -165,7 +166,7 @@ def _sh_hooks(ident):
     if FIXTURES:
         return None, None
     from . import super_hist
-    return (lambda: super_hist.grocery_gate(send_sms=True)), (lambda lines: super_hist.propose_batch(lines, run_id=ident))
+    return super_hist.grocery_gate, (lambda lines: super_hist.propose_batch(lines, run_id=ident))
 
 
 def _wire_super_hist():
@@ -211,6 +212,8 @@ def _weekly_job(ident, skipped, warning=None, choices=None, build=False):
         extra["mode"] = "weekly"
         if r["status"] == "login_required":
             extra["login_required"] = True
+        if r.get("super_hist_login"):
+            extra["super_hist_login"] = r["super_hist_login"]        # none | auto | failed
         if r.get("super_hist_cart"):
             c = r["super_hist_cart"]
             extra["super_hist_cart"] = {k: c.get(k) for k in ("status", "approval_id", "headline", "text",

@@ -34,6 +34,11 @@ RULE_FIELDS = (
 NOTE_MARK = "📝 (לא מיושם אוטומטית)"
 
 
+def _kashrut_off() -> str:
+    from .kashrut import enabled
+    return "" if enabled() else " (כבוי כרגע — לא מיושם)"
+
+
 def _kashrut_he(v) -> str:
     from .kashrut import LEVEL_HE
     return LEVEL_HE.get(v, "ללא דרישה") if v else "ללא דרישה"
@@ -103,7 +108,8 @@ def collect(defaults_path: str, user_path: Optional[str] = None) -> List[dict]:
     g = user.get("global") or {}
     if isinstance(g, dict) and g.get("kashrut"):
         rows.append({"kind": "global", "item": "כללי", "site": "", "field": "kashrut",
-                     "label": f"כללי (כל המוצרים): כשרות {_kashrut_he(g['kashrut'])}", "source": "learned",
+                     "label": f"כללי (כל המוצרים): כשרות {_kashrut_he(g['kashrut'])}" + _kashrut_off(),
+                     "source": "learned",
                      "value": g["kashrut"]})
 
     # Per-item learned rules (anything in user aliases except empty/_learned-only)
@@ -113,7 +119,7 @@ def collect(defaults_path: str, user_path: Optional[str] = None) -> List[dict]:
         for field, he in RULE_FIELDS:
             if field not in entry or entry[field] in (None, [], {}) or (entry[field] == "" and field != "kashrut"):
                 continue
-            val = _kashrut_he(entry[field]) if field == "kashrut" else _fmt_val(entry[field])
+            val = (_kashrut_he(entry[field]) + _kashrut_off()) if field == "kashrut" else _fmt_val(entry[field])
             label = f"{name}: {he} {val}"
             rows.append({"kind": "item", "item": name, "site": "", "field": field,
                          "label": label, "source": "learned", "value": entry[field]})

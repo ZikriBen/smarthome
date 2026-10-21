@@ -119,8 +119,25 @@ class Split(unittest.TestCase):
         self.assertEqual([pl.text for pl in parse_text("שמן וחומץ בלסמי", split=d.split_known)], ["שמן וחומץ בלסמי"])
 
 
-class PickWithKashrut(unittest.TestCase):
+class FlagOn(unittest.TestCase):
+    """Kashrut rules run only with GROCERY_KASHRUT=1 (off by default)."""
+
     def setUp(self):
+        self._flag = os.environ.get(K.ENV_FLAG)
+        os.environ[K.ENV_FLAG] = "1"
+        super().setUp()
+
+    def tearDown(self):
+        if self._flag is None:
+            os.environ.pop(K.ENV_FLAG, None)
+        else:
+            os.environ[K.ENV_FLAG] = self._flag
+        super().tearDown()
+
+
+class PickWithKashrut(FlagOn):
+    def setUp(self):
+        super().setUp()
         self.D = _tmp_defaults()
         learn_preference("כללי", "תמיד מהדרין/בדצ", defaults_path=self.D)
         self.d = load_defaults(self.D)
@@ -145,7 +162,32 @@ class PickWithKashrut(unittest.TestCase):
             self.assertIn("כשרות לא ידועה", pick.flags)
 
 
-class ReportLine(unittest.TestCase):
+class KashrutOffByDefault(unittest.TestCase):
+    def setUp(self):
+        self._flag = os.environ.pop(K.ENV_FLAG, None)
+
+    def tearDown(self):
+        if self._flag is not None:
+            os.environ[K.ENV_FLAG] = self._flag
+
+    def test_no_filter_no_markers_preference_kept(self):
+        from grocery import report
+        self.assertFalse(K.enabled())
+        D = _tmp_defaults()
+        learn_preference("כללי", "תמיד מהדרין/בדצ", defaults_path=D)
+        d = load_defaults(D)
+        self.assertEqual(d.resolve("חלב").kashrut, "mehadrin")             # learned, kept, inert
+        res = {s: [_picker(s, d).pick(d.resolve(n)) for n in ("חלב", "ביצים")] for s in ("rami_levy", "shufersal")}
+        for picks in res.values():
+            for pk in picks:
+                self.assertFalse([f for f in pk.flags if "כשרות" in f or "מהדרין" in f or "בד״ץ" in f], pk.flags)
+        msg = report.cart_message(res, {"rami_levy": "רמי לוי", "shufersal": "שופרסל"},
+                                  {"rami_levy": ["https://x"], "shufersal": ["https://y"]})
+        self.assertNotIn("כשרות לא ידועה", msg)
+        self.assertIn("כבוי כרגע", prefs.list_text(D))
+
+
+class ReportLine(FlagOn):
     def test_unknown_kashrut_summarised_once(self):
         from grocery import report
         D = _tmp_defaults()

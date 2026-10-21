@@ -391,8 +391,11 @@ def weekly(fixtures: Optional[str] = None, store: Optional[str] = None, out_dir:
     is cheaper for the remainder), plus the evidence section (Super-Hist lines priced at Rami/Shufersal too).
     mode "price" = read-only (part 1 is a list of items); mode "cart" = also propose ONE batched Super-Hist cart
     approval via cart_builder(lines) (nothing is written before Ben approves; never checkout/order).
-    super_hist_gate() -> {"status": logged_in|login_required|site_blocked|site_error, "text"} runs BEFORE any
-    search: login_required stops the whole run with status "login_required" (no searches anywhere).
+    super_hist_gate() -> {"status": logged_in|login_failed|login_required|site_blocked|site_error, "text",
+    "requests"?} runs BEFORE any search. Command Center's gate logs in by itself when needed (ONE attempt per
+    run, ≤3 min, code via the relay). login_failed / site_* → Super-Hist is skipped and the WHOLE list goes to
+    the cheaper of Rami Levy / Shufersal (one line says why). login_required (a check-only gate) stops the run
+    with no searches. A session lost MID-run ends Super-Hist only (no second login); the rest still runs.
     items_override = (items, defaults) for the CLI (--text / --list); default = the working list.
     Returns {status: done|login_required|empty, message, report_path, links, urls, lines, site_errors, blocked,
              needs_choice, unmatched_choices, items, result, super_hist_cart, runtime, estimate, other_site}."""
@@ -413,17 +416,20 @@ def weekly(fixtures: Optional[str] = None, store: Optional[str] = None, out_dir:
         return dict(base, status="empty", message="הרשימה ריקה — אין מה לבנות")
     est = W.estimate(len(items), build_cart=mode == "cart")
     base["estimate"] = est
-    gate_requests = 0
+    gate_requests, sh_login = 0, None
     if W.SH not in skipped and super_hist_gate is not None:
         g = super_hist_gate() or {}
-        gate_requests = 1
+        gate_requests = int(g.get("requests") or 1)
         lg(f"[super_hist] gate: {g.get('status')}")
         if g.get("status") == "login_required":
-            msg = ("🔐 " + str(g.get("text") or "צריך להתחבר לסופר החברתי") +
-                   "\nלא חיפשתי באף אתר (גם לא ברמי לוי/שופרסל) — אחרי ההתחברות להריץ שוב.")
+            # Nothing else is searched: without Super-Hist the remainder is unknown, and a full Rami/Shufersal
+            # pass now would be repeated right after the login (~32 requests, ~3 min of Shufersal for nothing).
+            q = str(g.get("text") or "🔐 צריך להתחבר לסופר החברתי")
+            msg = q + "\n(עוד לא חיפשתי באף אתר; אחרי ההתחברות אריץ את הסל מחדש)"
             return dict(base, status="login_required", message=msg, login=g.get("login"))
         if g.get("status") != "logged_in":
             skipped[W.SH] = str(g.get("text") or g.get("status"))[:160]
+        sh_login = g.get("login")
     run_sites = [s for s in WEEKLY_SITES if s not in skipped]
     if not run_sites:
         return dict(base, status="done", site_errors={s: f"דילגתי: {w}" for s, w in skipped.items()},
@@ -456,6 +462,8 @@ def weekly(fixtures: Optional[str] = None, store: Optional[str] = None, out_dir:
         requests[W.SH] = gate_requests
     elif W.SH in requests and requests[W.SH] is not None:
         requests[W.SH] += gate_requests
+    sh_login_lost = W.SH in raw and not isinstance(raw[W.SH], Exception) and raw[W.SH] is not None and \
+        raw[W.SH][2]["meta"].get("site_error_kind") == "SessionExpired"
     res = W.compute({s: results[s] for s in results}, errors, d.delivery)
     o = res.get("other")
     urls = {}
@@ -489,7 +497,8 @@ def weekly(fixtures: Optional[str] = None, store: Optional[str] = None, out_dir:
         except OSError as e:
             lg(f"[weekly] history not written: {e}")
     gen = _il_now().strftime("%d.%m %H:%M")
-    msg = report.weekly_message(res, urls.get(o["site"]) if o else [], gen, sh_cart, runtime, hist_txt, mode)
+    msg = report.weekly_message(res, urls.get(o["site"]) if o else [], gen, sh_cart, runtime, hist_txt, mode,
+                                login_question=sh_login_lost, login=sh_login)
     full = report.weekly_full(res, urls.get(o["site"]) if o else [], gen, est, runtime, hist_txt, mode, sh_cart)
     os.makedirs(out_dir, exist_ok=True)
     rpath = os.path.join(out_dir, f"weekly-{dt.datetime.now():%Y%m%d-%H%M%S}.md")
@@ -514,4 +523,5 @@ def weekly(fixtures: Optional[str] = None, store: Optional[str] = None, out_dir:
         links[o["site"]] = (urls.get(o["site"]) or [None])[0]
     return dict(base, status="done", message=msg, report_path=rpath, links=links, urls=urls, lines=lines,
                 site_errors=errors, blocked=blocked, needs_choice=need, result=res, super_hist_cart=sh_cart,
-                runtime=runtime, other_site=o["site"] if o else None, plan_paths=paths)
+                runtime=runtime, other_site=o["site"] if o else None, plan_paths=paths,
+                super_hist_login=sh_login)

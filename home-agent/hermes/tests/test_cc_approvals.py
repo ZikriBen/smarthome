@@ -270,5 +270,122 @@ class StateMachineTests(unittest.TestCase):
         self.assertIn("09:", ca.decided_text("x", "executed", "chat", "Ben", 1760940000))  # 2025-10-20 09:00 IL
 
 
+class BackgroundResultTests(unittest.TestCase):
+    """A batched cart write runs in the background: the prompt says "מאושר, מבצע ברקע…" and the real result
+    is pushed under it when Command Center reports it. All mocked: no Telegram, no network."""
+
+    def setUp(self):
+        self.h = Harness()
+        self.spawned = []
+        self.polls = []
+        self.finish_after = 3            # polls until the fake worker finishes
+        self.result = ("executed", "✅ העגלה בסופר החברתי עודכנה: 2/2 שורות\nנכתב בעגלה: חלב ×2 · חטיף ×1")
+
+        async def fake_sleep(seconds):
+            self.h.now += seconds
+            self.polls.append(seconds)
+            if len(self.polls) >= self.finish_after:
+                for row in self.h.cc.rows.values():
+                    if row["status"] == "running":
+                        row["status"], row["result_text"] = self.result
+        self.h.ctl = ca.ApprovalController(self.h.reg, self.h.cc, self.h.ui, clock=lambda: self.h.now,
+                                           spawn=self.spawned.append, sleep=fake_sleep)
+        real_decide = self.h.cc.decide
+
+        async def decide(ident, decision, via, actor):
+            out = await real_decide(ident, decision, via, actor)
+            row = self.h.cc.rows[ident]
+            if decision == "approve" and out.get("status") == "executed" and not out.get("already_decided"):
+                row["status"] = "running"                       # a background action
+                out = dict(out, status="running")
+            return out
+        self.h.cc.decide = decide
+
+    def drain(self):
+        while self.spawned:
+            run(self.spawned.pop(0))
+
+    def test_prompt_says_running_then_result_is_pushed(self):
+        self.h.prompt(A, summary="עגלת הסופר החברתי: 2 שורות")
+        toast = run(self.h.ctl.on_button(A, "approve", "Ben"))
+        self.assertEqual(toast, "⏳ מאושר, מבצע ברקע…")
+        self.assertIn("מאושר, מבצע ברקע…", self.h.ui.edits[-1][2])
+        self.assertNotIn("✅ אושר ובוצע", self.h.ui.edits[-1][2])
+        self.assertEqual(len(self.spawned), 1)
+        self.drain()
+        self.assertEqual(len(self.polls), 3)
+        self.assertIn("✅ אושר ובוצע", self.h.ui.edits[-1][2])           # prompt re-edited only now
+        chat, text, reply_to = self.h.ui.sent[-1]
+        self.assertEqual((chat, reply_to), ("1", "100"))                  # pushed under the prompt
+        self.assertIn("נכתב בעגלה: חלב ×2", text)
+        self.assertEqual(self.h.reg.get(A)["status"], "executed")
+
+    def test_partial_failure_pushes_details(self):
+        self.result = ("failed", "⚠️ העגלה עודכנה חלקית: 1/2 שורות\nלא עודכנו: חלב (כמות לא זמינה)\n"
+                                 "השתנו באתר מאז ההצעה (לא נגעתי): חטיף")
+        self.h.prompt(A)
+        res = self.h.text("מאשר")
+        self.assertIn("מאושר, מבצע ברקע…", res.reply)
+        self.drain()
+        self.assertIn("⚠️ אושר, אבל הביצוע נכשל", self.h.ui.edits[-1][2])
+        text = self.h.ui.sent[-1][1]
+        self.assertIn("לא עודכנו: חלב", text)
+        self.assertIn("השתנו באתר", text)
+
+    def test_second_tap_does_not_follow_twice(self):
+        self.h.prompt(A)
+        run(self.h.ctl.on_button(A, "approve", "Ben"))
+        toast = run(self.h.ctl.on_button(A, "approve", "Ben"))
+        self.assertIn("כבר הוחלט", toast)
+        self.assertIn("מבצע ברקע", toast)
+        self.assertEqual(len(self.spawned), 1)
+        self.drain()
+        self.assertEqual(len([t for t in self.h.ui.sent if "נכתב בעגלה" in t[1]]), 1)
+
+    def test_timeout_says_unknown_and_stops(self):
+        self.finish_after = 10 ** 6
+        self.h.prompt(A)
+        run(self.h.ctl.on_button(A, "approve", "Ben"))
+        self.drain()
+        self.assertEqual(self.h.ui.sent[-1][1], ca.STILL_RUNNING_TEXT)
+        self.assertLessEqual(len(self.polls), ca.FOLLOW_MAX_SECONDS / ca.FOLLOW_POLL_SECONDS + 1)
+        self.assertEqual(self.h.reg.get(A)["status"], "running")
+
+    def test_command_center_down_while_polling_keeps_trying(self):
+        self.h.prompt(A)
+        run(self.h.ctl.on_button(A, "approve", "Ben"))
+        real_get, fails = self.h.cc.get, []
+
+        async def flaky(ident):
+            if len(fails) < 2:
+                fails.append(1)
+                raise OSError("down")
+            return await real_get(ident)
+        self.h.cc.get = flaky
+        self.drain()
+        self.assertIn("נכתב בעגלה", self.h.ui.sent[-1][1])
+
+    def test_resume_after_restart(self):
+        self.h.prompt(A)
+        run(self.h.ctl.on_button(A, "approve", "Ben"))
+        for coro in self.spawned:                                        # Hermes restarted before the result
+            coro.close()
+        self.spawned.clear()
+        fresh = ca.ApprovalController(self.h.reg, self.h.cc, self.h.ui, clock=lambda: self.h.now,
+                                      spawn=self.spawned.append, sleep=self.h.ctl.sleep)
+        self.assertEqual(fresh.resume_running(), [A])
+        self.drain()
+        self.assertEqual(self.h.reg.get(A)["status"], "executed")
+        self.assertIn("נכתב בעגלה", self.h.ui.sent[-1][1])
+
+    def test_batch_button_toast_running(self):
+        self.h.prompt(A, batch="bt1")
+        self.h.prompt(B, batch="bt1")
+        toast = run(self.h.ctl.on_batch_button("bt1", "approve", "Ben"))
+        self.assertEqual(toast, "⏳ מאושר, מבצע ברקע…")
+        self.drain()
+        self.assertTrue(all(self.h.reg.get(i)["status"] == "executed" for i in (A, B)))
+
+
 if __name__ == "__main__":
     unittest.main()

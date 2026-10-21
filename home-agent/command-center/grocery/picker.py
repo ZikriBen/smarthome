@@ -478,8 +478,8 @@ class Picker:
 
         pinned_id = item.pinned_for(self.site)
         kosher_flag = None
-        if item.kashrut and not item.produce and not pinned_id and ranked:
-            from . import kashrut as K
+        from . import kashrut as K
+        if K.enabled() and item.kashrut and not item.produce and not pinned_id and ranked:
             ranked, kosher_flag, filtered = K.apply(ranked, item.kashrut)
             if filtered:
                 best = ranked[0]

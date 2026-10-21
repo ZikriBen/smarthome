@@ -5,6 +5,11 @@ One decision per approval, whatever the channel (Telegram button or chat reply):
 decided, how and when in ``approval_decisions``. Every later attempt gets the recorded outcome back
 (``already_decided``) instead of an error, so the caller can show it and remove stale controls.
 Pending approvals expire after ``TTL_SECONDS``.
+
+Background actions (``register_action(..., background=True)``): the handler only validates and starts the
+work; the approval goes ``executing`` → ``running`` and the worker later calls ``finish_background`` →
+``executed``/``failed`` with a human ``result_text``. The Telegram prompt shows "מאושר, מבצע ברקע…" and
+Hermes polls the existing payload-free view (``GET /v1/approvals/<id>``, callback token) to push the result.
 """
 
 import json
@@ -23,14 +28,47 @@ connection.execute(
     "CREATE TABLE IF NOT EXISTS approval_decisions (id TEXT PRIMARY KEY, decision TEXT NOT NULL, "
     "via TEXT NOT NULL, actor TEXT NOT NULL, decided_at INTEGER NOT NULL, error TEXT)"
 )
+try:
+    connection.execute("ALTER TABLE approval_decisions ADD COLUMN result TEXT")
+except Exception:  # already there
+    pass
+RESTART_TEXT = "Command Center הופעל מחדש באמצע הביצוע — התוצאה לא ידועה, בדוק באתר"
+# A background run cannot survive a restart (its thread is gone): never leave it "running" forever.
+connection.execute("UPDATE approval_decisions SET error=? WHERE id IN (SELECT id FROM approvals WHERE "
+                   "status='running')", (RESTART_TEXT,))
+connection.execute("UPDATE approvals SET status='failed' WHERE status='running'")
 connection.commit()
 
+_background = set()
 
-def register_action(name, handler):
-    """Register one allowlisted execution handler during application startup."""
+
+def register_action(name, handler, background=False):
+    """Register one allowlisted execution handler during application startup.
+
+    background=True: ``handler(payload, approval_id)`` starts the work and returns at once; the worker must
+    call ``finish_background(approval_id, ok, text)`` when done."""
     if name in _actions and _actions[name] is not handler:
         raise RuntimeError(f"approval action already registered: {name}")
     _actions[name] = handler
+    if background:
+        _background.add(name)
+    else:
+        _background.discard(name)
+
+
+def finish_background(ident, ok, text=""):
+    """running (or still executing, for a very fast worker) → executed (ok) / failed, with the result text Hermes pushes to Telegram. Returns True if
+    this call finished it (False: unknown id or not running)."""
+    text = str(text or "")[:3500]
+    with approval_lock:
+        done = connection.execute(
+            "UPDATE approvals SET status=? WHERE id=? AND status IN ('running','executing')",
+            ("executed" if ok else "failed", ident)).rowcount
+        if done:
+            connection.execute("UPDATE approval_decisions SET result=?, error=? WHERE id=?",
+                               (text, None if ok else text.split("\n")[0][:500], ident))
+        connection.commit()
+    return bool(done)
 
 
 def create(action, payload, status="pending"):
@@ -112,11 +150,12 @@ def expire_stale():
 
 def _decision_locked(ident):
     row = connection.execute(
-        "SELECT decision,via,actor,decided_at,error FROM approval_decisions WHERE id=?", (ident,)
+        "SELECT decision,via,actor,decided_at,error,result FROM approval_decisions WHERE id=?", (ident,)
     ).fetchone()
     if not row:
         return None
-    return {"decision": row[0], "via": row[1], "actor": row[2], "decided_at": row[3], "error": row[4]}
+    return {"decision": row[0], "via": row[1], "actor": row[2], "decided_at": row[3], "error": row[4],
+            "result_text": row[5]}
 
 
 def _view_locked(ident):
@@ -129,11 +168,17 @@ def _view_locked(ident):
         payload = json.loads(row[1])
     except ValueError:
         payload = {}
-    return {
+    view = {
         "approval_id": ident, "action": row[0], "status": row[2], "created": row[3],
         "expires_at": row[3] + TTL_SECONDS, "summary": summarize(row[0], payload),
         "decided": _decision_locked(ident),
     }
+    if row[2] in ("running", "executed", "failed") and view["decided"] and view["decided"].get("result_text"):
+        view["result_text"] = view["decided"]["result_text"]
+    if row[2] == "failed" and view["decided"] and not view.get("result_text") and \
+            view["decided"].get("error") == RESTART_TEXT:
+        view["result_text"] = RESTART_TEXT
+    return view
 
 
 def get(ident):
@@ -150,7 +195,7 @@ def get(ident):
 def decide(ident, decision, via="button", actor=""):
     """Approve or deny once. Never raises for a lost race, expiry or unknown id: returns the outcome.
 
-    Returns ``{"approval_id", "status": executed|denied|expired|failed|executing|unknown,
+    Returns ``{"approval_id", "status": executed|running|denied|expired|failed|executing|unknown,
     "already_decided": bool, "decided": {decision, via, actor, decided_at, error}|None,
     "summary", "result"?, "error"?}``.
     """
@@ -193,12 +238,18 @@ def decide(ident, decision, via="button", actor=""):
     if handler is None:
         _set_status(ident, "failed", expected="executing", error="action is not allowlisted")
         return dict(base, status="failed", error="action is not allowlisted")
+    background = view["action"] in _background
     try:
-        result = handler(payload)
+        result = handler(payload, ident) if background else handler(payload)
     except Exception as exc:
         error = str(exc)[:500]
         _set_status(ident, "failed", expected="executing", error=error)
         return dict(base, status="failed", error=error, decided=dict(decided, error=error))
+    if background:
+        # The worker may already have finished (fast run): only move executing → running.
+        _set_status(ident, "running", expected="executing")
+        current = (get(ident) or {}).get("status") or "running"
+        return dict(base, status=current, result=result)
     _set_status(ident, "executed", expected="executing")
     return dict(base, status="executed", result=result)
 
@@ -206,7 +257,7 @@ def decide(ident, decision, via="button", actor=""):
 def approve(ident, via="button", actor=""):
     """Compatibility wrapper: raises like the original API when nothing was executed."""
     outcome = decide(ident, "approve", via, actor)
-    if outcome["status"] == "executed" and not outcome.get("already_decided"):
+    if outcome["status"] in ("executed", "running") and not outcome.get("already_decided"):
         return outcome
     if outcome["status"] == "expired" and not outcome.get("already_decided"):
         raise ValueError("approval expired")

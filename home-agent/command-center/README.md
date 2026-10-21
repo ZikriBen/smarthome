@@ -38,9 +38,13 @@ integrations; Hermes never receives the Docker socket, host mounts, or a shell.
   `login_required` (no automatic login). Fixtures under tests/fixtures/super-hist are synthetic.
 - Weekly basket (`grocery_cart`, default sites="weekly"): הסופר החברתי first, the remainder at ONE other
   store (Rami Levy or Shufersal, whichever is cheaper for it), every line also priced at Rami/Shufersal for an
-  evidence section (Super-Hist total vs the same items, lines where Super-Hist is pricier). Logged out → one
-  login start (one SMS) and `login_required`. `build_super_hist_cart=true` → ONE batched cart approval
-  (`super_hist_cart_batch`, adds/raises only, by-weight refused, background writes verified by a re-read).
+  evidence section (Super-Hist total vs the same items, lines where Super-Hist is pricier). Logged out →
+  ONE automatic login per run (start_login, code via the #OTP relay or pasted, ≤3 min, no retry); on failure
+  or timeout Super-Hist is skipped and the whole list goes to the cheaper of Rami Levy / Shufersal (one line). Kashrut rules are off unless GROCERY_KASHRUT=1.
+  `build_super_hist_cart=true` → ONE batched cart approval (`super_hist_cart_batch`, adds/raises only,
+  by-weight refused, background writes verified by a re-read). It is a background approval action: the
+  approval goes `running` → `executed`/`failed` with `result_text`; Hermes shows "מאושר, מבצע ברקע…" and
+  pushes the result by polling the existing `GET /v1/approvals/<id>` (callback token).
   Entry points: `grocery.api.weekly()`, `python -m grocery.cli weekly-basket`, history in
   /data/grocery/weekly-history.jsonl. See ../docs/SOUL_GROCERY_WEEKLY_SNIPPET.md (runtime ≈ 3:20 min / 15 lines).
 - Price checks run on their configured interval (minimum 60 minutes), retain the

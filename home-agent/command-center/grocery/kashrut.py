@@ -24,6 +24,7 @@ Rule strength: soft-hard. When matching products exist they win (if the top prod
 only a near-equal match — ≥90% of its score — replaces it); otherwise the best product is kept and
 flagged under לבדיקה ("לא נמצא מהדרין" when there was kashrut data, "כשרות לא ידועה" when there was none).
 Produce (fruit/veg) is exempt: no hechsher on the product, never dropped or flagged.
+Switch: everything above runs only with GROCERY_KASHRUT=1 (see enabled()); off by default.
 """
 from __future__ import annotations
 
@@ -32,6 +33,15 @@ import os
 import re
 from functools import lru_cache
 from typing import Dict, Iterable, List, Optional, Set
+
+ENV_FLAG = "GROCERY_KASHRUT"   # OFF by default (Ben 21.10): no kashrut filtering or markers anywhere
+
+
+def enabled() -> bool:
+    """Kashrut rules are applied only with GROCERY_KASHRUT=1. Off: no filter, no 'לא נמצא מהדרין' /
+    'כשרות לא ידועה' flags, on every site. Learned kashrut preferences are kept (inert) for when it's back on."""
+    return os.environ.get(ENV_FLAG, "").strip().lower() in ("1", "true", "yes", "on")
+
 
 LEVELS = ("mehadrin", "badatz")
 KASHRUT_UNKNOWN = "כשרות לא ידועה"
