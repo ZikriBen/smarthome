@@ -66,6 +66,10 @@ POST_ROUTES = {"account/login/sms", "account/login/sms_validate",
                "checkout/cart/add", "checkout/cart/remove", "checkout/cart/edit"}
 GET_PATHS = {"/", "/login/"}
 POST_PATHS = {SEARCH_PATH}
+# Read-only promotion category pages (deals scan, super_hist_deals). Compared after percent-decoding; page 1
+# only (no query), or exactly ?limit=100 for the UNVERIFIED SUPER_HIST_DEALS_LIMIT_100 option. Markup verified
+# live 2026-10-21.
+PROMO_GET_PATHS = {"/משלמים-פחות-מקבלים-יותר/", "/יוקר-המחייה/"}
 BLOCKED_WORDS = re.compile(
     r"checkout|cart/clear|coupon|voucher|payment|order|confirm|shipping|success|/pay|=pay|register|guest", re.I)
 # Bot-challenge / captcha markers (Cloudflare interstitial, reCAPTCHA/hCaptcha/Turnstile widgets).
@@ -105,7 +109,8 @@ def check_url(method, url):
     if BLOCKED_WORDS.search(scrubbed):
         raise PolicyError("נתיב חסום (קופה/תשלום/הזמנה/קופון/משלוח) לא נשלח")
     if method == "GET":
-        ok = (u.path in GET_PATHS and not u.query) or (u.path == "/index.php" and route in GET_ROUTES)
+        ok = ((u.path in GET_PATHS and not u.query) or (u.path == "/index.php" and route in GET_ROUTES)
+              or (urllib.parse.unquote(u.path) in PROMO_GET_PATHS and re.fullmatch(r"(?:limit=100)?", u.query)))
     elif method == "POST":
         ok = (u.path in POST_PATHS and not u.query) or (u.path == "/index.php" and route in POST_ROUTES)
     else:
@@ -596,13 +601,63 @@ def parse_search(body):
 
 # --------------------------------------------------------------------------- transport for cart calls
 
+# --------------------------------------------------------------------------- the ONE 24 h stop
+# In memory (_blocked_until) for every Super-Hist path — cart tools, weekly searches/gate, deals scan — and,
+# once the server wires it (api.main → use_persistent_block), mirrored in grocery_site_state["super_hist"], the
+# same row the weekly job's per-site breaker reads, so a stop survives a restart and is seen by every path.
+
+_block_store = [None]       # (get() -> blocked_until|None, put(reason)) — None in tests / offline
+
+
+def use_persistent_block(get=None, put=None):
+    if get is None and put is None:
+        from . import grocery_db
+        from .database import connection
+
+        def get():
+            b = grocery_db.blocked(connection, "super_hist")
+            return float(b[0]) if b else None
+
+        def put(reason):
+            grocery_db.set_blocked(connection, "super_hist", reason)
+    _block_store[0] = (get, put)
+
+
+def _sync_block():
+    store = _block_store[0]
+    if store:
+        try:
+            until = store[0]()
+            if until:
+                _blocked_until[0] = max(_blocked_until[0], float(until))
+        except Exception:
+            pass
+
+
+def _trip(reason):
+    _blocked_until[0] = _now() + BLOCK_SECONDS
+    store = _block_store[0]
+    if store:
+        try:
+            store[1](str(reason)[:300])
+        except Exception:
+            pass
+
+
+def blocked_now():
+    """Is the 24 h stop active (memory or persisted)? No site request."""
+    _sync_block()
+    return _now() < _blocked_until[0]
+
+
 def _cart_send(method, url, form=None, referer=None):
     """One cart-side request: breaker, policy+throttle (via _send), no redirects, stop on block/challenge."""
+    _sync_block()
     if _now() < _blocked_until[0]:
         raise SiteBlocked("האתר חסם/ביקש אימות קודם; עצרתי את כל פעולות העגלה לזמן מה. לא לנסות שוב עכשיו.")
     status, headers, body = _send(method, url, form=form, ajax=True, follow=False, referer=referer or CART_URL)
     if status in (403, 429) or CHALLENGE_RE.search(body or ""):
-        _blocked_until[0] = _now() + BLOCK_SECONDS
+        _trip(f"HTTP {status} / challenge")
         raise SiteBlocked(f"האתר חסם את הבקשה (HTTP {status} / אימות אנושי). עצרתי בלי לנסות שוב.")
     if status in (301, 302, 303, 307, 308):
         location = (headers.get("Location") or headers.get("location") or "").lower()
@@ -626,6 +681,7 @@ def _require_login(fresh=False):
     (the automatic login is _auto_login, called by the tools/gate outside _lock)."""
     if not fresh and _state.get("checked_at") and _now() - _state["checked_at"] < LOGIN_CHECK_TTL:
         return
+    _sync_block()
     if _now() < _blocked_until[0]:
         raise SiteBlocked("האתר חסם/ביקש אימות קודם; עצרתי את כל פעולות העגלה לזמן מה.")
     if not COOKIES_FILE.exists() and not len(_cookie_jar()):
@@ -633,7 +689,7 @@ def _require_login(fresh=False):
         raise LoginRequired("login")
     status, _headers, body = _send("GET", ACCOUNT_URL, follow=False)
     if status in (403, 429) or CHALLENGE_RE.search(body or ""):
-        _blocked_until[0] = _now() + BLOCK_SECONDS
+        _trip(f"HTTP {status} / challenge")
         raise SiteBlocked(f"האתר חסם את הבקשה (HTTP {status} / אימות אנושי). עצרתי בלי לנסות שוב.")
     if status != 200:
         _expire_session()
@@ -942,7 +998,8 @@ LOGIN_FAIL = {"not_configured": "חסר מספר ת״ז בשרת", "cooldown": "
 
 
 def _login_failed(reason):
-    return _result("login_failed", f"🔐 ההתחברות האוטומטית לסופר החברתי נכשלה ({reason})", login="failed")
+    return _result("login_failed", f"🔐 ההתחברות האוטומטית לסופר החברתי נכשלה ({reason})", login="failed",
+                   reason=reason)
 
 
 def grocery_gate(budget=None):

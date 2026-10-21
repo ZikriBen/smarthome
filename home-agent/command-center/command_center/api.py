@@ -5,7 +5,7 @@ import re
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from . import (approvals, docker, files, google_workspace, groceries, health, host, jellyfin,
-               maps, price_watches, searchgram, super_hist, uptime_kuma)
+               maps, price_watches, searchgram, super_hist, super_hist_deals, uptime_kuma)
 from .config import CALLBACK_TOKEN, TOKEN
 from .router import Router
 
@@ -13,7 +13,7 @@ from .router import Router
 def build_router():
     router = Router()
     for module in (host, docker, uptime_kuma, searchgram, jellyfin, files,
-                   google_workspace, maps, price_watches, groceries, super_hist):
+                   google_workspace, maps, price_watches, groceries, super_hist, super_hist_deals):
         module.register_routes(router)
     return router
 
@@ -102,6 +102,7 @@ class API(BaseHTTPRequestHandler):
 
 def run():
     register_actions()
+    super_hist.use_persistent_block()     # the Super-Hist 24 h stop survives restarts (grocery_site_state)
     groceries.setup()
     price_watches.start_background_tasks()
     google_workspace.start_oauth_server()

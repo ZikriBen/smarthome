@@ -54,3 +54,16 @@ def register(mcp, client):
     def super_hist_cart_remove(product_id: str) -> dict:
         """Propose (do not execute) removing one product line from Ben's הסופר החברתי cart — only when Ben explicitly asked to remove that item. Show `text`, append [[CC_APPROVAL:<approval_id>]]. Never remove items on your own initiative and never empty the cart."""
         return client.request("POST", "/proposals/super-hist-cart/remove", {"product_id": product_id}, timeout=CART_TIMEOUT)
+
+    # ------------------------------------------------------------------ deals (read-only scan)
+
+    @mcp.tool()
+    def super_hist_deals() -> dict:
+        """Read-only: scan הסופר החברתי's two promotion category pages ('משלמים פחות מקבלים יותר', 'מתמודדים עם יוקר המחיה') and list the best-value deals (sale price vs regular price, % off; food first). Does not read the grocery list or the cart. Takes about a minute (>=10s between site requests; 3 requests; up to 3 more minutes if it has to log in — it does that once by itself, the SMS code arrives through the relay), so it starts a background run: tell Ben `text`, then call super_hist_deals_status(run_id). Nothing is added to the cart. disabled/site_blocked/already_running/invalid: relay `text`."""
+        return client.request("POST", "/super-hist/deals", {}, timeout=60)
+
+    @mcp.tool()
+    def super_hist_deals_status(run_id: str, wait_seconds: int = 60) -> dict:
+        """Result of a super_hist_deals run (waits up to wait_seconds, max 90). running: wait and call again (don't start a new scan). ok/partial: send `text` to Ben as-is (Hebrew; deals with links). If the session had expired, the scan logged in once by itself (SMS code via the relay) — `text` says so. login_failed: `text` is one line; relay it and stop (don't start another login or scan by yourself). site_blocked/site_changed: relay `text`, do not retry."""
+        return client.request("POST", "/super-hist/deals/status",
+                              {"run_id": run_id, "wait_seconds": wait_seconds}, timeout=120)

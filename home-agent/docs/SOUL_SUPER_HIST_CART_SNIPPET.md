@@ -52,7 +52,8 @@
 - A by-weight product was not seen live (`weight: true`?), so weighted items stay refused for writes.
 - The empty-cart page was not seen: a guest gets a redirect, and Ben's cart was not emptied for it. The
   fixture is synthetic; the mini-cart canary covers it.
-- The 403/429/challenge breaker is in memory (24 h); a command-center restart clears it.
+- The 403/429/challenge breaker (24 h) is shared by every Super-Hist path and, since feat/grocery-weekly-deals,
+  persisted in grocery_site_state["super_hist"] (survives a restart).
 - Logout is local only; the site session stays until it expires.
 
 ## Automatic login (2026-10-21, Ben)
