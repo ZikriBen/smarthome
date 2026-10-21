@@ -1,10 +1,14 @@
 """MCP tools for the Histadrut "הסופר החברתי" login and cart. The ID number never passes through Hermes; cart writes are approval-only and checkout/orders are unreachable."""
 
 
+# A cart tool may include the one automatic login (≤180 s wait + login/verify/read requests at >=10 s spacing).
+CART_TIMEOUT = 260
+
+
 def register(mcp, client):
     @mcp.tool()
     def super_hist_login_start() -> dict:
-        """Log in to הסופר החברתי (super-hist.co.il): asks the site to SMS a 6-digit code to Ben's phone, then waits up to ~45s for the code to arrive by itself (phone SMS forwarder -> Telegram relay) and submits it. Use only when Ben asks to connect, or a הסופר החברתי task needs a login and super_hist_status says logged_out — tell Ben first ('מבקש קוד מהסופר החברתי…'). Result logged_in (auto=true): relay `text`. code_sent: the code did not arrive by itself — ask Ben to paste the 6 digits (no time pressure; ~10 min), or call super_hist_login_code() with no code to check the relay again once. Never call start again by yourself (no auto-resend); on cooldown/rate_limited just relay `text`."""
+        """Log in to הסופר החברתי (super-hist.co.il): asks the site to SMS a 6-digit code to Ben's phone, then waits up to ~45s for the code to arrive by itself (phone SMS forwarder -> Telegram relay) and submits it. Use only when Ben asks to connect (the cart tools and grocery_cart log in by themselves) — tell Ben first ('מבקש קוד מהסופר החברתי…'). Result logged_in (auto=true): relay `text`. code_sent: the code did not arrive by itself — ask Ben to paste the 6 digits (no time pressure; ~10 min), or call super_hist_login_code() with no code to check the relay again once. Never call start again by yourself (no auto-resend); on cooldown/rate_limited just relay `text`."""
         return client.request("POST", "/super-hist/login/start", {}, timeout=170)
 
     @mcp.tool()
@@ -26,27 +30,27 @@ def register(mcp, client):
 
     @mcp.tool()
     def super_hist_cart_view() -> dict:
-        """Read-only: what is in Ben's הסופר החברתי cart (lines, quantities, unit prices, total). The cart is shared with the site and app. login_required: tell Ben the session expired and ask whether to send an SMS code; never log in by yourself. site_blocked/site_changed: relay `text`, do not retry."""
-        return client.request("GET", "/super-hist/cart", timeout=120)
+        """Read-only: what is in Ben's הסופר החברתי cart (lines, quantities, unit prices, total). The cart is shared with the site and app. Logged out: the server logs in by itself ONCE (SMS code via the relay, up to ~3 min) and continues; login_failed: relay `text` and stop, no retry. site_blocked/site_changed: relay `text`, do not retry."""
+        return client.request("GET", "/super-hist/cart", timeout=CART_TIMEOUT)
 
     @mcp.tool()
     def super_hist_search(term: str) -> dict:
-        """Read-only product search on הסופר החברתי (one request; the site returns only the top few matches). Each product has product_id, name, price (the price actually paid: the sale price when on sale), shelf_price, on_sale, in_cart, out_of_stock, minimum, weighted. Use product_id from here for super_hist_cart_add. Searches are slow (>=10s apart): search once per item, never loop."""
-        return client.request("POST", "/super-hist/search", {"term": term}, timeout=120)
+        """Read-only product search on הסופר החברתי (one request; the site returns only the top few matches). Each product has product_id, name, price (the price actually paid: the sale price when on sale), shelf_price, on_sale, in_cart, out_of_stock, minimum, weighted. Use product_id from here for super_hist_cart_add. Searches are slow (>=10s apart): search once per item, never loop. Logged out: automatic login first (same as super_hist_cart_view)."""
+        return client.request("POST", "/super-hist/search", {"term": term}, timeout=CART_TIMEOUT)
 
     @mcp.tool()
     def super_hist_cart_add(product_id: str, quantity: int = 1) -> dict:
-        """Propose (do not execute) making sure Ben's הסופר החברתי cart has AT LEAST `quantity` of a product found with super_hist_search: not in the cart -> add it; fewer -> raise to `quantity`; already enough -> already_in_cart, nothing proposed. Result pending_approval: show `text` (item, price, qty before→after, expected new total) and append the exact final marker [[CC_APPROVAL:<approval_id>]]; the Telegram approval performs the write. Never claim it was added before approval. Weighted (by-kg) items and out-of-stock items are refused."""
+        """Propose (do not execute) making sure Ben's הסופר החברתי cart has AT LEAST `quantity` of a product found with super_hist_search: not in the cart -> add it; fewer -> raise to `quantity`; already enough -> already_in_cart, nothing proposed. Result pending_approval: show `text` (item, price, qty before→after, expected new total) and append the exact final marker [[CC_APPROVAL:<approval_id>]]; the Telegram approval performs the write. Never claim it was added before approval. Weighted (by-kg) items and out-of-stock items are refused. Logged out: automatic login first (one try); login_failed: relay `text`, stop."""
         return client.request("POST", "/proposals/super-hist-cart/add",
-                              {"product_id": product_id, "quantity": quantity}, timeout=120)
+                              {"product_id": product_id, "quantity": quantity}, timeout=CART_TIMEOUT)
 
     @mcp.tool()
     def super_hist_cart_set_qty(product_id: str, quantity: int) -> dict:
         """Propose (do not execute) setting the quantity of a product ALREADY in Ben's הסופר החברתי cart to exactly `quantity` (1-20; to remove use super_hist_cart_remove). Same approval rules as super_hist_cart_add: show `text`, append [[CC_APPROVAL:<approval_id>]]."""
         return client.request("POST", "/proposals/super-hist-cart/set-qty",
-                              {"product_id": product_id, "quantity": quantity}, timeout=120)
+                              {"product_id": product_id, "quantity": quantity}, timeout=CART_TIMEOUT)
 
     @mcp.tool()
     def super_hist_cart_remove(product_id: str) -> dict:
         """Propose (do not execute) removing one product line from Ben's הסופר החברתי cart — only when Ben explicitly asked to remove that item. Show `text`, append [[CC_APPROVAL:<approval_id>]]. Never remove items on your own initiative and never empty the cart."""
-        return client.request("POST", "/proposals/super-hist-cart/remove", {"product_id": product_id}, timeout=120)
+        return client.request("POST", "/proposals/super-hist-cart/remove", {"product_id": product_id}, timeout=CART_TIMEOUT)

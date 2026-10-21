@@ -488,35 +488,7 @@ class Batch(FakeSite):
         with self.assertRaises(ValueError):
             sh.apply_batch({"changes": [{"op": "add", "product_id": "1", "qty_before": 2, "qty_after": 1}]})
 
-    # ---- the one automatic login of a weekly run (all mocked: no SMS, no site, fake clock)
-    def mock_login(self, start_status="code_sent", relay_after=None, relay_status="logged_in"):
-        """start_login → start_status (code_sent sets the pending phase); the relay delivers a code after
-        `relay_after` polls (None = never)."""
-        self.logged_in = False
-        self.starts, self.relay_polls = [], []
-        saved = sh.start_login, sh._auto_submit, sh._inbox_enabled
-        self.addCleanup(lambda: setattr(sh, "start_login", saved[0]) or setattr(sh, "_auto_submit", saved[1])
-                        or setattr(sh, "_inbox_enabled", saved[2]))
-
-        def start(payload=None, _q=None):
-            self.starts.append(dict(payload or {}))
-            if start_status == "code_sent":
-                sh._state.update(phase="code_sent", sent_at=sh._now(), started_at=sh._now())
-            if start_status == "logged_in":
-                self.logged_in = True
-                sh._state.update(phase="logged_in", logged_in_at=sh._now())
-            return {"status": start_status, "text": "x"}
-
-        def relay(seconds):
-            self.relay_polls.append(seconds)
-            if relay_after is None or len(self.relay_polls) < relay_after:
-                return None
-            if relay_status == "logged_in":
-                self.logged_in = True
-                sh._state.update(phase="logged_in", logged_in_at=sh._now())
-            return {"status": relay_status, "text": "x"}
-        sh.start_login, sh._auto_submit, sh._inbox_enabled = start, relay, (lambda: True)
-
+    # ---- the one automatic login of a weekly run (mock_login lives in test_super_hist_cart.FakeSite)
     def test_gate_auto_login_success_via_relay(self):
         self.mock_login(relay_after=3)
         t0 = sh._now()

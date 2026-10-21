@@ -1,7 +1,7 @@
 """הסופר החברתי cart tools, offline: SYNTHETIC anonymized fixtures + a stateful fake site (no network).
 
 Covers parsing (cart incl. empty, mini-cart, search incl. specials/out_of_stock/weight), the URL policy in
-_send, 403/429/challenge stop, login_required (never auto-login), proposals that require approval, the
+_send, 403/429/challenge stop, one automatic login (mocked), proposals that require approval, the
 in_cart -> set_qty path, the approved write with re-read/verify and partial failure, and the throttle.
 """
 import http.server
@@ -167,6 +167,35 @@ class FakeSite(Base):
 
     def decide(self, ident):
         return self.ap.decide(ident, "approve", via="chat", actor="ben")
+
+    # ---- the automatic login, mocked: no SMS, no site, fake clock
+    def mock_login(self, start_status="code_sent", relay_after=None, relay_status="logged_in"):
+        """start_login → start_status (code_sent sets the pending phase); the relay delivers a code after
+        `relay_after` polls (None = never)."""
+        self.logged_in = False
+        self.starts, self.relay_polls = [], []
+        saved = sh.start_login, sh._auto_submit, sh._inbox_enabled
+        self.addCleanup(lambda: setattr(sh, "start_login", saved[0]) or setattr(sh, "_auto_submit", saved[1])
+                        or setattr(sh, "_inbox_enabled", saved[2]))
+
+        def start(payload=None, _q=None):
+            self.starts.append(dict(payload or {}))
+            if start_status == "code_sent":
+                sh._state.update(phase="code_sent", sent_at=sh._now(), started_at=sh._now())
+            if start_status == "logged_in":
+                self.logged_in = True
+                sh._state.update(phase="logged_in", logged_in_at=sh._now())
+            return {"status": start_status, "text": "x"}
+
+        def relay(seconds):
+            self.relay_polls.append(seconds)
+            if relay_after is None or len(self.relay_polls) < relay_after:
+                return None
+            if relay_status == "logged_in":
+                self.logged_in = True
+                sh._state.update(phase="logged_in", logged_in_at=sh._now())
+            return {"status": relay_status, "text": "x"}
+        sh.start_login, sh._auto_submit, sh._inbox_enabled = start, relay, (lambda: True)
 
 
 # --------------------------------------------------------------------------- parsing
@@ -405,24 +434,74 @@ class ReadTools(FakeSite):
 
 
 class Stops(FakeSite):
-    def test_login_required_never_logs_in(self):
-        self.logged_in = False
+    def test_logged_out_auto_login_then_continues(self):
+        for fn, payload, ok in ((sh.cart_view, {}, "ok"), (sh.search, {"term": "חטיף"}, "ok"),
+                                (sh.propose_add, {"product_id": "900404", "quantity": 2}, "pending_approval")):
+            with self.subTest(fn=fn.__name__):
+                if fn is sh.propose_add:
+                    self.logged_in = True
+                    sh.search({"term": "חטיף"}, {})
+                self.mock_login(relay_after=2)
+                sh._state["checked_at"] = 0.0
+                out = fn(payload, {})
+                self.assertEqual(out["status"], ok, out)
+                self.assertEqual(len(self.starts), 1)                # one SMS
+                self.assertEqual(len(self.relay_polls), 2)
+
+    def test_logged_out_login_timeout_one_line_and_stop(self):
+        self.mock_login(relay_after=None)
+        t0 = sh._now()
+        self.calls.clear()
         out = sh.cart_view({}, {})
-        self.assertEqual(out["status"], "login_required")
-        self.assertEqual(self.routes(), [("GET", "account/account")])   # no cart read, no SMS
-        self.assertEqual(sh._state["phase"], "idle")
-        for fn, payload in ((sh.search, {"term": "x"}), (sh.propose_add, {"product_id": "900404"})):
-            self.assertEqual(fn(payload, {})["status"], "login_required")
-        self.assertFalse(any("login/sms" in r for _m, r in self.routes()))
+        self.assertEqual(out["status"], "login_failed")
+        self.assertEqual(len(out["text"].splitlines()), 1)
+        self.assertIn("3 דק׳", out["text"])
+        self.assertEqual(len(self.starts), 1)                        # no retry, no second SMS
+        self.assertLessEqual(sh._now() - t0, sh.LOGIN_BUDGET + 2 * sh.MIN_INTERVAL)
+        self.assertEqual([r for _m, r in self.routes()], ["account/account"])   # no cart read afterwards
+
+    def test_logged_out_login_failure_no_proposal(self):
+        for status in ("rate_limited", "cooldown", "not_configured"):
+            with self.subTest(status=status):
+                self.mock_login(start_status=status)
+                sh._state["checked_at"] = 0.0
+                out = sh.propose_add({"product_id": "900404"}, {})
+                self.assertEqual(out["status"], "login_failed")
+                self.assertEqual(len(self.starts), 1)
+                self.assertEqual(self.db.execute("SELECT COUNT(*) FROM approvals").fetchone()[0], 0)
+
+    def test_site_still_logged_out_after_login_stops(self):
+        self.mock_login(start_status="logged_in")
+        real_start = sh.start_login
+
+        def start(payload=None, _q=None):                            # "logged in" but the site disagrees
+            out = real_start(payload)
+            self.logged_in = False
+            return out
+        sh.start_login = start
+        out = sh.cart_view({}, {})
+        self.assertEqual(out["status"], "login_failed")
+        self.assertEqual(len(self.starts), 1)                        # exactly one attempt
+
+    def test_real_start_login_without_id_contacts_nothing(self):
+        self.logged_in = False                                       # no mock: the real start_login
+        self.assertFalse(sh.VAT_ID_FILE.exists())
+        out = sh.cart_view({}, {})
+        self.assertEqual(out["status"], "login_failed")
+        self.assertIn("ת״ז", out["text"])
+        self.assertFalse(any("login" in r for _m, r in self.routes()))
 
     def test_no_saved_session_contacts_nothing(self):
-        sh.COOKIES_FILE.unlink()
-        self.assertEqual(sh.cart_view({}, {})["status"], "login_required")
+        sh.COOKIES_FILE.unlink()                                     # no ID configured either → no SMS
+        self.assertEqual(sh.cart_view({}, {})["status"], "login_failed")
         self.assertEqual(self.calls, [])
 
-    def test_cart_redirect_to_login_is_login_required(self):
-        self.override["checkout/cart"] = (302, {"Location": "https://super-hist.co.il/login/"}, "")
-        self.assertEqual(sh.cart_view({}, {})["status"], "login_required")
+    def test_cart_redirect_to_login_logs_in_once(self):
+        self.mock_login(relay_after=1)
+        self.logged_in = True
+        self.override["checkout/cart"] = (302, {"Location": "https://super-hist.co.il/login/"}, "")  # one-shot
+        self.assertEqual(sh.cart_view({}, {})["status"], "ok")
+        self.assertEqual(len(self.starts), 1)
 
     def test_403_429_and_challenge_stop_everything(self):
         for reply in ((403, {}, "forbidden"), (429, {}, "slow down"),

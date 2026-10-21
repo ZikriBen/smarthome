@@ -622,7 +622,8 @@ def _expire_session():
 
 
 def _require_login(fresh=False):
-    """Trust a recent successful check; otherwise one read-only account-page request. Never logs in."""
+    """Trust a recent successful check; otherwise one read-only account-page request. Never logs in itself
+    (the automatic login is _auto_login, called by the tools/gate outside _lock)."""
     if not fresh and _state.get("checked_at") and _now() - _state["checked_at"] < LOGIN_CHECK_TTL:
         return
     if _now() < _blocked_until[0]:
@@ -661,8 +662,8 @@ def _line(cart, product_id):
 
 def _error_result(exc):
     if isinstance(exc, LoginRequired):
-        return _result("login_required", "החיבור לסופר החברתי פג. צריך להתחבר מחדש (SMS) — רק אם בן מאשר; "
-                       "לא התחברתי אוטומטית.")
+        return _result("login_required", "החיבור לסופר החברתי פג באמצע הפעולה; לא שיניתי כלום. "
+                       "בבקשה הבאה אתחבר אוטומטית.")
     if isinstance(exc, PolicyError):
         return _result("blocked_by_policy", str(exc))
     if isinstance(exc, SiteBlocked):
@@ -670,6 +671,28 @@ def _error_result(exc):
     if isinstance(exc, SiteChanged):
         return _result("site_changed", str(exc))
     return _result("site_error", str(exc)[:200])
+
+
+def _logged_in(fn):
+    """Run fn() (site reads under _lock) with a logged-in session. Logged out → ONE automatic login (_auto_login,
+    ≤3 min, SMS via the relay) and fn() once more; no retries. Returns (value, None) or (None, error result).
+    Login failure → status login_failed with one line."""
+    for attempt in (0, 1):
+        with _lock:
+            try:
+                _require_login()
+                return fn(), None
+            except LoginRequired:
+                if attempt:
+                    return None, _result("login_failed", "🔐 התחברתי לסופר החברתי אבל האתר עדיין לא מזהה את החיבור; "
+                                         "עצרתי בלי לנסות שוב.", login="failed")
+                _expire_session()
+            except SiteError as exc:
+                return None, _error_result(exc)
+        login = _auto_login()
+        if login["status"] != "logged_in":
+            return None, login
+    return None, _result("site_error", "unreachable")
 
 
 def _public_cart(cart):
@@ -682,12 +705,9 @@ def _public_cart(cart):
 
 def cart_view(_payload=None, _query=None):
     """Read-only: the account cart's lines, quantities and total (1–3 requests)."""
-    with _lock:
-        try:
-            _require_login()
-            cart = _read_cart()
-        except SiteError as exc:
-            return _error_result(exc)
+    cart, err = _logged_in(_read_cart)
+    if err:
+        return err
     text = (f"בעגלה בסופר החברתי {cart['count']} שורות, סה״כ {_fmt(cart['total'])}." if cart["count"]
             else "העגלה בסופר החברתי ריקה.")
     return _result("ok", text, cart=_public_cart(cart),
@@ -699,13 +719,10 @@ def search(payload, _query=None):
     term = " ".join(str((payload or {}).get("term") or (payload or {}).get("query") or "").split())
     if not term or len(term) > MAX_TERM:
         return _result("invalid", f"צריך מונח חיפוש (עד {MAX_TERM} תווים).")
-    with _lock:
-        try:
-            _require_login()
-            found = parse_search(_cart_send("POST", SEARCH_URL, {"search": term, "screen_break_points": "desktop"},
-                                            referer=BASE + "/"))
-        except SiteError as exc:
-            return _error_result(exc)
+    found, err = _logged_in(lambda: parse_search(_cart_send(
+        "POST", SEARCH_URL, {"search": term, "screen_break_points": "desktop"}, referer=BASE + "/")))
+    if err:
+        return err
     now = _now()
     for product in found["products"]:
         _catalog[product["product_id"]] = (now, product)
@@ -748,12 +765,9 @@ def _propose(op, payload):
             return _result("invalid", f"כמות צריכה להיות מספר שלם בין 1 ל-{MAX_QTY}"
                            + (" (להסרה: super_hist_cart_remove)." if str(qty) == "0" else "."))
         qty = int(qty)
-    with _lock:
-        try:
-            _require_login()
-            cart = _read_cart()
-        except SiteError as exc:
-            return _error_result(exc)
+    cart, err = _logged_in(_read_cart)
+    if err:
+        return err
     line = _line(cart, product_id)
     product = _known_product(product_id) or {}
     before = line["quantity"] if line else 0
@@ -940,7 +954,6 @@ def grocery_gate(budget=None):
     waiting), then one verifying read. Never a second SMS, never a retry. A code already pending from an
     earlier start is waited for instead of sending another. Returns {"status": logged_in | login_failed |
     site_blocked | site_error, "text", "login": none|auto|failed, "requests"}."""
-    budget = LOGIN_BUDGET if budget is None else budget
     t0 = _now()
     with _lock:
         try:
@@ -952,7 +965,22 @@ def grocery_gate(budget=None):
             return _result("site_blocked", str(exc), requests=1)
         except SiteError as exc:
             return _result("site_error", str(exc)[:200], requests=1)
-    requests = 1
+    out = _auto_login(budget, pending=pending, t0=t0)
+    out["requests"] = out.get("requests", 0) + 1
+    return out
+
+
+def _auto_login(budget=None, pending=None, t0=None):
+    """THE automatic login (weekly gate and single cart tools alike): ONE start_login (one SMS, the code arrives
+    through the #OTP relay and is submitted by itself, or Ben pastes it → super_hist_login_code), then wait for
+    the session up to `budget` (LOGIN_BUDGET, 3 min) polling the local login state and the relay inbox (no site
+    requests while waiting). A code already pending is waited for instead of sending another. Never a retry.
+    Must be called WITHOUT _lock held. Returns {"status": logged_in|login_failed, "text", "login", "requests"}."""
+    budget = LOGIN_BUDGET if budget is None else budget
+    t0 = _now() if t0 is None else t0
+    if pending is None:
+        pending = _state["phase"] == "code_sent" and _now() - _state["sent_at"] <= CODE_WINDOW
+    requests = 0
     if not pending:
         started = start_login({"wait_seconds": min(AUTO_WAIT, max(0, int(budget)))})
         requests += 2

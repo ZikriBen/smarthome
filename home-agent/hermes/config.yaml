@@ -21,8 +21,9 @@ platform_toolsets:
 mcp_servers:
   command_center:
     url: http://command-center-mcp:8000/mcp
-    # super_hist_login_start may wait ~45s for a relayed SMS code on top of the site's 10s request spacing.
-    timeout: 180
+    # super_hist_login_start may wait ~45s for a relayed SMS code on top of the site's 10s request spacing;
+    # a Super-Hist cart tool may include the one automatic login (≤3 min wait) → 270 s.
+    timeout: 270
     # This server has no legitimate reason to ask Hermes to invoke a model.
     sampling:
       enabled: false

@@ -21,8 +21,14 @@
     report what is really in the cart.
   - Searches/reads are slow (≥10 s per request on the site): one search per item, no loops,
     tell Ben when several are needed.
-  - `login_required` → "החיבור לסופר החברתי פג. לשלוח קוד SMS להתחברות?" and only after he
-    says yes call `super_hist_login_start` (never log in by yourself).
+  - Logged out: the cart tools (view / search / add / set_qty / remove) log in BY
+    THEMSELVES — one SMS, the code comes through the relay, up to 3 minutes — and
+    then continue; don't ask Ben first and don't call `super_hist_login_start`
+    for it. If the call is slow, that is the login. If Ben pastes 6 digits while
+    it waits, call `super_hist_login_code(code)`. `login_failed` → relay its one
+    line and stop (no retry, no second SMS; the next request tries once again).
+    `login_required` (the session dropped in the middle of a call) → nothing was
+    changed; relay `text` and stop.
   - `site_blocked` / `site_changed` / `blocked_by_policy` → relay `text` and stop; do not
     retry. `weighted_unsupported` (by-kg produce) → tell Ben to add it himself on the site.
     `search_first` → search, then propose again. `out_of_stock` → say so, offer an alternative.
@@ -48,3 +54,16 @@
   fixture is synthetic; the mini-cart canary covers it.
 - The 403/429/challenge breaker is in memory (24 h); a command-center restart clears it.
 - Logout is local only; the site session stays until it expires.
+
+## Automatic login (2026-10-21, Ben)
+
+- cart_view / search / propose_* → `_logged_in()`: logged out → `_auto_login()` (shared with the weekly
+  gate): ONE `start_login` (one SMS; waits ≤45 s for the relayed code), then waits for the session up to
+  LOGIN_BUDGET = 180 s polling local state + the relay inbox (no site requests), then the tool runs once
+  more. A pending code is waited for, never re-sent. Failure/timeout → `login_failed` (one line), nothing read
+  or proposed. No retries.
+- Not covered on purpose: an APPROVED write (single `apply_write`, or the background batch) never logs in —
+  it runs inside the approval decision / a background thread, so a dropped session fails it with
+  "nothing changed" and the next proposal logs in.
+- Timeouts: MCP client 260 s for the cart tools; Hermes `mcp_servers.command_center.timeout` 180 → 270 s
+  (hermes/config.yaml) — part of the same deploy.
