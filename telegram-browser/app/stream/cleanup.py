@@ -53,6 +53,7 @@ def plan(root: Path, variant: int | None) -> list[tuple[Path, list[Path], bool]]
         else:
             stem = name[:-5] if name.endswith(".strm") else name
             sidecars = {folder / n for n in subs.get(str(variant), [])}
+            sidecars |= {folder / n for n in data.get("subs_pending", {}).get(str(variant), [])}
             # also untracked sidecars of this variant (e.g. an interrupted marker update)
             sidecars |= {p for p in folder.glob(f"{glob_escape(stem)}.*.srt") if p.is_file()}
             out.append((folder, [folder / name, *sorted(sidecars)], False))
@@ -73,6 +74,7 @@ def apply_plan(items, variant: int | None) -> None:
             data = json.loads(marker.read_text())
             data["variants"].pop(str(variant), None)
             data.get("subs", {}).pop(str(variant), None)
+            data.get("subs_pending", {}).pop(str(variant), None)
             marker.write_text(json.dumps(data))
 
 

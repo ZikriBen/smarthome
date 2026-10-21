@@ -59,7 +59,7 @@ def test_bad_input():
 
 def test_names_and_langs():
     t = subs.SubTrack(2, "S_TEXT/UTF8", "heb")
-    assert subs.sidecar_name("A (2001) - 720p.strm", t) == "A (2001) - 720p.heb.srt"
+    assert subs.sidecar_name("A (2001) - 720p.strm", t) == "A (2001) - 720p.heb.default.srt"
     t.forced = True
     assert subs.sidecar_name("A (2001) - 720p.strm", t) == "A (2001) - 720p.heb.forced.srt"
     assert subs.norm_lang("he") == subs.norm_lang("iw") == subs.norm_lang("he-IL") == "heb"
@@ -81,7 +81,7 @@ class FakeSvc:
         from app.stream.service import Location
         return Location(2, "loc", len(self.data), 0)
 
-    async def get_chunk_background(self, vid, idx):
+    async def get_chunk_background(self, vid, idx, urgent=False):
         self.calls += 1
         await asyncio.sleep(0)
         cs = 512 * 1024
@@ -114,8 +114,11 @@ def test_job_writes_sidecars_atomically_and_refreshes(tmp_path):
     st = jobs.public(555)
     assert st["status"] == "ready"
     names = st["files"]
-    assert names == ["The Godfather Part II (1974) - 720p.heb.srt", "The Godfather Part II (1974) - 720p.eng.srt"]
-    assert (e.folder / names[0]).read_text().startswith("1\n00:00:00,100 --> ")
+    # ONE Hebrew sidecar, flagged default; no English/forced duplicates
+    assert names == ["The Godfather Part II (1974) - 720p.heb.default.srt"]
+    assert st["state"] == "done" and st["hebrew"] is True and st["mode"] == "full" and st["cues"] == 6
+    assert (e.folder / names[0]).read_text().startswith("1\n00:00:00,100 --> 00:00:01,600\nשורה 0")
+    assert sorted(p.name for p in e.folder.glob("*.srt")) == names
     assert not list(e.folder.glob(".*.tmp"))
     marker = json.loads((e.folder / watch.MARKER).read_text())
     assert marker["subs"] == {"555": names} and marker["variants"] == {"555": e.strm.name}
@@ -132,7 +135,7 @@ def test_job_states_unsupported_skipped_none_failed(tmp_path):
     _, e = _entry(tmp_path)
 
     class Boom(FakeSvc):
-        async def get_chunk_background(self, vid, idx):
+        async def get_chunk_background(self, vid, idx, urgent=False):
             raise StreamError(503, "Telegram rate limit", retry_after=30)
 
     async def scenario():
@@ -149,7 +152,7 @@ def test_job_states_unsupported_skipped_none_failed(tmp_path):
         j4 = mk(Boom(make_mkv()))
         j4.schedule(4, {"size": 5}, e.folder, e.strm.name, True)
         await asyncio.gather(*j4.tasks.values())
-        assert j4.public(4) == {"status": "failed", "detail": "Telegram rate limit"}
+        assert j4.public(4) == {"status": "failed", "detail": "Telegram rate limit", "state": "failed", "hebrew": None}
         assert j4.summary() == {"failed": 1}
 
     asyncio.run(scenario())
@@ -161,12 +164,12 @@ def test_jobs_run_one_at_a_time(tmp_path):
     peak = [0]
 
     class Slow(FakeSvc):
-        async def get_chunk_background(self, vid, idx):
+        async def get_chunk_background(self, vid, idx, urgent=False):
             running.append(vid)
             peak[0] = max(peak[0], len(set(running)))
             await asyncio.sleep(0.001)
             running.remove(vid)
-            return await super().get_chunk_background(vid, idx)
+            return await super().get_chunk_background(vid, idx, urgent)
 
     async def scenario():
         j = subs.SubtitleJobs(Slow(make_mkv()), marker_name=watch.MARKER, max_bytes=1 << 30, max_seconds=60,
@@ -255,3 +258,144 @@ def test_real_ffmpeg_muxed_mkv_matches_ffmpeg_extraction(tmp_path):
     assert [t.lang for t in tracks] == ["heb"]
     out = subs.to_srt(tracks[0].cues).decode()
     assert "00:00:01,000 --> 00:00:02,500\nשלום עולם" in out and "שורה <i>שנייה</i>\nועוד" in out
+
+
+# ------------------------------------------------------------------ Hebrew-only, placeholder, sparse
+import shutil  # noqa: E402
+import subprocess  # noqa: E402
+
+
+def test_no_hebrew_is_known_after_the_header_and_writes_nothing(tmp_path):
+    _, e = _entry(tmp_path)
+    svc = FakeSvc(make_mkv(clusters=50, video_block=20000))
+
+    async def scenario():
+        j = subs.SubtitleJobs(svc, marker_name=watch.MARKER, max_bytes=1 << 30, max_seconds=60, log=lambda m: None)
+
+        def no_heb(tracks):  # patch: pretend the Hebrew tracks are English
+            for t in tracks:
+                t.lang = "eng"
+            return tracks
+        orig = subs.parse_tracks
+        subs.parse_tracks = lambda b: no_heb(orig(b))
+        try:
+            j.schedule(9, {"size": 5}, e.folder, e.strm.name, True)
+            st = await j.wait_header(9, 5)
+            await asyncio.gather(*j.tasks.values())
+        finally:
+            subs.parse_tracks = orig
+        return j, st
+
+    j, st = asyncio.run(scenario())
+    assert st["state"] == "none" and st["hebrew"] is False and "Hebrew" in st["detail"]
+    assert svc.calls == 1 and not list(e.folder.glob("*.srt"))  # header chunk only
+
+
+def test_placeholder_is_in_place_when_the_header_is_known(tmp_path):
+    _, e = _entry(tmp_path)
+    gate = asyncio.Event()
+
+    class Slow(FakeSvc):
+        async def get_chunk_background(self, vid, idx, urgent=False):
+            if idx > 0:
+                await gate.wait()
+            return await super().get_chunk_background(vid, idx, urgent)
+
+    # big enough that clusters live past chunk 0
+    data = make_mkv(clusters=40, video_block=40000)
+
+    async def scenario():
+        j = subs.SubtitleJobs(Slow(data), marker_name=watch.MARKER, max_bytes=1 << 30, max_seconds=60,
+                              log=lambda m: None)
+        (e.folder / "The Godfather Part II (1974) - 720p.eng.srt").write_text("old")
+        subs.record_sidecars(e.folder, watch.MARKER, 555, ["The Godfather Part II (1974) - 720p.heb.srt",
+                                                           "The Godfather Part II (1974) - 720p.eng.srt"])
+        j.schedule(555, {"size": 5}, e.folder, e.strm.name, True)
+        st = await j.wait_header(555, 5)
+        side = e.folder / "The Godfather Part II (1974) - 720p.heb.default.srt"
+        mid = (st, side.read_bytes(), sorted(p.name for p in e.folder.glob("*.srt")), j.existing(e.folder, 555))
+        gate.set()
+        await asyncio.gather(*j.tasks.values())
+        return mid, j.public(555), side.read_text()
+
+    (st, placeholder, files, existing), final, text = asyncio.run(scenario())
+    assert st["state"] == "running" and st["hebrew"] is True and st["phase"] in ("index", "full", "sparse")
+    assert placeholder == subs.PLACEHOLDER_SRT and existing == []  # a placeholder is never "done"
+    assert files == ["The Godfather Part II (1974) - 720p.heb.default.srt"]  # old-naming sidecars removed
+    assert final["state"] == "done" and text.count("-->") == 40
+
+
+def test_progress_fields_and_boost(tmp_path):
+    _, e = _entry(tmp_path)
+    clock = [100.0]
+    j = subs.SubtitleJobs(FakeSvc(b""), marker_name=watch.MARKER, max_bytes=1 << 30, max_seconds=60,
+                          log=lambda m: None, clock=lambda: clock[0])
+    r = subs.ChunkReader(None, 1000)
+    r.pos, r.fetched_bytes = 250, 300
+    j.state[1] = {"status": "running", "reader": r, "started": 90.0, "phase": "full"}
+    pub = j.public(1)
+    assert pub["state"] == "running" and pub["progress"] == 0.25 and pub["bytes"] == 300 and pub["total"] == 1000
+    assert pub["eta_s"] == 30 and pub["boosted"] is False
+    j.boost(1, 15)
+    assert j.boosted(1) and j._concurrency(1) == 6
+    clock[0] += 16
+    assert not j.boosted(1) and j._concurrency(1) == 1
+
+
+@pytest.mark.skipif(not shutil.which("ffmpeg"), reason="needs ffmpeg")
+def test_sparse_equals_full_on_a_real_muxed_file(tmp_path):
+    srt = tmp_path / "heb.srt"
+    srt.write_text("".join(f"{i + 1}\n00:00:{i * 2:02d},000 --> 00:00:{i * 2 + 1:02d},500\nשורה {i}\n\n"
+                           for i in range(25)), encoding="utf-8")
+    mkv = tmp_path / "t.mkv"
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "testsrc=size=320x180:rate=24",
+                    "-i", str(srt), "-t", "55", "-map", "0:v", "-map", "1", "-c:v", "libx264", "-preset",
+                    "ultrafast", "-b:v", "2500k", "-c:s", "srt", "-metadata:s:s:0", "language=heb", str(mkv)],
+                   check=True)
+    data = mkv.read_bytes()
+    cs = 64 * 1024
+    log = []
+
+    async def fetch(i):
+        log.append(i)
+        return data[i * cs:(i + 1) * cs]
+
+    async def go():
+        r = subs.ChunkReader(fetch, len(data), cs)
+        hdr = await subs.read_header(r)
+        heb = subs.hebrew_track(hdr.tracks)
+        cues = await subs.read_cues(r, hdr, heb.number)
+        assert subs.sparse_usable(cues, hdr) and all(c.rel is not None for c in cues)
+        sp = subs.SparseReader(fetch, len(data), cs, concurrency=lambda: 4)
+        assert await subs.extract_sparse(sp, hdr, heb, cues)
+        sparse = subs.to_srt(heb.cues)
+        n = len(set(log))
+        full = await subs.extract(subs.ChunkReader(fetch, len(data), cs), want=lambda ts: [subs.hebrew_track(ts)])
+        return sparse, subs.to_srt(full[0].cues), n
+
+    sparse, full, n_sparse = asyncio.run(go())
+    total = -(-len(data) // cs)
+    assert sparse == full and sparse.count(b"-->") == 25
+    assert n_sparse < total * 0.6  # only the chunks holding subtitle blocks (+ header/Cues)
+
+
+def test_sparse_falls_back_when_cues_do_not_resolve(tmp_path):
+    hdr = subs.MkvHeader(0, 100, 1_000_000, 60e9 * 2, [], 50, 40)
+    assert not subs.sparse_usable(None, hdr)
+    assert not subs.sparse_usable([subs.CueRef(1, 0, None, None)] * 20, hdr)  # no CueRelativePosition
+    assert not subs.sparse_usable([subs.CueRef(1, 0, 5, None)] * 9, hdr)  # too sparse to be a full track
+    assert subs.sparse_usable([subs.CueRef(1, 0, 5, None)] * 10, hdr)
+
+    async def go():
+        sp = subs.SparseReader(lambda i: _zero(), 10 * CHUNK, CHUNK)
+        t = subs.SubTrack(2, "S_TEXT/UTF8", "heb")
+        return await subs.extract_sparse(sp, hdr, t, [subs.CueRef(1, 0, 5, None)])
+
+    assert asyncio.run(go()) is False  # garbage at the cue position -> caller does the full read
+
+
+CHUNK = 4096
+
+
+async def _zero():
+    return b"\x00" * CHUNK
