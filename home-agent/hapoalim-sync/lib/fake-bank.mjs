@@ -1,4 +1,4 @@
-// A FAKE Bank Hapoalim served entirely from puppeteer request interception (tests only).
+// A FAKE Bank Hapoalim (copied from the PoC, lives in lib/ so `auto.mjs --fake-bank` works in the image) served entirely from puppeteer request interception (tests only).
 // Nothing here talks to the network: every request is answered locally, and the browser is launched with a dead
 // proxy + a NOTFOUND resolver as a second guard. Markup mirrors the selectors we patch for (UNVERIFIED vs live:
 // form.auth-otp-login / .btn-red_1 / .errors-rb .error-message come from upstream PR #1084).
@@ -14,8 +14,9 @@ export const SAFE_LAUNCH_ARGS = [
 const page = (body, script = "") => `<!doctype html><html lang="he" dir="rtl"><head><meta charset="utf-8"><title>fake</title></head>
 <body>${body}<script>${script}</script></body></html>`;
 
-function loginPage() {
-  return page(`<div id="app"><form id="login" onsubmit="return false">
+function loginPage(captcha = false) {
+  // bcodes.* is requested like on the live login (it must be blocked by lib/egress.mjs before it reaches the responder)
+  return page(`<script src="https://bcodes.bankhapoalim.co.il/fake-tag.js"></script>${captcha ? '<iframe src="https://www.google.com/recaptcha/api2/anchor?k=x"></iframe><div class="g-recaptcha"></div>' : ""}<div id="app"><form id="login" onsubmit="return false">
   <input id="userCode" autocomplete="off"><input id="password" type="password">
   <button type="button" class="login-btn">כניסה</button></form></div>`, `
 const post = (u, b) => fetch(u, { method: "POST", body: JSON.stringify(b) }).then((r) => r.json());
@@ -36,7 +37,7 @@ document.querySelector(".login-btn").addEventListener("click", async () => {
 }
 
 /**
- * scenario: { otp: bool, otpInputs: 1|6, expectedCode, otpHangs: bool, wrongPasswordFor: string }
+ * scenario: { otp: bool, otpInputs: 1|6, expectedCode, otpHangs: bool, wrongPasswordFor: string, wrongPasswordAny, captcha }
  * Returns { responder(request), log } — log records what the "bank" received (for assertions).
  */
 export function fakeBank(scenario = {}) {
@@ -50,11 +51,12 @@ export function fakeBank(scenario = {}) {
     const url = new URL(request.url());
     log.hosts.add(url.hostname);
     const p = url.pathname;
-    if (p === "/cgi-bin/poalwwwc") return html(request, loginPage());
+    if (p === "/cgi-bin/poalwwwc") return html(request, loginPage(s.captcha));
     if (p === "/__fake/login") {
       const { u, p: pw } = JSON.parse(request.postData() || "{}");
       log.logins.push({ u, pw });
-      if (s.wrongPasswordFor && pw === s.wrongPasswordFor) return json(request, { next: INVALID_PASSWORD_URL });
+      if (s.captcha) return json(request, { next: "/cgi-bin/poalwwwc?reqName=getLogonPage" });
+      if (s.wrongPasswordAny || (s.wrongPasswordFor && pw === s.wrongPasswordFor)) return json(request, { next: INVALID_PASSWORD_URL });
       return json(request, s.otp ? { next: "otp", inputs: s.otpInputs } : { next: HOMEPAGE });
     }
     if (p === "/__fake/otp") {
@@ -84,6 +86,7 @@ export function fakeBank(scenario = {}) {
         { eventDate: ymd, valueDate: ymd, eventAmount: 900, eventActivityTypeCode: 1, activityDescription: "משכורת", serialNumber: 2, referenceNumber: 112 },
       ] });
     }
+    if (url.hostname.startsWith("bcodes.")) log.bcodesReached = true; // must never happen
     if (p === "/favicon.ico") return request.respond({ status: 204, body: "" });
     return request.respond({ status: 404, contentType: "text/plain", body: "not in the fake bank" });
   }

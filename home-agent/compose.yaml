@@ -82,7 +82,8 @@ services:
       TELEGRAM_DOWNLOADER_URL: http://host.docker.internal:8787
       JELLYFIN_URL: http://host.docker.internal:8096
       JELLYFIN_API_KEY: ${JELLYFIN_API_KEY:?set JELLYFIN_API_KEY in .env}
-      HAPOALIM_SCRAPER_GID: "10077"   # group hapoalim-otp (setup-host.sh): may connect to broker.sock
+      HAPOALIM_SPOOL_DIR: /hapoalim-spool
+      HAPOALIM_OUT_DIR: /hapoalim-out
     # Uptime Kuma publishes its read-only metrics endpoint on the host. This
     # hostname is available only to the Command Center, never to Hermes.
     extra_hosts:
@@ -98,11 +99,10 @@ services:
       - ./hermes/cache/documents:/attachments:ro
       # One-time-code inbox written by Hermes's otp-relay plugin; read + single-use delete here.
       - ./hermes/otp:/otp-inbox
-      # Bank Hapoalim (hapoalim-sync/DESIGN.md): the approved-run spool (request/status only, no secrets,
-      # no report) and the dir where the Command Center serves the one-code broker socket to the scraper.
-      # Both are created by hapoalim-sync/host/setup-host.sh; without them the feature stays inert.
+      # Bank Hapoalim (hapoalim-sync/): approved-run spool + the CSV out dir (read-only; Ben-decided path).
+      # Created by hapoalim-sync/host/setup-host.sh; without them the feature stays inert.
       - /var/lib/hapoalim-spool:/hapoalim-spool
-      - /var/lib/hapoalim-otp:/hapoalim-otp
+      - /home/ben/smarthome/data/hapoalim/out:/hapoalim-out:ro
       # This is the sole assistant-writable filesystem area. It is disposable
       # and deliberately not mounted into Hermes itself.
       - ./workspace:/workspace

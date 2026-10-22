@@ -34,13 +34,16 @@ SKIP = {"action": "skip", "reason": "otp-relay"}
 # like 03-123456, amounts like 123456.78, times, dates). Hebrew letters/punctuation next to it are fine.
 _SEP = r"[.,:/\-]"
 def _standalone(digits):
-    return re.compile(rf"(?<![0-9])(?<![0-9]{_SEP})([0-9]{{{digits}}})(?![0-9])(?!{_SEP}[0-9])")
+    """`digits` = 6 or a range "5-6" (Hapoalim sends 5 or 6 digits depending on the channel)."""
+    lo, _, hi = str(digits).partition("-")
+    quant = f"{{{lo},{hi or lo}}}"
+    return re.compile(rf"(?<![0-9])(?<![0-9]{_SEP})([0-9]{quant})(?![0-9])(?!{_SEP}[0-9])")
 
 
 SITE_CODE_RE = {
     "super_hist": _standalone(6),
     # Placeholder for the allowlist; the real rule is built per message by _hapoalim_rules() (configurable length).
-    "hapoalim": _standalone(6),
+    "hapoalim": _standalone("5-6"),
 }
 
 # ---------------------------------------------------------------------------------------------- Bank Hapoalim
@@ -49,7 +52,9 @@ SITE_CODE_RE = {
 # UNVERIFIED: the real wording of the Hapoalim login SMS is not known yet. These defaults are deliberately strict
 # (a false reject only means the run ends with OTP_TIMEOUT); tune them with OTP_RELAY_DEBUG_SHAPE=1 and the env
 # overrides below, never by loosening the reject list.
-HAPOALIM_REQUIRE_DEFAULT = r"(?=.*(?:הפועלים|פועלים|Poalim|POALIM))(?=.*(?:כניסה|התחברות|להתחבר|הזדהות|login|Login))"
+# Real wording still UNVERIFIED (the live PoC code was typed by hand). Default since 2026-10-22: the bank name OR a
+# login/identification word (the phone rule already limits the forward to the bank's sender); REJECT always wins.
+HAPOALIM_REQUIRE_DEFAULT = r"הפועלים|פועלים|Poalim|POALIM|כניסה|התחברות|להתחבר|הזדהות|אימות|login|Login"
 HAPOALIM_REJECT_DEFAULT = (r"העברה|העברת|להעברת|אישור פעולה|לאישור הפעולה|אישור עסקה|עסקה|תשלום|לתשלום|מוטב|"
                            r"הוראת קבע|הרשאה לחיוב|כרטיס|הלוואה|פיקדון|פקדון|משיכה|(?<![א-ת])ביט(?![א-ת])|מט.ח|"
                            r"transfer|payment|beneficiary|transaction|approve")
@@ -62,10 +67,11 @@ def _hapoalim_rules():
         require = re.compile(os.environ.get("OTP_HAPOALIM_REQUIRE_RE", "").strip() or HAPOALIM_REQUIRE_DEFAULT, re.S)
         reject = re.compile(os.environ.get("OTP_HAPOALIM_REJECT_RE", "").strip() or HAPOALIM_REJECT_DEFAULT,
                             re.S | re.I)
-        digits = int(os.environ.get("OTP_HAPOALIM_CODE_DIGITS", "").strip() or "6")
-    except (re.error, ValueError):
-        return None
-    if not 4 <= digits <= 8:
+        digits = os.environ.get("OTP_HAPOALIM_CODE_DIGITS", "").strip() or "5-6"
+        m = re.fullmatch(r"([4-8])(?:-([4-8]))?", digits)
+        if not m or (m.group(2) and int(m.group(2)) < int(m.group(1))):
+            return None
+    except re.error:
         return None
     return require, reject, _standalone(digits)
 
@@ -73,6 +79,8 @@ def _hapoalim_rules():
 # A bank SMS must never feed another site's login (a mis-tagged forwarding rule): any non-bank site drops a
 # message that mentions the bank.
 BANK_MENTION_RE = re.compile(r"הפועלים|פועלים|poalim|בנק", re.I)
+# ...and the reverse: a Super-Hist SMS mis-tagged `#OTP hapoalim` (or a rule forwarding both) never feeds the bank.
+OTHER_SITE_RE = re.compile(r"super-hist|superhist|הסופר החברתי|הסופר|ההסתדרות|histadrut", re.I)
 
 
 def guard_reason(site, body):
@@ -82,6 +90,8 @@ def guard_reason(site, body):
     rules = _hapoalim_rules()
     if rules is None:
         return "invalid hapoalim pattern configuration"
+    if OTHER_SITE_RE.search(body or ""):
+        return "mentions another site (super_hist); not a bank SMS"
     require, reject, _ = rules
     if reject.search(body):
         return "looks like a transfer/approval SMS, not a login SMS"

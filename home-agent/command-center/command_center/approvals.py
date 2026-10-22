@@ -125,8 +125,9 @@ def summarize(action, payload):
         if action in ("super_hist_cart_write", "super_hist_cart_batch"):
             # Built by super_hist._propose: store, item, unit price, qty before→after, expected new total.
             return _clip(p.get("summary"), 220)
-        if action == "hapoalim_run_report":
-            return f"דוח בנק הפועלים לחודש {_clip(p.get('month'), 7)} (התחברות אחת לבנק; SMS רק אם הבנק יבקש)"
+        if action == "hapoalim_sync":
+            window = f"{_clip(p.get('from') or '≈45י', 10)}..{_clip(p.get('to') or 'היום', 10)}"
+            return f"סנכרון עו״ש בנק הפועלים {window} (התחברות אחת; SMS רק אם הבנק יבקש)"
         if action == "price_watch_create":
             return f"מעקב מחיר {_clip(p.get('url'), 60)} (יעד {p.get('target')})"
     except Exception:

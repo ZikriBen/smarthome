@@ -1,20 +1,25 @@
-// Everything that leaves the container (stdout/stderr, last-run.json) goes through here.
-// Free text (library error messages) is scrubbed: every secret value and every run of 4+ digits
-// (account numbers, codes, IDs) is masked. Structured status objects are built from an allowlist.
-
-export function makeRedactor(secrets = []) {
-  const values = secrets.filter((value) => typeof value === "string" && value.length >= 3);
-  return function redact(text) {
+// Everything printed goes through here. Every secret value (user code, password, SMS code, passphrase) is
+// replaced, every run of 4+ digits (account numbers, codes, IDs, amounts) is masked, URLs keep only the host.
+export function makeRedactor(initial = []) {
+  const values = [];
+  const add = (value) => {
+    if (typeof value === "string" && value.length >= 3 && !values.includes(value)) values.push(value);
+  };
+  initial.forEach(add);
+  function redact(text) {
     let out = String(text ?? "");
     for (const value of values) out = out.split(value).join("[redacted]");
-    out = out.replace(/[0-9]{4,}/g, (match) => "#".repeat(match.length));
     out = out.replace(/https?:\/\/[^\s"')]+/g, (url) => {
       try {
-        return new URL(url).host; // keep the host, drop path + query (they can carry account numbers)
+        return new URL(url).host;
       } catch {
         return "[url]";
       }
     });
+    out = out.replace(/[0-9]{4,}/g, (match) => "#".repeat(match.length));
     return out.slice(0, 300);
-  };
+  }
+  redact.add = add;
+  redact.forget = () => { values.length = 0; };
+  return redact;
 }

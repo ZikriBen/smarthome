@@ -1,8 +1,7 @@
 node_modules
 test
+host
 reports
 state
-.age
-*.age
-*.cred
-host
+*.md
+.gitignore

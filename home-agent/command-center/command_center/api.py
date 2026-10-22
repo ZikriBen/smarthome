@@ -106,5 +106,4 @@ def run():
     groceries.setup()
     price_watches.start_background_tasks()
     google_workspace.start_oauth_server()
-    hapoalim.start_broker()
     ThreadingHTTPServer(("0.0.0.0", 8080), API).serve_forever()
