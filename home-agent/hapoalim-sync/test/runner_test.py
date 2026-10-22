@@ -213,5 +213,36 @@ class RunnerTests(unittest.TestCase):
         self.assertEqual([p.name for p in (self.root / "out").iterdir() if "archive" in p.name], [])
 
 
+    def test_no_request_only_publishes_runs_mirror(self):
+        (self.root / "state" / f"runs-{today()}").write_text("2\n")
+        status, code = Runner(self.cfg(HAPOALIM_MAX_RUNS_PER_DAY="10")).run()
+        self.assertEqual((status, code), (None, 0))
+        m = json.loads((self.root / "spool" / "runs-today.json").read_text())
+        self.assertEqual((m["runs"], m["max_runs"]), (2, 10))
+        self.assertEqual((self.root / "state" / f"runs-{today()}").read_text().strip(), "2")  # not counted
+
+    def test_runs_mirror_records_effective_max(self):
+        self.queue()
+        threading.Timer(0.5, lambda: self.put_code("hapoalim", "12345")).start()
+        status, _ = Runner(self.cfg(HAPOALIM_MAX_RUNS_PER_DAY="10", HAPOALIM_OTP_TIMEOUT="5")).run()
+        self.assertEqual(status["status"], "DONE")
+        m = json.loads((self.root / "spool" / "runs-today.json").read_text())
+        self.assertEqual((m["date"], m["runs"], m["max_runs"]), (today(), 1, 10))
+
+    def test_daily_limit_reports_counts_and_covered_still_answers(self):
+        import archive as arch
+        (self.root / "state" / f"runs-{today()}").write_text("3\n")
+        self.queue()
+        status, code = Runner(self.cfg()).run()
+        self.assertEqual((status["status"], status["runsToday"], status["maxRuns"]), ("DAILY_LIMIT", 3, 3))
+        m = json.loads((self.root / "spool" / "runs-today.json").read_text())
+        self.assertEqual((m["runs"], m["max_runs"]), (3, 3))
+        arch.merge_sync(self.root / "archive", [], range_from="2026-09-01", range_to="2026-09-30",
+                        run_id="seed", accounts=["12345678"])
+        self.queue(actions=[{"name": "checking_transactions", "from": "2026-09-01", "to": "2026-09-30"}])
+        status, code = Runner(self.cfg()).run()
+        self.assertEqual(status["status"], "COVERED")
+
+
 if __name__ == "__main__":
     unittest.main()

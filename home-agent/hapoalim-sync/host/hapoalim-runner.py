@@ -49,6 +49,7 @@ STOP_STATUSES = {"INVALID_PASSWORD", "CHANGE_PASSWORD", "ACCOUNT_BLOCKED", "LOGI
 REPORT_FIELDS = ("status", "stage", "stopForToday", "otpRequested", "otpDelivered", "blockedHosts", "failedHosts",
                  "seconds", "accountCount", "transactionCount", "firstDate", "lastDate", "monthsCovered",
                  "from", "to", "profileWiped", "fakeBank", "warnings",
+                 "runsToday", "maxRuns",
                  "archiveNew", "archiveUpdated", "archiveSuperseded", "archiveMonths", "archiveSkipped",
                  "coverage")
 REQUEST_MAX_AGE = 15 * 60
@@ -149,6 +150,14 @@ class Runner:
             return int(self.runs_file().read_text().strip() or "0")
         except (OSError, ValueError):
             return 0
+
+    def publish_runs(self):
+        """Mirror today's counter + the EFFECTIVE max (unit env / drop-ins such as limits.conf) into the
+        spool as runs-today.json, the only host state the Command Center can read. The runs file in the
+        root-only state dir stays the authority (plain integer, unchanged format)."""
+        body = json.dumps({"date": today(), "runs": self.runs_today(), "max_runs": self.cfg.max_runs,
+                           "updated_at": self.clock()}) + "\n"
+        atomic_write(self.cfg.spool_dir / "runs-today.json", body, 0o640)
 
     def write_stop(self, status):
         atomic_write(self.stop_file(), json.dumps({"status": status, "at": self.clock()}) + "\n", 0o600)
@@ -440,6 +449,10 @@ class Runner:
         cfg = self.cfg
         os.umask(0o077)
         cfg.state_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+        try:
+            self.publish_runs()
+        except OSError:
+            pass
         removed = cleanup_old_csv(cfg.out_dir, cfg.retention_days, self.clock())
         lock = open(cfg.state_dir / "run.lock", "a+")
         try:
@@ -472,11 +485,13 @@ class Runner:
             return self.finish(request, {"status": "BAD_REQUEST", "stage": "preflight"}), 2
         if self.stop_file().exists():
             return self.finish(request, {"status": "STOPPED_TODAY", "stage": "preflight"}), 2
-        if self.runs_today() >= cfg.max_runs:
-            return self.finish(request, {"status": "DAILY_LIMIT", "stage": "preflight"}), 2
+        # COVERED needs no login, so it is answered even at the daily limit (and never counted).
         covered = self.maybe_covered(request)
         if covered is not None:
             return self.finish(request, covered, {"csvRemovedByRetention": removed}), 0
+        if self.runs_today() >= cfg.max_runs:
+            return self.finish(request, {"status": "DAILY_LIMIT", "stage": "preflight",
+                                         "runsToday": self.runs_today(), "maxRuns": cfg.max_runs}), 2
         if not cfg.image and not cfg.test_exec:
             return self.finish(request, {"status": "NOT_CONFIGURED", "stage": "preflight"}), 2
         creds = self.read_credentials()
@@ -495,6 +510,10 @@ class Runner:
                 new_actions.append(a)
             actions = new_actions
         atomic_write(self.runs_file(), f"{self.runs_today() + 1}\n", 0o600)   # counted BEFORE the bank
+        try:
+            self.publish_runs()
+        except OSError:
+            pass
         since = max(request["requested_at"], now - REQUEST_MAX_AGE)
         report, files, otp_wait = self.run_container(request["run_id"], creds, since, actions)
         creds = None

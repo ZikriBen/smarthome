@@ -128,5 +128,89 @@ class HapoalimCCTests(unittest.TestCase):
         self.assertEqual(month["row_count"], 1)
 
 
+    # ---------------- daily limit (fix2) ----------------
+    def _runs(self, runs, max_runs=None, date=None):
+        body = {"date": date or self.hp._today(), "runs": runs}
+        if max_runs is not None:
+            body["max_runs"] = max_runs
+        (self.spool / "runs-today.json").write_text(json.dumps(body))
+
+    def test_limit_reached_can_run_false(self):
+        self._runs(3, 3)
+        st = self.hp.status()
+        self.assertTrue(st["limit_reached"])
+        self.assertFalse(st["can_run_today"])
+        self.assertEqual((st["runs_today"], st["max_runs"], st["max_runs_source"]), (3, 3, "runner"))
+        self.assertIn("resets_at", st)
+        self.assertTrue(st["resets_at"].endswith("T00:00:00+03:00") or st["resets_at"].endswith("T00:00:00+02:00"))
+
+    def test_max_runs_10_from_host_state(self):
+        self._runs(3, 10)
+        st = self.hp.status()
+        self.assertTrue(st["can_run_today"])
+        self.assertEqual(st["max_runs"], 10)
+        self.assertEqual(self.hp.propose_sync({"from": "2026-10-01"})["status"], "pending_approval")
+        self._runs(10, 10)
+        self.assertFalse(self.hp.status()["can_run_today"])
+
+    def test_cc_env_max_is_ignored(self):
+        with mock.patch.dict(os.environ, {"HAPOALIM_MAX_RUNS_PER_DAY": "50"}):
+            self._runs(10, 10)
+            self.assertFalse(self.hp.status()["can_run_today"])
+
+    def test_sync_refused_without_spooling(self):
+        self._runs(3, 3)
+        out = self.hp.propose_sync({"from": "2026-10-01"})
+        self.assertEqual(out["status"], "DAILY_LIMIT")
+        self.assertEqual((out["runs_today"], out["max_runs"]), (3, 3))
+        self.assertFalse(out["retry_today"])
+        self.assertEqual(self.hp._test_calls, [])
+        self.assertFalse((self.spool / "request.json").exists())
+        with self.assertRaises(ValueError):
+            self.hp.execute_sync({"actions": [{"name": "checking_transactions"}]})
+        self.assertFalse((self.spool / "request.json").exists())
+
+    def test_covered_still_works_at_limit(self):
+        arch = sys.modules["hapoalim_archive"]
+        arch.merge_sync(self.archive, [], range_from="2026-09-01", range_to="2026-09-30",
+                        run_id="seed", accounts=["1234"])
+        self._runs(3, 3)
+        self.assertEqual(self.hp.propose_sync({"from": "2026-09-01", "to": "2026-09-30"})["status"], "COVERED")
+
+    def test_yesterday_counter_ignored(self):
+        self._runs(10, 10, date="2000-01-01")
+        st = self.hp.status()
+        self.assertEqual(st["runs_today"], 0)
+        self.assertFalse(st["limit_reached"])
+        self.assertEqual(st["max_runs"], 10)  # last effective max still known
+
+    def test_missing_runs_file_default(self):
+        st = self.hp.status()
+        self.assertEqual((st["runs_today"], st["limit_reached"], st["max_runs_source"]), (0, False, "default"))
+        self.assertTrue(st["can_run_today"])
+
+    def test_missing_mirror_but_today_daily_limit_status(self):
+        import time
+        (self.spool / "last-status.json").write_text(json.dumps({"status": "DAILY_LIMIT", "finishedAt": time.time()}))
+        st = self.hp.status()
+        self.assertTrue(st["limit_reached"])
+        self.assertFalse(st["can_run_today"])
+        # once the runner publishes a raised max, that wins over the old status
+        self._runs(3, 10)
+        self.assertTrue(self.hp.status()["can_run_today"])
+
+    def test_corrupt_runs_file_fail_closed_today_only(self):
+        f = self.spool / "runs-today.json"
+        f.write_text("{not json")
+        st = self.hp.status()
+        self.assertEqual(st["runs_state"], "corrupt")
+        self.assertFalse(st["can_run_today"])
+        old = 946684800  # 2000-01-01: stale corrupt file must not block forever
+        os.utime(f, (old, old))
+        self.assertTrue(self.hp.status()["can_run_today"])
+        self._runs("x", 3)  # bad type today -> fail closed
+        self.assertFalse(self.hp.status()["can_run_today"])
+
+
 if __name__ == "__main__":
     unittest.main()

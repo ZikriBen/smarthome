@@ -6,7 +6,8 @@ def register(mcp, client):
     @mcp.tool()
     def hapoalim_status() -> dict:
         """Read-only: state of the Bank Hapoalim sync (last run status, date range, transaction count,
-        whether an SMS was needed, stopped_today, can_run_today, pending run, csv path). Never contains
+        whether an SMS was needed, stopped_today, can_run_today, runs_today/max_runs/limit_reached/resets_at,
+        pending run, csv path). If can_run_today is false, do not offer a sync today. Never contains
         balances/descriptions itself — those are in the CSV via hapoalim_read_csv. Relay error_text if present."""
         return client.request("GET", "/hapoalim/status")
 
@@ -16,6 +17,8 @@ def register(mcp, client):
         Optional from_date/to_date as YYYY-MM-DD (Asia/Jerusalem days; default ≈ last 45 days through today;
         the container clamps to the bank/library max lookback of ≈1 year and rejects future dates).
         Only when Ben asks, every time: never on your own, never in a loop, never to retry a failure.
+        Result DAILY_LIMIT: the bank-login limit for today is used up (runs_today/max_runs, resets_at) —
+        do NOT offer or retry a sync today; answer from the archive or suggest tomorrow.
         Result COVERED: archive already has the range — no approval/SMS; use hapoalim_read_month/range.
         Result pending_approval: show `text` and append [[CC_APPROVAL:<approval_id>]].
         After approval the NUC logs in once; SMS relayed automatically — tell Ben to expect SMS and NOT to

@@ -55,7 +55,7 @@ ERROR_TEXT_HE = {
     "OTP_TIMEOUT": "קוד ה-SMS לא הגיע בזמן דרך ה-relay. אפשר לנסות מחר.",
     "OTP_AMBIGUOUS": "הגיעו שני קודים שונים, לא השתמשתי באף אחד. אפשר לנסות מחר.",
     "STOPPED_TODAY": "נעול להיום אחרי כשל הזדהות/OTP. לא ננסה שוב היום.",
-    "DAILY_LIMIT": "הגעת למכסת הריצות להיום.",
+    "DAILY_LIMIT": "הגעת למכסת ההתחברויות לבנק להיום. המונה מתאפס בחצות; אפשר לנסות שוב מחר (נתונים מהארכיון זמינים גם עכשיו).",
     "LOCKED": "ריצה אחרת כבר רצה; נסה שוב בעוד דקה.",
     "NOT_CONFIGURED": "חסרות הגדרות ב-NUC (סודות/image). בן צריך להריץ hapoalim-setup.",
     "BAD_ACTIONS": "בקשת הפעולות לא תקינה.",
@@ -112,11 +112,97 @@ def _stopped_today():
     return None
 
 
+# The runner's built-in default (HAPOALIM_MAX_RUNS_PER_DAY in hapoalim-runner.py). Used ONLY when the
+# runner has not published runs-today.json yet (older runner / never ran); then max_runs_source="default".
+# The real max comes from the runner unit env (e.g. Ben's drop-in limits.conf), never from this env.
+RUNNER_DEFAULT_MAX_RUNS = 3
+
+
+def _next_midnight_iso(now=None):
+    from datetime import timedelta
+    now_dt = datetime.fromtimestamp(time.time() if now is None else now, TZ)
+    nxt = (now_dt + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+    return nxt.isoformat()
+
+
+def _daily_limit(now=None):
+    """Runs counted today by the host runner (Asia/Jerusalem day, same boundary as the runner).
+
+    Source: spool/runs-today.json written by the runner on every invocation and after each counted run.
+      * missing → runs_today 0 (no run yet today / older runner), max = runner default, source "default";
+        but if last-status.json says DAILY_LIMIT today, limit_reached (older runner, before runs-today.json).
+      * date != today → yesterday's counter, ignored (runs_today 0); its max_runs is still used.
+      * unreadable/corrupt and modified today → FAIL CLOSED (limit_reached, runs_state "corrupt"); a corrupt
+        file from an earlier day is ignored so it cannot block forever.
+    """
+    now = time.time() if now is None else now
+    today = _today(now)
+    path = SPOOL_DIR / "runs-today.json"
+    out = {"runs_today": 0, "max_runs": RUNNER_DEFAULT_MAX_RUNS, "max_runs_source": "default",
+           "runs_state": "missing", "limit_reached": False, "resets_at": _next_midnight_iso(now)}
+    data = None
+    if path.exists():
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            if not isinstance(data, dict):
+                raise ValueError("not an object")
+        except (OSError, ValueError):
+            try:
+                fresh = _today(path.stat().st_mtime) == today
+            except OSError:
+                fresh = True
+            if fresh:
+                out.update(runs_state="corrupt", limit_reached=True)
+                return out
+            out["runs_state"] = "stale_corrupt"
+            data = None
+    if data is not None:
+        mx = data.get("max_runs")
+        if isinstance(mx, int) and not isinstance(mx, bool) and 1 <= mx <= 100:
+            out.update(max_runs=mx, max_runs_source="runner")
+        runs = data.get("runs")
+        if data.get("date") == today:
+            if not (isinstance(runs, int) and not isinstance(runs, bool) and runs >= 0):
+                out.update(runs_state="corrupt", limit_reached=True)
+                return out
+            out.update(runs_today=runs, runs_state="ok")
+        else:
+            out["runs_state"] = "previous_day"
+    if out["runs_today"] > 0 and out["runs_today"] >= out["max_runs"]:
+        out["limit_reached"] = True
+    # Older runner (no runs-today.json yet): trust today's DAILY_LIMIT status. Once the runner publishes
+    # runs-today.json, that file wins (e.g. after Ben raised the max with limits.conf the same day).
+    last = _read_json(SPOOL_DIR / "last-status.json") or {} if out["runs_state"] in ("missing", "stale_corrupt") else {}
+    if last.get("status") == "DAILY_LIMIT":
+        try:
+            finished = float(last.get("finishedAt") or 0)
+        except (TypeError, ValueError):
+            finished = 0
+        if finished and _today(finished) == today:
+            out["limit_reached"] = True
+            if isinstance(last.get("maxRuns"), int) and out["max_runs_source"] == "default":
+                out.update(max_runs=last["maxRuns"], max_runs_source="last_status")
+            if isinstance(last.get("runsToday"), int) and last["runsToday"] > out["runs_today"]:
+                out["runs_today"] = last["runsToday"]
+    return out
+
+
+def _limit_result(lim):
+    return {
+        "status": "DAILY_LIMIT",
+        "runs_today": lim["runs_today"], "max_runs": lim["max_runs"],
+        "max_runs_source": lim["max_runs_source"], "resets_at": lim["resets_at"],
+        "retry_today": False,
+        "text": ERROR_TEXT_HE["DAILY_LIMIT"] + f" ({lim['runs_today']}/{lim['max_runs']} היום)",
+    }
+
+
 def status(_payload=None, _query=None):
     last = _read_json(SPOOL_DIR / "last-status.json") or {}
     last = {key: last[key] for key in STATUS_FIELDS if key in last}
     active = _active_request()
     stopped = _stopped_today()
+    lim = _daily_limit()
     out = {
         "last_run": last or None,
         "pending_run": {"run_id": active["run_id"], "stage": active["stage"],
@@ -124,10 +210,18 @@ def status(_payload=None, _query=None):
                         "to": (active.get("actions") or [{}])[0].get("to") if active.get("actions") else None}
         if active else None,
         "stopped_today": stopped,
-        "can_run_today": not stopped and not active,
+        "can_run_today": not stopped and not active and not lim["limit_reached"],
+        "runs_today": lim["runs_today"],
+        "max_runs": lim["max_runs"],
+        "max_runs_source": lim["max_runs_source"],
+        "limit_reached": lim["limit_reached"],
+        "runs_state": lim["runs_state"],
+        "resets_at": lim["resets_at"],
         "out_dir": str(OUT_DIR),
     }
-    if last.get("status") in ERROR_TEXT_HE:
+    if lim["limit_reached"]:
+        out["error_text"] = _limit_result(lim)["text"]
+    elif last.get("status") in ERROR_TEXT_HE and not (last.get("status") == "DAILY_LIMIT"):
         out["error_text"] = ERROR_TEXT_HE[last["status"]]
     elif stopped and stopped in ERROR_TEXT_HE:
         out["error_text"] = ERROR_TEXT_HE[stopped]
@@ -221,6 +315,9 @@ def propose_sync(payload, _query=None):
             "text": (f"הטווח {req_from} עד {req_to} כבר בארכיון המקומי — בלי התחברות לבנק. "
                      "אפשר לקרוא עם hapoalim_read_month / hapoalim_read_range / hapoalim_list_archive."),
         }
+    lim = _daily_limit()
+    if lim["limit_reached"]:
+        return _limit_result(lim)
     fetch_from = (plan or {}).get("fetch_from") or req_from
     fetch_to = (plan or {}).get("fetch_to") or req_to
     for a in actions:
@@ -256,6 +353,8 @@ def execute_sync(payload):
             raise ValueError("stopped_today")
         if _active_request():
             raise ValueError("already_pending")
+        if _daily_limit()["limit_reached"]:
+            raise ValueError("daily_limit")
         request = {
             "run_id": os.urandom(8).hex(),
             "requested_at": time.time(),
