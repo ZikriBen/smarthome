@@ -37,7 +37,8 @@ document.querySelector(".login-btn").addEventListener("click", async () => {
 }
 
 /**
- * scenario: { otp: bool, otpInputs: 1|6, expectedCode, otpHangs: bool, wrongPasswordFor: string, wrongPasswordAny, captcha }
+ * scenario: { otp: bool, otpInputs: 1|6, expectedCode, otpHangs: bool, wrongPasswordFor: string, wrongPasswordAny, captcha,
+ *             txns: raw bank rows (then served per window, newest first, capped), cap: rows per request (150), ignoreEnd }
  * Returns { responder(request), log } — log records what the "bank" received (for assertions).
  */
 export function fakeBank(scenario = {}) {
@@ -79,6 +80,17 @@ export function fakeBank(scenario = {}) {
     }
     if (p === "/ssb/current-account/transactions") {
       log.apiCalls.push(p);
+      const startD = url.searchParams.get("retrievalStartDate") || "";
+      const endD = url.searchParams.get("retrievalEndDate") || "";
+      log.txnWindows = log.txnWindows || [];
+      log.txnWindows.push({ start: startD, end: endD });
+      if (Array.isArray(s.txns)) {
+        // Like the live bank: inclusive window, newest first, at most `cap` rows per request.
+        const cap = Number(s.cap) > 0 ? Number(s.cap) : 150;
+        const inWin = s.txns.filter((t) => (s.ignoreEnd || String(t.eventDate) <= endD) && String(t.eventDate) >= startD);
+        inWin.sort((a, b) => String(b.eventDate).localeCompare(String(a.eventDate)));
+        return json(request, { transactions: inWin.slice(0, cap) });
+      }
       const today = new Date();
       const ymd = `${today.getFullYear()}${String(today.getMonth() + 1).padStart(2, "0")}01`;
       return json(request, { transactions: [

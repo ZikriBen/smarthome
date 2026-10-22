@@ -212,5 +212,18 @@ class HapoalimCCTests(unittest.TestCase):
         self.assertFalse(self.hp.status()["can_run_today"])
 
 
+    def test_truncated_coverage_is_not_covered_and_read_month_warns(self):
+        arch = sys.modules["hapoalim_archive"]
+        rows = [{"account": "12345678", "date": "2026-05-%02d" % d, "amount": -1, "description": "x",
+                 "identifier": "7"} for d in range(1, 29)]
+        arch.merge_sync(self.archive, rows, range_from="2025-11-01", range_to="2026-05-31", run_id="t",
+                        coverage_from={"5678": "2026-05-01"})
+        out = self.hp.propose_sync({"from": "2025-12-01", "to": "2025-12-31"})
+        self.assertNotEqual(out["status"], "COVERED")
+        rm = self.hp.read_month({"month": "2025-12"})
+        self.assertFalse(rm["complete"])
+        self.assertTrue(rm["uncovered"])
+        self.assertEqual(self.hp.propose_sync({"from": "2026-05-01", "to": "2026-05-31"})["status"], "COVERED")
+
 if __name__ == "__main__":
     unittest.main()

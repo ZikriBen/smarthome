@@ -44,7 +44,7 @@ STATUS_FIELDS = ("status", "stage", "stopForToday", "otpRequested", "otpDelivere
                  "monthsCovered", "from", "to", "profileWiped", "fakeBank", "warnings", "csv", "csvPath",
                  "csvRows", "files", "actions", "otpWait", "runId", "finishedAt", "requestedAt",
                  "archiveNew", "archiveUpdated", "archiveSuperseded", "archiveMonths", "archiveSkipped",
-                 "coverage")
+                 "coverage", "retrieval", "archiveCoverageFrom", "archiveWarnings")
 ERROR_TEXT_HE = {
     "INVALID_PASSWORD": "הבנק דחה את הסיסמה. ננעל להיום: לא ננסה שוב עד שבן יבדוק.",
     "CHANGE_PASSWORD": "הבנק מבקש להחליף סיסמה. ננעל להיום.",

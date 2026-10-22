@@ -162,7 +162,7 @@ export async function runAuto(deps, opts = envOptions()) {
     warnings: plan.warnings,
     accountCount: tx?.accountCount, transactionCount: tx?.transactionCount,
     firstDate: tx?.firstDate, lastDate: tx?.lastDate, monthsCovered: tx?.monthsCovered,
-    from: tx?.from, to: tx?.to,
+    from: tx?.from, to: tx?.to, retrieval: tx?.retrieval,
     profileWiped: (await readdir(deps.profileDir).catch(() => [])).length === 0,
   });
   // Never put file bodies on the report (they travel in `files`).

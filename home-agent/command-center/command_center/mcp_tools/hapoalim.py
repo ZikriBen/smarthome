@@ -42,14 +42,17 @@ def register(mcp, client):
     @mcp.tool()
     def hapoalim_read_month(yyyy_mm: str, account: str = "") -> dict:
         """Read one archive month (YYYY-MM). Optional account = last-4 digits (or full number; last-4 used).
-        Returns rows (private financial data). Prefer over hapoalim_sync when the month is complete."""
+        Returns rows (private financial data). Prefer over hapoalim_sync when the month is complete.
+        If complete is false / uncovered is non-empty, the archive lacks those days: never say "no
+        transactions" for them; offer hapoalim_sync instead."""
         return client.request("POST", "/hapoalim/read-month",
                               {"month": yyyy_mm, "account": account or None}, timeout=60)
 
     @mcp.tool()
     def hapoalim_read_range(from_date: str = "", to_date: str = "", account: str = "") -> dict:
         """Read archive rows for [from_date, to_date] (YYYY-MM-DD) by opening the month files that span the
-        range. Optional account filter (last-4). No bank login. Use when coverage includes the range."""
+        range. Optional account filter (last-4). No bank login. Use when coverage includes the range.
+        `uncovered` lists days the archive does not have: never report them as "no transactions"."""
         return client.request("POST", "/hapoalim/read-range", {
             "from": from_date or None, "to": to_date or None, "account": account or None,
         }, timeout=60)

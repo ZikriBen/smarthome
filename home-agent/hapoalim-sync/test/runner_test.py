@@ -52,6 +52,15 @@ def write_fake_container(path, behaviour="ok", delay=0.0, login_counter=None):
         "arch = json.dumps({'from': actions[0].get('from') or '2026-09-01', 'to': actions[0].get('to') or '2026-10-22',"
         "'accounts':['12345678'],'rows':[{'account':'12345678','date':'2026-10-01','processed_date':'2026-10-01',"
         "'amount':-1,'description':'x','status':'completed','identifier':'R1','currency':'ILS'}]})" + nl +
+        f"if {behaviour!r} in ('trunc150', 'walk-incomplete'):" + nl +
+        "    import datetime as _dt" + nl +
+        "    _rows = [{'account':'12345678','date':(_dt.date(2026,4,15)+_dt.timedelta(days=(i*189)//150)).isoformat(),"
+        "'amount':-1-(i%7),'description':'d%d' % (i%5),'status':'completed','identifier':str(9000+i%42),'currency':'ILS'} for i in range(150)]" + nl +
+        "    _p = {'from': actions[0].get('from') or '2025-10-23', 'to': actions[0].get('to') or '2026-10-22',"
+        " 'accounts':['12345678'], 'rows':_rows}" + nl +
+        f"    if {behaviour!r} == 'walk-incomplete':" + nl +
+        "        _p['retrieval'] = {'12345678': {'known': True, 'complete': False, 'completeFrom': '2026-05-01', 'stopReason': 'max_windows'}}" + nl +
+        "    arch = json.dumps(_p)" + nl +
         "report = {'status':'DONE','stage':'done','stopForToday':False,'otpRequested':True,'otpDelivered':True,"
         "'accountCount':1,'transactionCount':1,'firstDate':'2026-10-01','lastDate':'2026-10-01',"
         "'from':actions[0].get('from') or '2026-09-01','to':actions[0].get('to') or '2026-10-22',"
@@ -243,6 +252,31 @@ class RunnerTests(unittest.TestCase):
         status, code = Runner(self.cfg()).run()
         self.assertEqual(status["status"], "COVERED")
 
+
+    def _run_behaviour(self, behaviour):
+        write_fake_container(self.fake, behaviour=behaviour)
+        self.queue(actions=[{"name": "checking_transactions", "from": "2025-10-23", "to": "2026-10-22"}])
+        threading.Timer(0.5, lambda: self.put_code("hapoalim", "12345")).start()
+        status, _ = Runner(self.cfg(HAPOALIM_OTP_TIMEOUT="5")).run()
+        self.assertEqual(status["status"], "DONE", status)
+        return status, json.loads((self.root / "archive" / "_coverage.json").read_text())
+
+    def test_truncated_old_image_payload_coverage_only_from_day_after_oldest(self):
+        status, cov = self._run_behaviour("trunc150")
+        self.assertEqual(status["archiveNew"], 150)
+        self.assertEqual(status["archiveCoverageFrom"], {"5678": "2026-04-16"})
+        self.assertTrue(any("cap" in w for w in status["archiveWarnings"]))
+        months = cov["accounts"]["5678"]["months"]
+        self.assertNotIn("2025-12", months)
+        self.assertFalse(months["2026-04"]["complete"])
+        self.assertIn("cap", cov["last_warning"])
+
+    def test_incomplete_walk_metadata_limits_coverage(self):
+        status, cov = self._run_behaviour("walk-incomplete")
+        self.assertEqual(status["archiveCoverageFrom"], {"5678": "2026-05-01"})
+        months = cov["accounts"]["5678"]["months"]
+        self.assertNotIn("2026-04", months)
+        self.assertTrue(months["2026-05"]["complete"])
 
 if __name__ == "__main__":
     unittest.main()

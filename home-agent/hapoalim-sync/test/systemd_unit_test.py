@@ -62,6 +62,7 @@ class SystemdUnitTests(unittest.TestCase):
         self.assertIn("ReadWritePaths=$DATA_DIR $INBOX_DIR", text)
         self.assertIn("archive.py", text)
         self.assertIn("hapoalim-archive-import", text)
+        self.assertIn("hapoalim-archive-repair", text)
         self.assertIn("PATHS_EOF", text)
 
     def test_systemd_analyze_verify(self):

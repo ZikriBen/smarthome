@@ -26,6 +26,7 @@ install -m 0644 -o root -g root "$HERE/otp_inbox.py" /usr/local/lib/hapoalim/otp
 install -m 0755 -o root -g root "$HERE/hapoalim-setup" /usr/local/sbin/hapoalim-setup
 install -m 0755 -o root -g root "$HERE/cleanup-out.sh" /usr/local/sbin/hapoalim-cleanup-out
 install -m 0755 -o root -g root "$HERE/hapoalim-archive-import" /usr/local/sbin/hapoalim-archive-import
+install -m 0755 -o root -g root "$HERE/hapoalim-archive-repair" /usr/local/sbin/hapoalim-archive-repair
 
 # Image: built from the reviewed checkout, then pinned BY ID.
 docker build --pull -t "$TAG" "$HERE/.."
@@ -33,7 +34,7 @@ image_id=$(docker image inspect --format '{{.Id}}' "$TAG")
 printf 'HAPOALIM_SYNC_IMAGE=%s\n' "$image_id" >/etc/hapoalim/image.env
 chmod 0644 /etc/hapoalim/image.env
 docker run --rm --network none --entrypoint node "$image_id" -e \
-  "const s=require('fs').readFileSync('/app/node_modules/israeli-bank-scrapers/lib/scrapers/hapoalim.js','utf8');if(!s.includes('LOCAL PATCH'))process.exit(3)" \
+  "const s=require('fs').readFileSync('/app/node_modules/israeli-bank-scrapers/lib/scrapers/hapoalim.js','utf8');if(!s.includes('LOCAL PATCH')||!s.includes('hapoalimWalkTransactions'))process.exit(3)" \
   || { echo "image is NOT patched" >&2; exit 1; }
 
 install -m 0644 "$HERE/hapoalim-run.service" "$HERE/hapoalim-run.path" /etc/systemd/system/

@@ -1,0 +1,75 @@
+#!/usr/bin/env python3
+"""One-off repair of the Hapoalim archive after fix3 (run ONLY with Ben's approval, at deploy).
+
+Usage:
+  sudo hapoalim-archive-repair [--dry-run] [--archive DIR] [--out DIR] [--account-suffix NNNN]
+                               [--backup-dir DIR] [csv...]
+
+* re-keys every month file with the v2 key (reference is not unique),
+* re-adds rows the old key collapsed from the out/ CSVs still on disk (default: all
+  OUT_DIR/hapoalim-*-checking_transactions.csv; out/ keeps them 7 days only),
+* drops coverage the capped bank responses never delivered: per account nothing before the day after
+  the oldest row; those months are re-fetched by the next hapoalim_sync (one login),
+* real run: tar.gz backup of the archive dir first (0600, default data/hapoalim/archive-backups/).
+--dry-run prints before/after row counts and coverage per month and writes nothing.
+Never prints amounts or descriptions.
+"""
+from __future__ import annotations
+
+import argparse
+import os
+import sys
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+for cand in (HERE, Path("/usr/local/lib/hapoalim")):
+    if (cand / "archive.py").is_file() and str(cand) not in sys.path:
+        sys.path.insert(0, str(cand))
+import archive  # noqa: E402
+
+DATA = Path("/home/ben/smarthome/data/hapoalim")
+
+
+def main(argv=None):
+    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument("csv", nargs="*", type=Path)
+    p.add_argument("--dry-run", action="store_true")
+    p.add_argument("--archive", type=Path, default=Path(os.environ.get("HAPOALIM_ARCHIVE_DIR", DATA / "archive")))
+    p.add_argument("--out", type=Path, default=Path(os.environ.get("HAPOALIM_OUT_DIR", DATA / "out")))
+    p.add_argument("--account-suffix", default=None)
+    p.add_argument("--backup-dir", type=Path, default=None)
+    p.add_argument("--uid", type=int, default=int(os.environ.get("HAPOALIM_OUT_UID", "1000")))
+    p.add_argument("--gid", type=int, default=int(os.environ.get("HAPOALIM_OUT_GID", "1000")))
+    args = p.parse_args(argv)
+    if not args.archive.is_dir():
+        print(f"no archive dir {args.archive}", file=sys.stderr)
+        return 2
+    csvs = args.csv or sorted(args.out.glob("hapoalim-*-checking_transactions.csv"))
+    try:
+        res = archive.repair_archive(args.archive, csvs, dry_run=args.dry_run,
+                                     account_suffix_override=args.account_suffix,
+                                     backup_dir=args.backup_dir, uid=args.uid, gid=args.gid)
+    except ValueError as exc:
+        print(f"REFUSED: {exc}", file=sys.stderr)
+        return 2
+    print(f"{'DRY RUN' if args.dry_run else 'REPAIRED'}: rows {res['rows_before']} -> {res['rows_after']}")
+    for c in res["csv"]:
+        print(f"  csv {c['file']}: rows={c['rows']} added={c['added']} {c['min']}..{c['max']}"
+              + (" (capped: oldest day may be partial)" if c["capped"] else ""))
+    print("  acct  month    rows before->after  coverage before->after")
+    for t in res["table"]:
+        print(f"  {t['account']}  {t['month']}  {t['before']:>5} -> {t['after']:<5}       {t['cov_before']} -> {t['cov_after']}")
+    if res["dropped_coverage"]:
+        print(f"  coverage dropped for {len(res['dropped_coverage'])} month(s): {', '.join(res['dropped_coverage'])}")
+    for a, d in sorted(res["earliest_row"].items()):
+        print(f"  …{a}: oldest row {d}; coverage now starts {archive.add_days(d, 1)}. "
+              "Anything older is NOT recoverable from disk: run one hapoalim_sync (one login) after deploy.")
+    if not csvs:
+        print("  no out/ CSVs found (out/ keeps 7 days): rows the old key collapsed cannot be restored.")
+    if res.get("backup"):
+        print(f"  backup: {res['backup']}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -35,7 +35,7 @@ HERE = Path(__file__).resolve().parent
 if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 from archive import (  # noqa: E402
-    ensure_archive_dir, plan_gaps, merge_sync, rows_from_payload,
+    ensure_archive_dir, plan_gaps, merge_sync, rows_from_payload, coverage_start, account_suffix,
     DEFAULT_REPULL_DAYS,
 )
 RUN_ID_RE = re.compile(r"^[0-9a-f]{16}$")
@@ -51,7 +51,7 @@ REPORT_FIELDS = ("status", "stage", "stopForToday", "otpRequested", "otpDelivere
                  "from", "to", "profileWiped", "fakeBank", "warnings",
                  "runsToday", "maxRuns",
                  "archiveNew", "archiveUpdated", "archiveSuperseded", "archiveMonths", "archiveSkipped",
-                 "coverage")
+                 "coverage", "retrieval", "archiveCoverageFrom", "archiveWarnings")
 REQUEST_MAX_AGE = 15 * 60
 
 
@@ -429,15 +429,34 @@ class Runner:
             # Older image without archive_rows: do NOT merge the masked CSV (wrong suffix). Coverage stays
             # unchanged; rebuild the image with setup-host.sh.
             return {"archiveSkipped": "no archive_rows payload (old image?)"}
-        out = {"archiveNew": 0, "archiveUpdated": 0, "archiveSuperseded": 0, "archiveMonths": []}
+        out = {"archiveNew": 0, "archiveUpdated": 0, "archiveSuperseded": 0, "archiveMonths": [],
+               "archiveCoverageFrom": {}, "archiveWarnings": []}
         for payload in payloads:
+            rows = rows_from_payload(payload)
+            rng_from, rng_to = str(payload["from"]), str(payload["to"])
+            accts = [str(a) for a in (payload.get("accounts") or []) if a]
+            # Coverage only for what the bank really returned (fix3): per account, from the scraper's
+            # retrieval metadata, or the >=cap / late-first-row heuristic when it is missing.
+            retrieval = payload.get("retrieval") if isinstance(payload.get("retrieval"), dict) else {}
+            by_acct4 = {}
+            for r in rows:
+                by_acct4.setdefault(r["acct4"], []).append(r)
+            ret_by_acct4 = {account_suffix(k): v for k, v in retrieval.items() if isinstance(v, dict)}
+            cov_from = {}
+            for acct4 in sorted(set(by_acct4) | {account_suffix(a) for a in accts}):
+                start, warns = coverage_start(by_acct4.get(acct4, []), rng_from, rng_to,
+                                              retrieval=ret_by_acct4.get(acct4))
+                cov_from[acct4] = start
+                out["archiveWarnings"].extend(f"…{acct4}: {w}" for w in warns)
             result = merge_sync(
-                self.cfg.archive_dir, rows_from_payload(payload),
-                range_from=str(payload["from"]), range_to=str(payload["to"]),
+                self.cfg.archive_dir, rows,
+                range_from=rng_from, range_to=rng_to,
                 run_id=str(request.get("run_id") or ""), source="sync",
                 uid=self.cfg.out_uid, gid=self.cfg.out_gid, now=self.clock(),
-                accounts=[str(a) for a in (payload.get("accounts") or []) if a],
+                accounts=accts, coverage_from=cov_from,
+                coverage_warning="; ".join(out["archiveWarnings"]) or None,
             )
+            out["archiveCoverageFrom"].update(result.get("coverage_from") or {})
             out["archiveNew"] += result.get("new", 0)
             out["archiveUpdated"] += result.get("updated", 0)
             out["archiveSuperseded"] += result.get("superseded", 0)

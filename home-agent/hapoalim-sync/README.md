@@ -204,3 +204,19 @@ python3 test/archive_test.py -v
 * Anyone with root or `docker` on the NUC can read the CSV out dir, the **archive (kept forever)** and the sealed
   creds (by design of the host). See "At-rest encryption" above.
 * Bank ToS / fraud detection on automated logins.
+
+## fix3: full backfill, non-unique references, truthful coverage
+
+* **Bank cap**: one transactions request returns at most the newest 150 rows. The patched scraper walks date
+  windows backwards inside the one login (see `patches/README.md`), so a 1-year sync gets every row.
+* **Archive key v2**: `k2:{acct4}:{sha256(reference|date|amount|description)[:32]}:{occurrence}`. References are
+  not unique (a live pull had 150 rows with 42 references); `occurrence` numbers exact repeats. Old `id:`/`h:`
+  keys are re-keyed on read. Rows the old key collapsed are only recoverable from out/ CSVs (kept 7 days) via
+  `hapoalim-archive-repair`, or by a new sync.
+* **Coverage** is recorded per account only from the first really-retrieved day: the scraper's
+  `retrieval.completeFrom`, or — without metadata (old image / CSV import) — the day after the oldest row when a
+  response has >= 150 rows; and never earlier than the first row if that is > 45 days after `from`.
+  `hapoalim_read_month` / `hapoalim_read_range` return `complete` + `uncovered` and warn in `text`, so Hermes
+  must not answer "no transactions" for days the archive does not have.
+* `hapoalim-archive-repair [--dry-run]` (root, once at deploy, with Ben's approval): backup tar.gz (0600) to
+  `data/hapoalim/archive-backups/`, re-key, re-add rows from out/ CSVs, drop bogus coverage.

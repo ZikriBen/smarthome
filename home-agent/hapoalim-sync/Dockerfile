@@ -23,7 +23,7 @@ RUN npm ci --omit=dev --no-audit --no-fund --ignore-scripts && npm cache clean -
 COPY patches/israeli-bank-scrapers+6.9.0.patch /tmp/hapoalim-otp.patch
 RUN echo "420d076ad00b219c54a323cbef42a33c594e3a75465f9fc545a4fb603245d80c  /app/node_modules/israeli-bank-scrapers/lib/scrapers/hapoalim.js" | sha256sum -c - \
     && patch -p1 --forward -d /app < /tmp/hapoalim-otp.patch \
-    && echo "92bc1132775528795d2c5520ce4d30f3bb2626ad2ec2fd5f21f924b9ca3abd1f  /app/node_modules/israeli-bank-scrapers/lib/scrapers/hapoalim.js" | sha256sum -c - \
+    && echo "e4b1ef8cd51adcedcdfd0a4da164690294f733e2d302e816dc30505a46a7aa49  /app/node_modules/israeli-bank-scrapers/lib/scrapers/hapoalim.js" | sha256sum -c - \
     && rm /tmp/hapoalim-otp.patch \
     && apt-get purge -y patch && apt-get autoremove -y && rm -rf /var/lib/apt/lists/*
 

@@ -99,6 +99,43 @@ describe("e2e fake bank", () => {
     assert.equal(bank.log.otpSubmissions.length, 1);
   });
 
+  test("capped bank (150 newest per request): ~1y walk in ONE login, all rows incl. repeats", async () => {
+    process.env.HAPOALIM_WALK_DELAY_MS = "0";
+    const ymd = (d) => d.toLocaleDateString("en-CA", { timeZone: "Asia/Jerusalem" }).replaceAll("-", "");
+    const txns = [];
+    const now = Date.now();
+    for (let i = 0; i < 330; i++) {
+      const d = ymd(new Date(now - i * 86400000));
+      for (let j = 0; j < 1 + (i % 2); j++) {
+        txns.push({ eventDate: d, valueDate: d, eventAmount: 10 + j, eventActivityTypeCode: 2,
+          activityDescription: `ת${j}`, serialNumber: i * 10 + j, referenceNumber: 7000 + (i % 42) });
+      }
+      if (i % 11 === 0) {
+        for (let k = 0; k < 2; k++) txns.push({ eventDate: d, valueDate: d, eventAmount: 5, eventActivityTypeCode: 2,
+          activityDescription: "כפול", serialNumber: 0, referenceNumber: 9999 });
+      }
+    }
+    const from = new Date(now - 340 * 86400000).toLocaleDateString("en-CA", { timeZone: "Asia/Jerusalem" });
+    const { report, files, bank } = await drive({
+      actions: [{ name: "checking_transactions", from }],
+      scenario: { otp: true, txns, cap: 150 },
+    });
+    delete process.env.HAPOALIM_WALK_DELAY_MS;
+    assert.equal(report.status, "DONE");
+    assert.equal(bank.log.logins.length, 1);
+    assert.equal(bank.log.otpSubmissions.length, 1);
+    assert.ok(txns.length > 450);
+    assert.ok(bank.log.txnWindows.length >= Math.ceil(txns.length / 150));
+    const payload = JSON.parse(files.find((f) => f.kind === "archive_rows").body);
+    assert.equal(payload.rows.length, txns.length);
+    assert.equal(payload.rows.filter((r) => r.description === "כפול").length, 2 * 30);
+    const ret = Object.values(payload.retrieval)[0];
+    assert.equal(ret.complete, true);
+    assert.equal(ret.stopReason, "complete");
+    assert.equal(report.retrieval[0].complete, true);
+    assert.ok(!JSON.stringify(report.retrieval).includes("987654"));
+  });
+
   test("wrong OTP -> stopForToday", async () => {
     const { report } = await drive({
       actions: [{ name: "checking_transactions" }],

@@ -53,14 +53,15 @@ class ArchiveTests(unittest.TestCase):
             row("12345678", "2026-10-02", -5, "DUP"),
         ]
         r1 = A.merge_sync(self.arch, rows, range_from="2026-10-01", range_to="2026-10-02", run_id="r1")
-        self.assertEqual(r1["new"], 3)
+        # fix3: the reference is not unique; two identical rows in one pull are two transactions
+        self.assertEqual(r1["new"], 4)
         r2 = A.merge_sync(self.arch, rows, range_from="2026-10-01", range_to="2026-10-02", run_id="r2")
         self.assertEqual(r2["new"], 0)
         path = A.month_path(self.arch, "5678", "2026-10")
         self.assertTrue(path.is_file())
         self.assertEqual(oct(path.stat().st_mode & 0o777), "0o600")
         got = A.read_month_rows(path)
-        self.assertEqual(len(got), 3)
+        self.assertEqual(len(got), 4)
 
     def test_pending_superseded(self):
         A.merge_sync(
@@ -219,7 +220,7 @@ class ArchiveTests(unittest.TestCase):
     def test_payload_dict_form(self):
         rows = A.rows_from_payload({"accounts": ["1"], "rows": [row("1", "2026-10-02", -1, "a", identifier="x")]})
         self.assertEqual(len(rows), 1)
-        self.assertTrue(rows[0]["dedupe_key"].startswith("id:"))
+        self.assertTrue(rows[0]["dedupe_key"].startswith("k2:"))
 
     def test_masked_import_needs_suffix_and_dedupes_with_live(self):
         csv_path = self.root / "hapoalim-20261022-100600-checking_transactions.csv"
@@ -241,6 +242,201 @@ class ArchiveTests(unittest.TestCase):
     def test_dir_permissions(self):
         self.assertEqual(oct(self.arch.stat().st_mode & 0o777), "0o700")
 
+
+    # ---------------- fix3: key v2 + truthful coverage ----------------
+    def _live_150(self):
+        """150 rows 2026-04-15..2026-10-20 with only 42 distinct references (like the live pull)."""
+        from datetime import date as D, timedelta
+        rows = []
+        d0 = D(2026, 4, 15)
+        for i in range(150):
+            d = (d0 + timedelta(days=(i * 189) // 150)).isoformat()
+            rows.append(row("12-600-987654", d, -(i % 7) - 1, f"desc{i % 5}", identifier=str(9000 + i % 42)))
+        # two genuine identical repeats
+        rows[10] = dict(rows[9])
+        return rows
+
+    def test_ref_not_unique_keeps_all_150(self):
+        rows = self._live_150()
+        self.assertEqual(len({r["identifier"] for r in rows}), 42)
+        r1 = A.merge_sync(self.arch, rows, range_from="2025-10-23", range_to="2026-10-22", run_id="r1")
+        self.assertEqual(r1["new"], 150)
+        total = sum(len(A.read_month_rows(p)) for p in self.arch.glob("hapoalim-*.csv"))
+        self.assertEqual(total, 150)
+        r2 = A.merge_sync(self.arch, rows, range_from="2025-10-23", range_to="2026-10-22", run_id="r2")
+        self.assertEqual((r2["new"], r2["updated"]), (0, 150))
+
+    def test_identical_repeats_max_semantics_across_pulls(self):
+        same = row("1234", "2026-10-03", -5, "COFFEE", identifier="77")
+        A.merge_sync(self.arch, [same, same], range_from="2026-10-03", range_to="2026-10-03", run_id="a")
+        A.merge_sync(self.arch, [same, same, same], range_from="2026-10-03", range_to="2026-10-03", run_id="b")
+        A.merge_sync(self.arch, [same], range_from="2026-10-03", range_to="2026-10-03", run_id="c")
+        got = A.read_month(self.arch, "2026-10")["rows"]
+        self.assertEqual(len(got), 3)
+
+    def test_rekey_legacy_archive_file(self):
+        path = A.month_path(self.arch, "5678", "2026-10")
+        legacy = (
+            "date,description,amount,account_balance_now,reference,account,processed_date,memo,currency,status,type,dedupe_key\n"
+            "2026-10-01,A,-10.0,,111,12345678,2026-10-01,,ILS,completed,,id:5678:111\n"
+            "2026-10-02,DUP,-5.0,,,12345678,2026-10-02,,ILS,completed,,h:abc\n"
+            "2026-10-04,PEND,-3.0,,,12345678,2026-10-04,,ILS,superseded,,h:def\n"
+        )
+        path.write_text(legacy, encoding="utf-8")
+        got = A.read_month_rows(path)
+        self.assertEqual(len(got), 3)
+        self.assertTrue(all(r["dedupe_key"].startswith("k2:5678:") for r in got))
+        # a re-pull with the same row + a second (genuine) one with the same reference on the same day
+        pull = [row("12345678", "2026-10-01", -10, "A", identifier="111"),
+                row("12345678", "2026-10-01", -10, "A", identifier="111"),
+                row("12345678", "2026-10-02", -5, "DUP")]
+        res = A.merge_sync(self.arch, pull, range_from="2026-10-01", range_to="2026-10-02", run_id="r")
+        self.assertEqual((res["new"], res["updated"]), (1, 2))
+        text = path.read_text(encoding="utf-8")
+        self.assertNotIn("id:5678", text)
+        self.assertEqual(len(A.read_month_rows(path)), 4)
+        self.assertEqual(len(A.read_month(self.arch, "2026-10")["rows"]), 3)  # superseded hidden
+
+    def test_truncated_payload_without_metadata_gets_partial_coverage(self):
+        rows = self._live_150()
+        start, warns = A.coverage_start([A.normalize_row(r) for r in rows], "2025-10-23", "2026-10-22")
+        self.assertEqual(start, "2026-04-16")
+        self.assertTrue(any("cap" in w for w in warns))
+        A.merge_sync(self.arch, rows, range_from="2025-10-23", range_to="2026-10-22", run_id="r",
+                     coverage_from={"7654": start}, now=1792627200)  # 2026-10-21
+        months = A.load_coverage(self.arch)["accounts"]["7654"]["months"]
+        self.assertNotIn("2025-11", months)
+        self.assertNotIn("2026-03", months)
+        self.assertFalse(months["2026-04"]["complete"])
+        self.assertTrue(months["2026-05"]["complete"])
+        plan = A.plan_gaps(self.arch, "2025-11-01", "2025-11-30", now=1792627200)
+        self.assertFalse(plan["covered"])
+        rm = A.read_month(self.arch, "2025-11")
+        self.assertFalse(rm["complete"])
+        self.assertIn("אין לומר", rm["text"])
+
+    def test_coverage_start_from_retrieval_metadata(self):
+        rows = [A.normalize_row(row("1", "2026-09-01", -1, "a"))]
+        self.assertEqual(A.coverage_start(rows, "2026-08-25", "2026-10-22", retrieval={"complete": True})[0], "2026-08-25")
+        st, w = A.coverage_start(rows, "2026-08-25", "2026-10-22",
+                                 retrieval={"complete": False, "completeFrom": "2026-09-10", "stopReason": "no_progress"})
+        self.assertEqual(st, "2026-09-10")
+        self.assertTrue(w)
+        self.assertIsNone(A.coverage_start(rows, "2026-08-25", "2026-10-22", retrieval={"complete": False})[0])
+        # first row much later than from → start at the first row
+        late = [A.normalize_row(row("1", "2026-06-01", -1, "a"))]
+        self.assertEqual(A.coverage_start(late, "2025-10-23", "2026-10-22", retrieval={"complete": True})[0], "2026-06-01")
+        # quiet range with zero rows and a complete walk is trusted
+        self.assertEqual(A.coverage_start([], "2026-09-01", "2026-10-22", retrieval={"complete": True})[0], "2026-09-01")
+
+    def test_coverage_from_none_records_no_coverage(self):
+        A.merge_sync(self.arch, [row("1234", "2026-10-02", -1, "a")], range_from="2026-09-01",
+                     range_to="2026-10-22", run_id="r", coverage_from={"1234": None})
+        self.assertEqual(A.load_coverage(self.arch)["accounts"].get("1234", {}).get("months", {}), {})
+
+    def test_import_truncated_csv_coverage_from_day_after_oldest(self):
+        csv_path = self.root / "hapoalim-20261022-101900-checking_transactions.csv"
+        lines = ["date,description,amount,account_balance_now,reference,account,processed_date,memo,currency,status,type"]
+        for r in self._live_150():
+            lines.append(f"{r['date']},{r['description']},{r['amount']},,{r['identifier']},******54,{r['date']},,ILS,completed,normal")
+        csv_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        res = A.import_csv_file(self.arch, csv_path, account_suffix_override="7654")
+        self.assertEqual(res["new"], 150)
+        self.assertIn("cap", res["coverage_warning"])
+        months = A.load_coverage(self.arch)["accounts"]["7654"]["months"]
+        self.assertEqual(months["2026-04"]["synced_from"], "2026-04-16")
+
+    # ---------------- fix3: repair ----------------
+    def _legacy_fixture(self):
+        """Old-format archive as the deployed 0005 code left it (refs collapsed per month), plus bogus
+        coverage for the whole truncated 1y request, plus two identical capped out/ CSVs."""
+        import csv as _csv, io as _io
+        rows = self._live_150()
+        by_month = {}
+        for r in rows:
+            by_month.setdefault(r["date"][:7], {})[r["identifier"]] = r
+        for ym, refs in by_month.items():
+            buf = _io.StringIO()
+            w = _csv.DictWriter(buf, fieldnames=A.CSV_FIELDS, lineterminator="\n")
+            w.writeheader()
+            for ref, r in refs.items():
+                w.writerow({"date": r["date"], "description": r["description"], "amount": float(r["amount"]),
+                            "reference": ref, "account": "12-600-987654", "processed_date": r["date"],
+                            "currency": "ILS", "status": "completed", "dedupe_key": f"id:7654:{ref}"})
+            A.month_path(self.arch, "7654", ym).write_text(buf.getvalue(), encoding="utf-8")
+        months = {}
+        for ym in A.months_spanning("2025-10-23", "2026-10-22"):
+            a, b = max("2025-10-23", A.month_start(ym)), min("2026-10-22", A.month_end(ym))
+            months[ym] = {"ranges": [[a, b]], "synced_from": a, "synced_to": b,
+                          "complete": a == A.month_start(ym) and b == A.month_end(ym), "rows": 0}
+        A.save_coverage(self.arch, {"version": 1, "accounts": {"7654": {"months": months}}})
+        out = self.root / "out"
+        out.mkdir()
+        lines = ["date,description,amount,account_balance_now,reference,account,processed_date,memo,currency,status,type"]
+        for r in rows:
+            lines.append(f"{r['date']},{r['description']},{r['amount']},,{r['identifier']},******54,{r['date']},,ILS,completed,normal")
+        for name in ("hapoalim-20261022-101900-checking_transactions.csv", "hapoalim-20261022-171400-checking_transactions.csv"):
+            (out / name).write_text("\n".join(lines) + "\n", encoding="utf-8")
+        legacy_count = sum(len(v) for v in by_month.values())
+        return sorted(out.glob("*.csv")), legacy_count
+
+    def _snapshot(self):
+        return {p.name: p.read_bytes() for p in sorted(self.arch.iterdir()) if p.is_file()}
+
+    def test_repair_dry_run_writes_nothing_and_reports_counts(self):
+        csvs, legacy = self._legacy_fixture()
+        self.assertLess(legacy, 150)
+        snap = self._snapshot()
+        res = A.repair_archive(self.arch, csvs, dry_run=True)
+        self.assertEqual(self._snapshot(), snap)
+        self.assertEqual((res["rows_before"], res["rows_after"]), (legacy, 150))
+        self.assertEqual(res["csv"][0]["account"], "7654")      # inferred from the single archive account
+        self.assertTrue(res["csv"][0]["capped"])
+        self.assertEqual(res["csv"][1]["added"], 0)               # second CSV is byte-identical
+        dec = [t for t in res["table"] if t["month"] == "2025-12"][0]
+        self.assertEqual((dec["cov_before"], dec["cov_after"]), ("complete", "-"))
+        self.assertIn("7654:2026-03", res["dropped_coverage"])
+        self.assertFalse(any(p.parent.name == "archive-backups" for p in self.root.rglob("*.tar.gz")))
+
+    def test_repair_real_backup_rekey_coverage_idempotent(self):
+        csvs, legacy = self._legacy_fixture()
+        before = self._snapshot()
+        res = A.repair_archive(self.arch, csvs, dry_run=False, now=1792627200)
+        tar = Path(res["backup"])
+        self.assertTrue(tar.is_file())
+        self.assertEqual(oct(tar.stat().st_mode & 0o777), "0o600")
+        import tarfile
+        with tarfile.open(tar) as t:
+            names = {Path(n).name for n in t.getnames()}
+        self.assertTrue(set(before) <= names | {".lock"})
+        total = 0
+        for pth in self.arch.glob("hapoalim-*.csv"):
+            text = pth.read_text(encoding="utf-8")
+            self.assertNotIn(",id:", text)
+            total += len(A.read_month_rows(pth))
+        self.assertEqual(total, 150)
+        cov = A.load_coverage(self.arch)["accounts"]["7654"]
+        self.assertNotIn("2025-12", cov["months"])
+        self.assertEqual(cov["months"]["2026-04"]["synced_from"], "2026-04-16")
+        self.assertTrue(cov["months"]["2026-05"]["complete"])
+        self.assertFalse(A.plan_gaps(self.arch, "2025-12-01", "2025-12-31", now=1792627200)["covered"])
+        again = A.repair_archive(self.arch, csvs, dry_run=True)
+        self.assertEqual((again["rows_before"], again["rows_after"]), (150, 150))
+        self.assertEqual([c["added"] for c in again["csv"]], [0, 0])
+
+    def test_repair_cli_dry_run(self):
+        import subprocess
+        csvs, _ = self._legacy_fixture()
+        cli = HERE / "host" / "hapoalim-archive-repair"
+        r = subprocess.run([sys.executable, str(cli), "--dry-run", "--archive", str(self.arch),
+                            "--out", str(self.root / "out")], capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("DRY RUN", r.stdout)
+        self.assertIn("-> 150", r.stdout)
+        self.assertNotIn("desc1", r.stdout)  # never prints descriptions
+        r2 = subprocess.run([sys.executable, str(cli), "--dry-run", "--archive", str(self.arch),
+                             "--account-suffix", "1111", *map(str, csvs)], capture_output=True, text=True)
+        self.assertEqual(r2.returncode, 2)
 
 if __name__ == "__main__":
     unittest.main()
