@@ -92,11 +92,27 @@ sudo hapoalim-setup
 
 # 3. phone rule — see PHONE-SMS-FORWARDER.md
 
-# 4. restart command-center so it picks up the new mounts (Ben's call)
-docker compose up -d command-center
+# 4. rebuild/restart the services that mount the new paths (Ben's call).
+#    command-center + command-center-mcp both mount the out dir / inbox;
+#    hermes must restart so it reloads config + otp-relay for site=hapoalim.
+docker compose up -d --build command-center command-center-mcp
+docker compose restart hermes
 
 # 5. dry check (no bank): ask Hermes "מה מצב סנכרון הבנק?" → hapoalim_status
 ```
+
+### ProtectHome / ReadWritePaths
+
+`hapoalim-run.service` sets `ProtectHome=read-only` and allows writes only under
+`ReadWritePaths` (CSV out dir + OTP inbox dir). `setup-host.sh` also writes
+`/etc/systemd/system/hapoalim-run.service.d/paths.conf` from `HAPOALIM_OUT_DIR` /
+`HAPOALIM_INBOX_DB`, so a custom layout stays consistent.
+
+If you previously added a **manual** drop-in for `ReadWritePaths` (field fix for
+`CSV_WRITE_FAILED`), remove it after applying this unit + `paths.conf`, then
+`sudo systemctl daemon-reload`. systemd merges `ReadWritePaths` so keeping both
+is not a hard conflict, but one source of truth is better.
+
 
 Rollback: `bash 99-rollback-hapoalim.sh --yes` (restores the pre tag).
 
@@ -107,6 +123,7 @@ cd home-agent/hapoalim-sync
 node --test test/dates.test.mjs test/actions.test.mjs
 CHROMIUM_PATH=/usr/bin/google-chrome node --test test/e2e-fake-bank.test.mjs
 python3 test/runner_test.py -v
+python3 test/systemd_unit_test.py -v
 # CC: python3 tests/test_hapoalim.py -v  (from home-agent/command-center)
 ```
 

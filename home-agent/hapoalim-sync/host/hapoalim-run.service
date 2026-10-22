@@ -12,6 +12,10 @@ LoadCredentialEncrypted=hapoalim.password:/etc/credstore.encrypted/hapoalim.pass
 UMask=0077
 PrivateTmp=yes
 ProtectHome=read-only
+# ProtectHome=read-only blocks writes under /home. Allow the CSV out dir and the OTP inbox dir
+# (defaults must match Environment= below). setup-host.sh also installs a drop-in that re-states
+# these from HAPOALIM_OUT_DIR / HAPOALIM_INBOX_DB so a custom layout stays consistent.
+ReadWritePaths=/home/ben/smarthome/data/hapoalim/out /home/ben/smarthome/home-agent/hermes/otp
 NoNewPrivileges=yes
 Environment=HAPOALIM_SPOOL_DIR=/var/lib/hapoalim-spool
 Environment=HAPOALIM_STATE_DIR=/var/lib/hapoalim
