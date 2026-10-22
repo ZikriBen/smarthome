@@ -62,7 +62,10 @@ services:
     restart: unless-stopped
 
     environment:
-      SEARXNG_SECRET: ${SEARXNG_SECRET:?set SEARXNG_SECRET in .env}
+      # Pass-through (no ${...:?}) so smarthome-secrets-migrate can move it out of .env;
+      # then compose.secrets.searxng.yaml supplies it from /run/secrets. If it is unset
+      # everywhere SearXNG refuses to start (default "ultrasecretkey"): fails closed.
+      SEARXNG_SECRET:
 
     volumes:
       - ./searxng/settings.yml:/etc/searxng/settings.yml:ro
