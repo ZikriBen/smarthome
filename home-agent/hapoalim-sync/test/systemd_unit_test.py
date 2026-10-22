@@ -23,6 +23,7 @@ UNIT = HERE / "host" / "hapoalim-run.service"
 SETUP = HERE / "host" / "setup-host.sh"
 
 DEFAULT_OUT = "/home/ben/smarthome/data/hapoalim/out"
+DEFAULT_DATA = "/home/ben/smarthome/data/hapoalim"
 DEFAULT_INBOX_DIR = "/home/ben/smarthome/home-agent/hermes/otp"
 
 
@@ -46,7 +47,7 @@ class SystemdUnitTests(unittest.TestCase):
         rwp = fields.get("ReadWritePaths")
         self.assertIsNotNone(rwp, "ReadWritePaths missing from unit")
         joined = " ".join(rwp)
-        self.assertIn(DEFAULT_OUT, joined)
+        self.assertIn(DEFAULT_DATA, joined)
         self.assertIn(DEFAULT_INBOX_DIR, joined)
         # Defaults must match Environment=
         env = {e.split("=", 1)[0]: e.split("=", 1)[1] for e in fields.get("Environment", []) if "=" in e}
@@ -58,7 +59,9 @@ class SystemdUnitTests(unittest.TestCase):
         self.assertIn("HAPOALIM_OUT_DIR", text)
         self.assertIn("HAPOALIM_INBOX_DB", text)
         self.assertIn("hapoalim-run.service.d/paths.conf", text)
-        self.assertIn("ReadWritePaths=$OUT_DIR $INBOX_DIR", text)
+        self.assertIn("ReadWritePaths=$DATA_DIR $INBOX_DIR", text)
+        self.assertIn("archive.py", text)
+        self.assertIn("hapoalim-archive-import", text)
         self.assertIn("PATHS_EOF", text)
 
     def test_systemd_analyze_verify(self):

@@ -13,8 +13,9 @@ Order (nothing reaches the bank before step 6):
  6. count the run, start the hardened one-shot container (no mounts, no env secrets), write the credentials to its
     stdin; when it says otp_needed, wait <= HAPOALIM_OTP_TIMEOUT (120 s) for ONE hapoalim code that arrived after
     requested_at in the shared OTP inbox (otp_take.py, as the inbox owner; read once, then deleted) and pass it on stdin;
- 7. CSV (0600, HAPOALIM_OUT_UID:GID) into HAPOALIM_OUT_DIR; allowlisted status (no amounts) into the spool;
-    stop-for-today file after any STOP status. Container stdout is parsed, never logged; stderr is discarded.
+ 7. CSV (0600) into HAPOALIM_OUT_DIR; merge into HAPOALIM_ARCHIVE_DIR month files + _coverage.json;
+    allowlisted status into the spool; stop-for-today after STOP. Before login: COVERED short-circuit
+    when the archive already covers the range. Container stdout parsed, never logged; stderr discarded.
 """
 import fcntl
 import json
@@ -31,6 +32,12 @@ from zoneinfo import ZoneInfo
 
 TZ = ZoneInfo("Asia/Jerusalem")
 HERE = Path(__file__).resolve().parent
+if str(HERE) not in sys.path:
+    sys.path.insert(0, str(HERE))
+from archive import (  # noqa: E402
+    ensure_archive_dir, plan_gaps, merge_sync, rows_from_payload,
+    DEFAULT_REPULL_DAYS,
+)
 RUN_ID_RE = re.compile(r"^[0-9a-f]{16}$")
 CSV_RE = re.compile(r"^hapoalim-\d{8}-\d{6}(?:-[a-z0-9_]+)*(?:-[0-9a-f]{4})?\.csv$")
 STOP_STATUSES = {"INVALID_PASSWORD", "CHANGE_PASSWORD", "ACCOUNT_BLOCKED", "LOGIN_UNKNOWN", "OTP_TIMEOUT",
@@ -41,7 +48,9 @@ STOP_STATUSES = {"INVALID_PASSWORD", "CHANGE_PASSWORD", "ACCOUNT_BLOCKED", "LOGI
 # balances, descriptions or full account numbers ever.
 REPORT_FIELDS = ("status", "stage", "stopForToday", "otpRequested", "otpDelivered", "blockedHosts", "failedHosts",
                  "seconds", "accountCount", "transactionCount", "firstDate", "lastDate", "monthsCovered",
-                 "from", "to", "profileWiped", "fakeBank", "warnings")
+                 "from", "to", "profileWiped", "fakeBank", "warnings",
+                 "archiveNew", "archiveUpdated", "archiveSuperseded", "archiveMonths", "archiveSkipped",
+                 "coverage")
 REQUEST_MAX_AGE = 15 * 60
 
 
@@ -70,6 +79,9 @@ class Config:
         self.mask_accounts = "0" if env.get("HAPOALIM_MASK_ACCOUNTS", "1").strip() == "0" else "1"
         self.extra_hosts = re.sub(r"[^a-z0-9., -]", "", env.get("HAPOALIM_EXTRA_HOSTS", "").lower())[:200]
         self.creds_dir = env.get("CREDENTIALS_DIRECTORY", "")
+        self.archive_dir = Path(env.get(
+            "HAPOALIM_ARCHIVE_DIR", "/home/ben/smarthome/data/hapoalim/archive"))
+        self.repull_days = env_int(env, "HAPOALIM_REPULL_DAYS", DEFAULT_REPULL_DAYS, 0, 30)
         # Tests only: run a local command instead of docker. Refused for root, so a deployed unit can never use it.
         self.test_exec = None
         if env.get("HAPOALIM_RUNNER_TEST_EXEC") and os.geteuid() != 0:
@@ -335,6 +347,7 @@ class Runner:
                 os.chown(out, self.cfg.out_uid, self.cfg.out_gid)
         stamp = datetime.fromtimestamp(self.clock(), TZ).strftime("%Y%m%d-%H%M%S")
         written = []
+        files = [f for f in files if (f.get("kind") or "csv") != "archive_rows"]
         for i, f in enumerate(files):
             kind = f.get("kind") or "csv"
             hint = re.sub(r"[^a-z0-9_]+", "", str(f.get("nameHint") or kind).lower())[:40] or kind
@@ -348,6 +361,79 @@ class Runner:
             written.append({"name": name, "path": str(out / name), "kind": kind, "nameHint": hint,
                             "rows": max(f["body"].count("\n") - 1, 0)})
         return written
+
+
+    def _action_range(self, request):
+        actions = request.get("actions") or []
+        from_s = to_s = None
+        for a in actions:
+            if isinstance(a, dict) and a.get("name") == "checking_transactions":
+                from_s = a.get("from") or from_s
+                to_s = a.get("to") or to_s
+        today_s = today()
+        if not to_s:
+            to_s = today_s
+        if not from_s:
+            from datetime import timedelta
+            d = datetime.fromtimestamp(self.clock(), TZ).date() - timedelta(days=self.cfg.days)
+            from_s = d.isoformat()
+        return str(from_s), str(to_s)
+
+    def maybe_covered(self, request):
+        """If the archive already covers the requested range (+repull), skip login."""
+        try:
+            from_s, to_s = self._action_range(request)
+            ensure_archive_dir(self.cfg.archive_dir, uid=self.cfg.out_uid, gid=self.cfg.out_gid)
+            plan = plan_gaps(
+                self.cfg.archive_dir, from_s, to_s,
+                repull_days=self.cfg.repull_days, now=self.clock(),
+            )
+        except Exception:
+            return None
+        if plan.get("covered"):
+            return {
+                "status": "COVERED", "stage": "archive",
+                "from": from_s, "to": to_s,
+                "coverage": {k: plan[k] for k in ("gaps", "accounts", "repull_days") if k in plan},
+                "accountCount": len(plan.get("accounts") or []),
+            }
+        request["_fetch_from"] = plan.get("fetch_from") or from_s
+        request["_fetch_to"] = plan.get("fetch_to") or to_s
+        request["_gap_plan"] = {k: plan[k] for k in ("gaps", "fetch_from", "fetch_to", "repull_days") if k in plan}
+        return None
+
+    def ingest_archive(self, request, files, report):
+        """Merge every archive_rows payload (one per checking_transactions action) into the archive.
+        Each payload carries the window the action really fetched (after the library clamp), so each
+        is merged with its own coverage window."""
+        payloads = []
+        for f in files or []:
+            if f.get("kind") != "archive_rows":
+                continue
+            try:
+                payload = json.loads(f["body"])
+            except (ValueError, TypeError):
+                continue
+            if isinstance(payload, dict) and payload.get("from") and payload.get("to"):
+                payloads.append(payload)
+        if not payloads:
+            # Older image without archive_rows: do NOT merge the masked CSV (wrong suffix). Coverage stays
+            # unchanged; rebuild the image with setup-host.sh.
+            return {"archiveSkipped": "no archive_rows payload (old image?)"}
+        out = {"archiveNew": 0, "archiveUpdated": 0, "archiveSuperseded": 0, "archiveMonths": []}
+        for payload in payloads:
+            result = merge_sync(
+                self.cfg.archive_dir, rows_from_payload(payload),
+                range_from=str(payload["from"]), range_to=str(payload["to"]),
+                run_id=str(request.get("run_id") or ""), source="sync",
+                uid=self.cfg.out_uid, gid=self.cfg.out_gid, now=self.clock(),
+                accounts=[str(a) for a in (payload.get("accounts") or []) if a],
+            )
+            out["archiveNew"] += result.get("new", 0)
+            out["archiveUpdated"] += result.get("updated", 0)
+            out["archiveSuperseded"] += result.get("superseded", 0)
+            out["archiveMonths"] = sorted(set(out["archiveMonths"]) | set(result.get("months") or []))
+        return out
 
     # ------------------------------------------------------------------ main
     def run(self):
@@ -388,26 +474,47 @@ class Runner:
             return self.finish(request, {"status": "STOPPED_TODAY", "stage": "preflight"}), 2
         if self.runs_today() >= cfg.max_runs:
             return self.finish(request, {"status": "DAILY_LIMIT", "stage": "preflight"}), 2
+        covered = self.maybe_covered(request)
+        if covered is not None:
+            return self.finish(request, covered, {"csvRemovedByRetention": removed}), 0
         if not cfg.image and not cfg.test_exec:
             return self.finish(request, {"status": "NOT_CONFIGURED", "stage": "preflight"}), 2
         creds = self.read_credentials()
         if creds is None:
             return self.finish(request, {"status": "NOT_CONFIGURED", "stage": "preflight"}), 2
+        actions = list(request.get("actions") or [{"name": "checking_transactions"}])
+        fetch_from = request.get("_fetch_from")
+        fetch_to = request.get("_fetch_to")
+        if fetch_from and fetch_to:
+            new_actions = []
+            for a in actions:
+                a = dict(a) if isinstance(a, dict) else {"name": "checking_transactions"}
+                if a.get("name") == "checking_transactions":
+                    a["from"] = fetch_from
+                    a["to"] = fetch_to
+                new_actions.append(a)
+            actions = new_actions
         atomic_write(self.runs_file(), f"{self.runs_today() + 1}\n", 0o600)   # counted BEFORE the bank
         since = max(request["requested_at"], now - REQUEST_MAX_AGE)
-        report, files, otp_wait = self.run_container(request["run_id"], creds, since, request.get("actions"))
+        report, files, otp_wait = self.run_container(request["run_id"], creds, since, actions)
         creds = None
         extra = {"otpWait": otp_wait, "csvRemovedByRetention": removed}
+        if request.get("_gap_plan"):
+            extra["coverage"] = request["_gap_plan"]
         if report.get("status") == "DONE" and files:
             try:
                 written = self.write_files(files)
                 extra["files"] = [{"name": w["name"], "path": w["path"], "rows": w["rows"],
                                    "kind": w["kind"], "nameHint": w["nameHint"]} for w in written]
-                # Convenience aliases for the common single-CSV case (Hermes/tooling).
                 if written:
                     extra.update(csv=written[0]["name"], csvPath=written[0]["path"], csvRows=written[0]["rows"])
             except OSError:
                 report = dict(report, status="CSV_WRITE_FAILED")
+            if report.get("status") == "DONE":
+                try:
+                    extra.update(self.ingest_archive(request, files, report))
+                except Exception:
+                    report = dict(report, status="ARCHIVE_WRITE_FAILED")
         files = None
         # Drop action file bodies / free-text details from what we publish.
         if isinstance(report.get("actions"), list):

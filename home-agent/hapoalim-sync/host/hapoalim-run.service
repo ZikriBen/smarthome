@@ -12,20 +12,20 @@ LoadCredentialEncrypted=hapoalim.password:/etc/credstore.encrypted/hapoalim.pass
 UMask=0077
 PrivateTmp=yes
 ProtectHome=read-only
-# ProtectHome=read-only blocks writes under /home. Allow the CSV out dir and the OTP inbox dir
-# (defaults must match Environment= below). setup-host.sh also installs a drop-in that re-states
-# these from HAPOALIM_OUT_DIR / HAPOALIM_INBOX_DB so a custom layout stays consistent.
-ReadWritePaths=/home/ben/smarthome/data/hapoalim/out /home/ben/smarthome/home-agent/hermes/otp
+# ProtectHome=read-only: allow data/hapoalim (out/ + archive/) and the OTP inbox.
+ReadWritePaths=/home/ben/smarthome/data/hapoalim /home/ben/smarthome/home-agent/hermes/otp
 NoNewPrivileges=yes
 Environment=HAPOALIM_SPOOL_DIR=/var/lib/hapoalim-spool
 Environment=HAPOALIM_STATE_DIR=/var/lib/hapoalim
 Environment=HAPOALIM_OUT_DIR=/home/ben/smarthome/data/hapoalim/out
+Environment=HAPOALIM_ARCHIVE_DIR=/home/ben/smarthome/data/hapoalim/archive
 Environment=HAPOALIM_OUT_UID=1000
 Environment=HAPOALIM_OUT_GID=1000
 Environment=HAPOALIM_INBOX_DB=/home/ben/smarthome/home-agent/hermes/otp/codes.sqlite
 Environment=HAPOALIM_OTP_TIMEOUT=120
 Environment=HAPOALIM_DAYS=45
 Environment=HAPOALIM_RETENTION_DAYS=7
+Environment=HAPOALIM_REPULL_DAYS=3
 EnvironmentFile=/etc/hapoalim/image.env
 ExecStart=/usr/local/lib/hapoalim/hapoalim-runner.py
 TimeoutStartSec=15min

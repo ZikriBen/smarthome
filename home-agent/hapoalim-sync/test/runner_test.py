@@ -24,11 +24,15 @@ import otp_inbox  # noqa: E402
 Config, Runner, cleanup_old_csv, today = hr.Config, hr.Runner, hr.cleanup_old_csv, hr.today
 
 
-def write_fake_container(path, behaviour="ok", delay=0.0):
+def write_fake_container(path, behaviour="ok", delay=0.0, login_counter=None):
     nl = chr(10)
+    counter = ""
+    if login_counter is not None:
+        counter = "open(%r, 'a').write('1' + chr(10))" % (str(login_counter),) + nl
     path.write_text(
         "#!/usr/bin/env python3" + nl +
         "import json, sys, time" + nl +
+        counter +
         "line = sys.stdin.readline()" + nl +
         "creds = json.loads(line)" + nl +
         "assert 'userCode' in creds and 'password' in creds" + nl +
@@ -43,23 +47,28 @@ def write_fake_container(path, behaviour="ok", delay=0.0):
         "    report = {'status': reply.get('error') or 'OTP_TIMEOUT', 'stage':'otp-requested',"
         " 'stopForToday': True, 'otpRequested': True, 'otpDelivered': False}" + nl +
         "    sys.stdout.write(json.dumps({'event':'result','report':report,'files':[]}) + chr(10)); sys.exit(1)" + nl +
-        "csv = 'date,description,amount' + chr(10) + '2026-10-01,x,1' + chr(10)" + nl +
+        "csv = ('date,description,amount,account_balance_now,reference,account,processed_date,memo,currency,status,type'"
+        " + chr(10) + '2026-10-01,x,-1,,R1,12345678,2026-10-01,,ILS,completed,normal' + chr(10))" + nl +
+        "arch = json.dumps({'from': actions[0].get('from') or '2026-09-01', 'to': actions[0].get('to') or '2026-10-22',"
+        "'accounts':['12345678'],'rows':[{'account':'12345678','date':'2026-10-01','processed_date':'2026-10-01',"
+        "'amount':-1,'description':'x','status':'completed','identifier':'R1','currency':'ILS'}]})" + nl +
         "report = {'status':'DONE','stage':'done','stopForToday':False,'otpRequested':True,'otpDelivered':True,"
         "'accountCount':1,'transactionCount':1,'firstDate':'2026-10-01','lastDate':'2026-10-01',"
-        "'from':'2026-09-01','to':'2026-10-22','blockedHosts':[],'failedHosts':[],'profileWiped':True,"
+        "'from':actions[0].get('from') or '2026-09-01','to':actions[0].get('to') or '2026-10-22',"
+        "'blockedHosts':[],'failedHosts':[],'profileWiped':True,"
         "'actions':[{'name':a.get('name'),'ok':True,'status':'DONE'} for a in actions]}" + nl +
         "sys.stdout.write(json.dumps({'event':'result','report':report,"
-        "'files':[{'kind':'csv','nameHint':'checking_transactions','body':csv}]}) + chr(10))" + nl
+        "'files':[{'kind':'csv','nameHint':'checking_transactions','body':csv},"
+        "{'kind':'archive_rows','nameHint':'archive','body':arch}]}) + chr(10))" + nl
     )
     path.chmod(0o755)
-
 
 
 class RunnerTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.root = Path(self.tmp.name)
-        for name in ("out", "state", "spool", "otp", "creds"):
+        for name in ("out", "state", "spool", "otp", "creds", "archive"):
             (self.root / name).mkdir()
         (self.root / "creds" / "hapoalim.user_code").write_text("user1")
         (self.root / "creds" / "hapoalim.password").write_text("pass1")
@@ -69,6 +78,7 @@ class RunnerTests(unittest.TestCase):
         self.env = {
             "HAPOALIM_SYNC_IMAGE": "unused",
             "HAPOALIM_OUT_DIR": str(self.root / "out"),
+            "HAPOALIM_ARCHIVE_DIR": str(self.root / "archive"),
             "HAPOALIM_STATE_DIR": str(self.root / "state"),
             "HAPOALIM_SPOOL_DIR": str(self.root / "spool"),
             "HAPOALIM_INBOX_DB": str(self.inbox),
@@ -169,6 +179,38 @@ class RunnerTests(unittest.TestCase):
         os.utime(old, (time.time() - 10 * 86400, time.time() - 10 * 86400))
         self.assertEqual(cleanup_old_csv(self.root / "out", 7), 1)
         self.assertFalse(old.exists())
+
+
+    def test_covered_skips_login(self):
+        import archive as arch
+        counter = self.root / "logins.txt"
+        write_fake_container(self.fake, login_counter=counter)
+        arch.merge_sync(self.root / "archive", [], range_from="2026-09-01", range_to="2026-09-30",
+                        run_id="seed", accounts=["12345678"])
+        self.queue(actions=[{"name": "checking_transactions", "from": "2026-09-01", "to": "2026-09-30"}])
+        status, code = Runner(self.cfg(HAPOALIM_REPULL_DAYS="3")).run()
+        self.assertEqual(status["status"], "COVERED")
+        self.assertEqual(code, 0)
+        self.assertFalse(counter.exists(), "no login when COVERED")
+        self.assertFalse((self.root / "state" / f"runs-{today()}").exists() and
+                         (self.root / "state" / f"runs-{today()}").read_text().strip() not in ("", "0"))
+
+    def test_sync_merges_archive_one_login(self):
+        counter = self.root / "logins.txt"
+        write_fake_container(self.fake, login_counter=counter)
+        self.queue()
+        threading.Timer(0.5, lambda: self.put_code("hapoalim", "12345")).start()
+        status, code = Runner(self.cfg(HAPOALIM_OTP_TIMEOUT="5")).run()
+        self.assertEqual(status["status"], "DONE", status)
+        self.assertGreaterEqual(status.get("archiveNew", 0), 1)
+        f = self.root / "archive" / "hapoalim-5678-2026-10.csv"
+        self.assertTrue(f.is_file())
+        self.assertEqual(oct(f.stat().st_mode & 0o777), "0o600")
+        self.assertEqual(counter.read_text().count("1"), 1)
+        cov = json.loads((self.root / "archive" / "_coverage.json").read_text())
+        self.assertTrue(cov["accounts"]["5678"]["months"]["2026-09"]["complete"])
+        # archive_rows never lands in out/
+        self.assertEqual([p.name for p in (self.root / "out").iterdir() if "archive" in p.name], [])
 
 
 if __name__ == "__main__":

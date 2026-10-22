@@ -63,9 +63,17 @@ describe("e2e fake bank", () => {
     assert.ok(report.blockedHosts.includes("bcodes.bankhapoalim.co.il"));
     assert.equal(bank.log.bcodesReached, undefined);
     assert.equal(report.transactionCount, 2);
-    assert.equal(files.length, 1);
-    assert.match(files[0].body, /סופר/);
-    assert.ok(!files[0].body.includes("FAKEU"));
+    // CSV for out/ + archive_rows payload for the host archive (never written to out/).
+    assert.equal(files.length, 2);
+    const csv = files.find((f) => f.kind === "csv");
+    const arch = files.find((f) => f.kind === "archive_rows");
+    assert.match(csv.body, /סופר/);
+    assert.ok(!csv.body.includes("FAKEU"));
+    const payload = JSON.parse(arch.body);
+    assert.equal(payload.from, "2026-09-01");
+    assert.equal(payload.rows.length, 2);
+    assert.ok(payload.accounts.length >= 1);
+    assert.ok(!arch.body.includes("FAKEU"));
   });
 
   test("unknown action never logs in", async () => {
@@ -84,7 +92,8 @@ describe("e2e fake bank", () => {
     assert.equal(report.status, "DONE");
     assert.equal(report.actions.length, 2);
     assert.ok(report.actions.every((a) => a.ok));
-    assert.equal(files.length, 2);
+    assert.equal(files.filter((f) => f.kind === "csv").length, 2);
+    assert.equal(files.filter((f) => f.kind === "archive_rows").length, 2);
     // One login = one password submission on the fake bank.
     assert.equal(bank.log.logins.length, 1);
     assert.equal(bank.log.otpSubmissions.length, 1);

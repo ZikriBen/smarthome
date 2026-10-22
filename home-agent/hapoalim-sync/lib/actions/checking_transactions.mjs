@@ -58,9 +58,27 @@ export async function run(session, params) {
   }));
   const summary = summarize(accounts);
   const csv = toTransactionsCsv(accounts, { maskAccounts: params.maskAccounts });
+  // Unmasked rows for the host archive merge (kind=archive_rows; never written to out/).
+  const archiveRows = [];
+  for (const account of accounts) {
+    for (const t of account?.txns ?? []) {
+      archiveRows.push({
+        account: String(account?.accountNumber ?? ""),
+        date: dayIL(t?.date),
+        processed_date: dayIL(t?.processedDate),
+        amount: t?.chargedAmount ?? t?.originalAmount,
+        currency: t?.originalCurrency ?? t?.chargedCurrency ?? "ILS",
+        description: t?.description ?? "",
+        memo: t?.memo ?? "",
+        status: t?.status ?? "completed",
+        type: t?.type ?? "",
+        identifier: t?.identifier ?? "",
+        balance: Number.isFinite(account?.balance) ? account.balance : null,
+      });
+    }
+  }
   const warnings = [];
   if (params.to < todayIL() && summary.lastDate && summary.lastDate > params.to) {
-    // should not happen after filter; keep as a belt-and-braces note
     warnings.push("filtered result still had rows after `to`");
   }
   return {
@@ -68,7 +86,14 @@ export async function run(session, params) {
     status: "DONE",
     warnings,
     summary: { ...summary, from: params.from, to: params.to },
-    files: [{ kind: "csv", nameHint: "checking_transactions", body: csv }],
+    files: [
+      { kind: "csv", nameHint: "checking_transactions", body: csv },
+      { kind: "archive_rows", nameHint: "archive", body: JSON.stringify({
+        from: params.from, to: params.to,
+        accounts: accounts.map((a) => String(a?.accountNumber ?? "")).filter(Boolean),
+        rows: archiveRows,
+      }) },
+    ],
   };
 }
 

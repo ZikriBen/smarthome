@@ -22,6 +22,12 @@ def load_hapoalim(spool, out):
 
     source = (HERE / "command_center" / "hapoalim.py").read_text()
     source = source.replace("from . import approvals", "import approvals")
+    source = source.replace("from . import hapoalim_archive as archive", "import hapoalim_archive as archive")
+    aspec = importlib.util.spec_from_file_location(
+        "hapoalim_archive", HERE / "command_center" / "hapoalim_archive.py")
+    amod = importlib.util.module_from_spec(aspec)
+    sys.modules["hapoalim_archive"] = amod
+    aspec.loader.exec_module(amod)
     module = types.ModuleType("hapoalim_under_test")
     module.approvals = approvals
     # Make `import approvals` resolve to our stub when the source runs.
@@ -29,6 +35,9 @@ def load_hapoalim(spool, out):
     exec(compile(source, "hapoalim.py", "exec"), module.__dict__)
     module.SPOOL_DIR = spool
     module.OUT_DIR = out
+    module.ARCHIVE_DIR = out.parent / "archive"
+    module.ARCHIVE_DIR.mkdir(exist_ok=True)
+    module.REPULL_DAYS = 0
     module._test_calls = calls
     return module
 
@@ -42,6 +51,7 @@ class HapoalimCCTests(unittest.TestCase):
         self.spool.mkdir()
         self.out.mkdir()
         self.hp = load_hapoalim(self.spool, self.out)
+        self.archive = self.hp.ARCHIVE_DIR
 
     def tearDown(self):
         sys.modules.pop("approvals", None)
@@ -77,6 +87,45 @@ class HapoalimCCTests(unittest.TestCase):
             "status": "OTP_TIMEOUT", "stopForToday": True, "finishedAt": time.time()}))
         out = self.hp.propose_sync({})
         self.assertEqual(out["status"], "stopped_today")
+
+
+
+    def test_covered_no_approval(self):
+        arch = sys.modules["hapoalim_archive"]
+        arch.merge_sync(
+            self.archive,
+            [{"account": "1234", "date": "2026-09-15", "amount": -1, "description": "z",
+              "identifier": "1", "status": "completed", "processed_date": "2026-09-15"}],
+            range_from="2026-09-01", range_to="2026-09-30", run_id="seed",
+        )
+        out = self.hp.propose_sync({"from": "2026-09-01", "to": "2026-09-30"})
+        self.assertEqual(out["status"], "COVERED")
+        self.assertEqual(self.hp._test_calls, [])
+
+    def test_backfill_clamp_warning(self):
+        out = self.hp.propose_sync({"from": "2020-01-01", "to": "2026-10-01"})
+        # Either COVERED (no) or pending_approval with clamp warning
+        self.assertEqual(out["status"], "pending_approval")
+        self.assertTrue(any("clamped" in w for w in (out.get("warnings") or [])))
+        cap = out["fetch_from"]
+        from datetime import date, datetime, timedelta
+        from zoneinfo import ZoneInfo
+        t = datetime.now(ZoneInfo("Asia/Jerusalem")).date()
+        self.assertEqual(cap, (t.replace(year=t.year - 1) + timedelta(days=1)).isoformat())
+
+    def test_list_archive_and_read_month(self):
+        arch = sys.modules["hapoalim_archive"]
+        arch.merge_sync(
+            self.archive,
+            [{"account": "9999", "date": "2026-10-05", "amount": -3, "description": "x",
+              "identifier": "9", "status": "completed", "processed_date": "2026-10-05"}],
+            range_from="2026-10-01", range_to="2026-10-31", run_id="seed",
+        )
+        listing = self.hp.list_archive()
+        self.assertEqual(listing["status"], "ok")
+        self.assertEqual(len(listing["files"]), 1)
+        month = self.hp.read_month({"month": "2026-10", "account": "9999"})
+        self.assertEqual(month["row_count"], 1)
 
 
 if __name__ == "__main__":

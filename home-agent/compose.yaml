@@ -87,6 +87,8 @@ services:
       JELLYFIN_API_KEY: ${JELLYFIN_API_KEY:?set JELLYFIN_API_KEY in .env}
       HAPOALIM_SPOOL_DIR: /hapoalim-spool
       HAPOALIM_OUT_DIR: /hapoalim-out
+      HAPOALIM_ARCHIVE_DIR: /hapoalim-archive
+      HAPOALIM_REPULL_DAYS: ${HAPOALIM_REPULL_DAYS:-3}
     # Uptime Kuma publishes its read-only metrics endpoint on the host. This
     # hostname is available only to the Command Center, never to Hermes.
     extra_hosts:
@@ -102,10 +104,13 @@ services:
       - ./hermes/cache/documents:/attachments:ro
       # One-time-code inbox written by Hermes's otp-relay plugin; read + single-use delete here.
       - ./hermes/otp:/otp-inbox
-      # Bank Hapoalim (hapoalim-sync/): approved-run spool + the CSV out dir (read-only; Ben-decided path).
+      # Bank Hapoalim (hapoalim-sync/): approved-run spool + the CSV out dir + the monthly archive
+      # (both read-only). CC runs as root in its image, so Ben-owned 0700/0600 files are readable;
+      # command-center-mcp has NO mounts and reaches them only through this API.
       # Created by hapoalim-sync/host/setup-host.sh; without them the feature stays inert.
       - /var/lib/hapoalim-spool:/hapoalim-spool
       - /home/ben/smarthome/data/hapoalim/out:/hapoalim-out:ro
+      - /home/ben/smarthome/data/hapoalim/archive:/hapoalim-archive:ro
       # This is the sole assistant-writable filesystem area. It is disposable
       # and deliberately not mounted into Hermes itself.
       - ./workspace:/workspace
