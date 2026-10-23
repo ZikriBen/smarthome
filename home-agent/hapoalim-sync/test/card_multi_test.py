@@ -6,6 +6,7 @@ import hashlib
 import importlib.util
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -254,18 +255,98 @@ class BudgetAndStopTests(Base):
         self.assertEqual(self.sync("cal-main")["status"], "DAILY_LIMIT")
         self.assertEqual(len(self.users()), 2)
 
-    def test_stop_for_today_is_per_account(self):
+
+class ProviderStopTests(Base):
+    """Bot-detection / 429 / HTML / captcha on ANY Cal account = provider-wide stop for the Israel day;
+    auth failures stay per account. Refusals never log in and never count."""
+    DAY = 86400
+
+    def runs(self, account):
+        p = self.root / "state" / "accounts" / account / f"runs-{cr.base.today()}"
+        return int(p.read_text()) if p.exists() else 0
+
+    def pfile(self, where="state"):
+        return self.root / where / "providers" / "cal" / "stop-today.json"
+
+    def sync_at(self, account, offset, behaviour="ok"):
+        req = {"run_id": os.urandom(8).hex(), "requested_at": time.time() + offset, "actions": OPEN, "account": account}
+        (self.root / "spool" / "request.json").write_text(json.dumps(req))
+        env = dict(self.env, CAL_RUNNER_TEST_EXEC=json.dumps([sys.executable, "-u", str(FAKE), behaviour, str(self.logins)]))
+        return cr.CalRunner(cr.CalConfig(env), clock=lambda: time.time() + offset).run()[0]
+
+    def test_block_on_cal2_stops_cal_main_and_cal2(self):
+        for behaviour, reason in (("blocked", "CAL_BLOCKED"), ("cal-blocked", "CAL_BLOCKED"),
+                                  ("captcha", "CAPTCHA_OR_BLOCK")):
+            with self.subTest(behaviour=behaviour):
+                for d in ("state/accounts", "spool/accounts", "state/providers", "spool/providers"):
+                    shutil.rmtree(self.root / d, ignore_errors=True)
+                self.two_accounts()
+                st = self.sync("cal-2", behaviour)
+                self.assertEqual(st["providerStop"]["triggered_by"], "cal-2")
+                self.assertEqual(st["providerStop"]["reason"], reason)
+                state = json.loads(self.pfile().read_text())
+                mirror = json.loads(self.pfile("spool").read_text())
+                self.assertEqual(state, mirror)
+                self.assertEqual(set(state), {"date", "provider", "status", "reason", "triggered_by", "at"})
+                self.assertEqual(oct(self.pfile().stat().st_mode & 0o777), "0o600")
+                logins, main_runs = len(self.users()), self.runs("cal-main")
+                for account in ("cal-main", "cal-2"):
+                    st = self.sync(account)
+                    self.assertEqual(st["status"], "PROVIDER_STOPPED_TODAY")
+                    self.assertEqual((st["providerStop"]["triggered_by"], st["account"]), ("cal-2", account))
+                    self.assertNotIn("stopForToday", st)
+                self.assertEqual(len(self.users()), logins)                  # no login
+                self.assertEqual(self.runs("cal-main"), main_runs)           # no budget consumed
+                last = json.loads((self.root / "spool" / "accounts" / "cal-main" / "last-status.json").read_text())
+                self.assertEqual(last["providerStop"]["triggered_by"], "cal-2")
+                self.assertFalse((self.root / "state" / "accounts" / "cal-main" / f"stop-{cr.base.today()}").exists())
+
+    def test_auth_failure_on_cal2_does_not_stop_cal_main(self):
         self.two_accounts()
-        st = self.sync("cal-main", "invalid")
+        st = self.sync("cal-2", "invalid")
         self.assertEqual(st["status"], "INVALID_PASSWORD")
-        self.assertTrue((self.root / "state" / "accounts" / "cal-main" / f"stop-{cr.base.today()}").is_file())
-        self.assertEqual(self.sync("cal-main")["status"], "STOPPED_TODAY")
-        self.assertEqual(self.sync("cal-2")["status"], "DONE")
-        st = self.sync("cal-2", "blocked", actions=[{"name": "card_transactions", "from_month": "2026-02",
-                                                     "to_month": "2026-04"}])
-        self.assertTrue(st["stopForToday"])                                     # CAL_BLOCKED-style stop: cal-2 only
+        self.assertNotIn("providerStop", st)
+        self.assertFalse(self.pfile().exists())
+        self.assertEqual(self.sync("cal-main")["status"], "DONE")
         self.assertEqual(self.sync("cal-2")["status"], "STOPPED_TODAY")
-        self.assertEqual(self.users(), ["caluser", "cal2user", "cal2user"])
+        self.assertEqual(self.users(), ["cal2user", "caluser"])
+
+    def test_stop_expires_at_israel_date_rollover(self):
+        self.two_accounts()
+        self.sync("cal-2", "cal-blocked")
+        self.assertEqual(self.sync("cal-main")["status"], "PROVIDER_STOPPED_TODAY")
+        tomorrow = self.sync_at("cal-main", self.DAY)
+        self.assertEqual(tomorrow["status"], "DONE", tomorrow)
+        self.assertEqual(self.sync_at("cal-2", self.DAY)["status"], "DONE")    # its own stop expired too
+        # the next block (tomorrow) replaces yesterday's file with a fresh trigger
+        st = self.sync_at("cal-main", self.DAY, "captcha")
+        self.assertEqual(st["providerStop"]["triggered_by"], "cal-main")
+        self.assertEqual(json.loads(self.pfile().read_text())["date"], cr.base.today(time.time() + self.DAY))
+
+    def test_auth_stop_and_provider_stop_coexist(self):
+        self.two_accounts()
+        self.assertEqual(self.sync("cal-main", "invalid")["status"], "INVALID_PASSWORD")
+        st = self.sync("cal-2", "cal-blocked")
+        self.assertEqual(st["providerStop"]["triggered_by"], "cal-2")
+        self.assertTrue((self.root / "state" / "accounts" / "cal-main" / f"stop-{cr.base.today()}").is_file())
+        self.assertTrue((self.root / "state" / "accounts" / "cal-2" / f"stop-{cr.base.today()}").is_file())
+        self.assertTrue(self.pfile().is_file())
+        self.assertEqual(self.sync("cal-main")["status"], "PROVIDER_STOPPED_TODAY")
+        # first trigger of the day wins (who/when kept)
+        first = json.loads(self.pfile().read_text())
+        self.assertEqual(json.loads(self.pfile().read_text()), first)
+        self.assertEqual(self.users(), ["caluser", "cal2user"])
+
+    def test_corrupt_provider_state_fails_closed_today(self):
+        self.two_accounts()
+        self.pfile().parent.mkdir(parents=True)
+        self.pfile().write_text("{broken")
+        st = self.sync("cal-main")
+        self.assertEqual((st["status"], st["providerStop"]["status"]), ("PROVIDER_STOPPED_TODAY", "PROVIDER_STATE_CORRUPT"))
+        self.assertEqual(self.users(), [])
+        old = time.time() - 2 * self.DAY
+        os.utime(self.pfile(), (old, old))
+        self.assertEqual(self.sync("cal-main")["status"], "DONE")
 
 
 class LockTests(Base):

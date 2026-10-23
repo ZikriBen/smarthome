@@ -29,7 +29,11 @@ Paste at deploy time — Ben/בלבוסטע, not an agent edit. Replace the whol
   `pending_approval` → להציג `text` ולסיים ב-`[[CC_APPROVAL:<approval_id>]]`. אחרי אישור: לבקש מבן לא להתחבר
   לכאל בינתיים; SMS יגיע **רק אם** כאל תבקש קוד, והקוד מועבר אוטומטית (`#OTP cal`). אחרי כדקה
   `card_status(account)`; ב-`DONE` לענות מ-`card_read_month` / `card_read_range` עם אותו `account`.
-- אחרי כשל הזדהות/OTP/חסימה (`stopped_today`) — לא לנסות שוב היום **את אותו חשבון**; חשבון אחר לא נחסם בגלל זה.
+- אחרי כשל הזדהות/OTP (`stopped_today`, למשל סיסמה שגויה) — לא לנסות שוב היום **את אותו חשבון**; חשבון אחר
+  לא נחסם בגלל זה.
+- חסימת בוטים / 429 / captcha של כאל (`PROVIDER_STOPPED_TODAY`, או `provider_stopped_today` / `provider_stops`
+  ב-`card_status`) — זה חוסם את **כל** חשבונות כאל עד חצות, לא רק את החשבון שנחסם. לומר לבן באיזה חשבון זה קרה
+  (`triggered_by`) ומתי (`at_il`), לענות מהארכיון, ולא להציע `card_sync` לאף חשבון כאל היום.
   `UNKNOWN_ACCOUNT` / `NOT_CONFIGURED` → בן צריך להריץ בעצמו `sudo card-setup <account> --provider cal` ב-NUC.
   `NOT_SUPPORTED` → החברה עוד לא נתמכת (כרגע רק כאל). `MIGRATION_PENDING` → בן צריך להריץ
   `sudo card-migrate --apply`. לעולם לא לבקש מבן סיסמה/שם משתמש/קוד בצ'אט: הסודות מוזנים רק ע"י בן ב-NUC.

@@ -48,7 +48,7 @@ STATUS_FIELDS = ("site", "status", "stage", "stopForToday", "blocked", "otpReque
                  "profileWiped", "fakeCal", "warnings", "runsToday", "maxRuns", "coverage", "archiveNew",
                  "archiveRemoved", "archiveMonths", "archiveCompleteMonths", "archivePendingRows", "archiveWarnings",
                  "archiveSkipped", "csv", "csvRows", "files", "actions", "otpWait", "runId", "finishedAt",
-                 "requestedAt", "account", "provider", "runsTotal", "maxRunsTotal")
+                 "requestedAt", "account", "provider", "runsTotal", "maxRunsTotal", "providerStop")
 ERROR_TEXT_HE = {
     "INVALID_PASSWORD": "כאל דחתה את שם המשתמש או הסיסמה. ננעל להיום: לא ננסה שוב עד שבן יבדוק.",
     "CHANGE_PASSWORD": "כאל מבקשת להחליף סיסמה. ננעל להיום.",
@@ -74,6 +74,8 @@ ERROR_TEXT_HE = {
     "BAD_REGISTRY": "קובץ רישום החשבונות ב-NUC פגום. ננעל להיום עד שבן יתקן.",
     "MIGRATION_PENDING": "צריך להריץ את העברת הארכיון לחשבונות (sudo card-migrate --apply) לפני סנכרון.",
     "AMBIGUOUS_CARD": "אותן 4 ספרות קיימות ביותר מחשבון אחד; צריך לציין account.",
+    "PROVIDER_STOPPED_TODAY": "כאל חסמה היום את השליפה (חסימת בוטים/429/captcha) באחד החשבונות, ולכן כל חשבונות כאל "
+                              "נעולים עד חצות. אפשר לענות מהארכיון; לנסות שוב מחר.",
     "NOT_CONFIGURED": "חסרות הגדרות לחשבון הכרטיס ב-NUC (סודות/image). בן צריך להריץ sudo card-setup <account>.",
     "BAD_ACTIONS": "בקשת הפעולות לא תקינה.",
     "ARCHIVE_WRITE_FAILED": "החיובים נשמרו ב-CSV ב-out/ אבל לא נכנסו לארכיון החודשי (הכיסוי לא עודכן).",
@@ -189,6 +191,45 @@ def _active_request(now=None):
     return None
 
 
+def _provider_stop(provider="cal", now=None):
+    """Provider-wide stop-for-today (bot-detection / 429 / HTML-instead-of-JSON / captcha on ANY account of the
+    provider), mirrored by the root runner to spool/providers/<p>/stop-today.json. Valid only for today's Israel
+    date (expires at midnight). Corrupt + modified today -> fail closed."""
+    if not re.fullmatch(r"[a-z][a-z0-9]{1,15}", str(provider or "")):
+        return None
+    path = SPOOL_DIR / "providers" / provider / "stop-today.json"
+    if not path.exists():
+        return None
+    data = _read_json(path)
+    today = _today(now)
+    if data is None:
+        try:
+            fresh = _today(path.stat().st_mtime) == today
+        except OSError:
+            fresh = False
+        return {"reason": "PROVIDER_STATE_CORRUPT", "triggered_by": None, "at": None, "at_il": None} if fresh else None
+    if data.get("date") != today:
+        return None
+    try:
+        at = float(data.get("at"))
+        at_il = datetime.fromtimestamp(at, TZ).isoformat(timespec="seconds")
+    except (TypeError, ValueError, OverflowError, OSError):
+        at, at_il = None, None
+    trig = str(data.get("triggered_by") or "")
+    return {"reason": re.sub(r"[^A-Z_]", "", str(data.get("reason") or "CAL_BLOCKED"))[:40] or "CAL_BLOCKED",
+            "triggered_by": trig if accounts.ACCOUNT_RE.fullmatch(trig) else None, "at": at, "at_il": at_il,
+            "provider": provider, "resets_at": _next_midnight_iso(now)}
+
+
+def _provider_stop_result(pstop, account):
+    who = f" (נחסם בחשבון {pstop['triggered_by']}" + (f", {pstop['at_il'][11:16]}" if pstop.get("at_il") else "") + ")" \
+        if pstop.get("triggered_by") else ""
+    return {"status": "PROVIDER_STOPPED_TODAY", "account": account, "provider": pstop.get("provider", "cal"),
+            "triggered_by": pstop.get("triggered_by"), "reason": pstop.get("reason"), "at": pstop.get("at"),
+            "at_il": pstop.get("at_il"), "resets_at": pstop.get("resets_at"), "retry_today": False,
+            "text": ERROR_TEXT_HE["PROVIDER_STOPPED_TODAY"] + who}
+
+
 def _stopped_today(account=accounts.DEFAULT_ACCOUNT):
     last = _read_json(_spool(account) / "last-status.json") or {}
     if last.get("stopForToday") is True:
@@ -275,6 +316,7 @@ def _status_one(entry, active):
     last = {k: last[k] for k in STATUS_FIELDS if k in last}
     mine = active if active and active["account"] == account else None
     stopped = _stopped_today(account)
+    pstop = _provider_stop(entry["provider"])
     lim = _daily_limit(account=account, default_max=_default_max(entry))
     act0 = ((mine or {}).get("actions") or [{}])[0] if mine else {}
     out = {
@@ -283,19 +325,21 @@ def _status_one(entry, active):
         "pending_run": {"run_id": mine["run_id"], "stage": mine["stage"],
                         "from_month": act0.get("from_month"), "to_month": act0.get("to_month")} if mine else None,
         "stopped_today": stopped,
-        "can_run_today": (not stopped and not active and not lim["limit_reached"] and entry["enabled"]
+        "can_run_today": (not stopped and not pstop and not active and not lim["limit_reached"] and entry["enabled"]
                           and entry["supported"]),
         "runs_today": lim["runs_today"], "max_runs": lim["max_runs"], "max_runs_source": lim["max_runs_source"],
         "limit_reached": lim["limit_reached"], "runs_state": lim["runs_state"], "resets_at": lim["resets_at"],
     }
-    if lim["limit_reached"]:
+    if pstop:
+        out["error_text"] = _provider_stop_result(pstop, account)["text"]
+    elif lim["limit_reached"]:
         out["error_text"] = _limit_result(lim)["text"]
     elif last.get("status") in ERROR_TEXT_HE and last.get("status") != "DAILY_LIMIT":
         out["error_text"] = ERROR_TEXT_HE[last["status"]]
     elif stopped and stopped in ERROR_TEXT_HE:
         out["error_text"] = ERROR_TEXT_HE[stopped]
     out.update(account=account, provider=entry["provider"], label=entry["label"], enabled=entry["enabled"],
-               supported=entry["supported"])
+               supported=entry["supported"], provider_stopped_today=pstop)
     if active and not mine:
         out["busy_with_account"] = active["account"]
     if account == accounts.DEFAULT_ACCOUNT and _archive_dir(account) == ARCHIVE_DIR:
@@ -318,6 +362,8 @@ def status(payload=None, _query=None):
     except AccountError as exc:
         return exc.result()
     top["accounts"] = per
+    stops = {p: _provider_stop(p) for p in sorted({a["provider"] for a in reg["accounts"]})}
+    top["provider_stops"] = {p: v for p, v in stops.items() if v}
     if reg.get("max_runs_total"):
         top["max_runs_total"] = reg["max_runs_total"]
     return top
@@ -376,6 +422,9 @@ def propose_sync(payload, _query=None):
                                               str(payload.get("to_month") or "").strip() or None)
     except ValueError as exc:
         return {"status": "bad_request", "text": str(exc)}
+    pstop = _provider_stop(entry["provider"])
+    if pstop:
+        return _provider_stop_result(pstop, account)
     stopped = _stopped_today(account)
     if stopped:
         return {"status": "stopped_today", "account": account,
@@ -419,10 +468,13 @@ def execute_sync(payload):
             not isinstance(a, dict) or a.get("name") != "card_transactions" for a in actions):
         raise ValueError("bad actions")
     try:
-        account = _runnable(payload.get("account"))["id"]
+        entry = _runnable(payload.get("account"))
     except AccountError as exc:
         raise ValueError(exc.code.lower())
+    account = entry["id"]
     with _lock:
+        if _provider_stop(entry["provider"]):
+            raise ValueError("provider_stopped_today")
         if _stopped_today(account):
             raise ValueError("stopped_today")
         if _active_request():

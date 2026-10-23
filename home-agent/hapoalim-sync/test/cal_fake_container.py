@@ -41,6 +41,10 @@ if behaviour in ("otp", "otp-timeout"):
               "stage": "otp-requested", "stopForToday": True, "otpRequested": True}, "files": []})
         sys.exit(1)
     otp_del = True
+if behaviour in ("cal-blocked", "captcha"):   # login-level / first-request blocks (multi-account provider stop)
+    emit({"event": "result", "report": {"site": "cal", "status": "CAL_BLOCKED" if behaviour == "cal-blocked"
+          else "CAPTCHA_OR_BLOCK", "stage": "transactions", "stopForToday": True, "blocked": True}, "files": []})
+    sys.exit(1)
 if behaviour == "invalid":
     emit({"event": "result", "report": {"site": "cal", "status": "INVALID_PASSWORD", "stage": "credentials",
           "stopForToday": True, "detail": "x"}, "files": []})

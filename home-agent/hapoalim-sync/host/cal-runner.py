@@ -50,7 +50,12 @@ CAL_FIELDS = ("site", "status", "stage", "stopForToday", "blocked", "otpRequeste
               "pendingCount", "monthsCovered", "from_month", "to_month", "cards", "profileWiped", "fakeCal",
               "warnings", "runsToday", "maxRuns", "coverage",
               "archiveNew", "archiveRemoved", "archiveMonths", "archiveCompleteMonths", "archivePendingRows",
-              "archiveWarnings", "archiveSkipped", "account", "provider", "runsTotal", "maxRunsTotal")
+              "archiveWarnings", "archiveSkipped", "account", "provider", "runsTotal", "maxRunsTotal",
+              "providerStop")
+# Bot-detection / rate-limit / captcha blocks are about the provider (and our IP), not one login: any account
+# hitting one stops EVERY account of that provider for the rest of the Israel day (state/providers/<p>/).
+# Auth failures (INVALID_PASSWORD, OTP_*, ACCOUNT_BLOCKED, …) stay per account (state/accounts/<id>/stop-*).
+PROVIDER_BLOCK = {"CAL_BLOCKED", "CAPTCHA_OR_BLOCK"}
 MONTH_RE = re.compile(r"^\d{4}-(0[1-9]|1[0-2])$")
 
 
@@ -182,7 +187,66 @@ class CalRunner(base.Runner):
         extra = dict(extra or {})
         extra.setdefault("account", self.account)
         extra.setdefault("provider", self.provider.name)
+        triggered = None
+        if getattr(self, "bound", False) and (str(report.get("status") or "") in PROVIDER_BLOCK
+                                              or report.get("blocked") is True):
+            try:
+                triggered = self.write_provider_stop(str(report.get("status") or "INTERNAL"),
+                                                     blocked=report.get("blocked") is True)
+            except OSError:
+                triggered = None
+        if triggered:
+            extra.setdefault("providerStop", triggered)
         return super().finish(request, report, extra, publish_last)
+
+    # Per-account stop/runs files follow the runner clock (same Israel date as the provider stop).
+    def stop_file(self, now=None):
+        return super().stop_file(self.clock() if now is None else now)
+
+    def runs_file(self, now=None):
+        return super().runs_file(self.clock() if now is None else now)
+
+    # ------------------------------------------------------------------ provider-wide stop-for-today
+    def provider_stop_paths(self, prov=None):
+        name = (prov or self.provider).name
+        return (self.cfg.state_root / "providers" / name / "stop-today.json",
+                self.cfg.spool_root / "providers" / name / "stop-today.json")
+
+    def provider_stop(self):
+        """Today's provider stop {date, status, triggered_by, at} from the ROOT state (authoritative), else None.
+        A file from an earlier Israel date is expired (ignored, replaced by the next trigger)."""
+        state, _ = self.provider_stop_paths()
+        try:
+            data = json.loads(state.read_text(encoding="utf-8"))
+        except FileNotFoundError:
+            return None
+        except (OSError, ValueError):
+            # Corrupt and written today -> fail closed; older -> expired.
+            try:
+                if base.today(state.stat().st_mtime) == base.today(self.clock()):
+                    return {"date": base.today(self.clock()), "status": "PROVIDER_STATE_CORRUPT",
+                            "triggered_by": None, "at": None}
+            except OSError:
+                pass
+            return None
+        if not isinstance(data, dict) or data.get("date") != base.today(self.clock()):
+            return None
+        return {k: data.get(k) for k in ("date", "status", "reason", "triggered_by", "at")}
+
+    def write_provider_stop(self, status, blocked=False):
+        """First trigger of the day wins (keeps who/when); mirrored to the spool for the Command Center."""
+        current = self.provider_stop()
+        if current and current.get("status") != "PROVIDER_STATE_CORRUPT":
+            return current
+        now = self.clock()
+        reason = status if status in PROVIDER_BLOCK else ("CAL_BLOCKED" if blocked else status)
+        data = {"date": base.today(now), "provider": self.provider.name, "status": "PROVIDER_STOPPED_TODAY",
+                "reason": reason, "triggered_by": self.account, "at": now}
+        state, spool = self.provider_stop_paths()
+        for path, mode in ((state, 0o600), (spool, 0o640)):
+            path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+            base.atomic_write(path, json.dumps(data) + "\n", mode)
+        return {k: data[k] for k in ("date", "status", "reason", "triggered_by", "at")}
 
     def write_files(self, files):
         tag = re.sub(r"[^a-z0-9]+", "_", self.account)
@@ -269,6 +333,7 @@ class CalRunner(base.Runner):
                 return self.finish(request, {"status": "MIGRATION_PENDING", "stage": "preflight"},
                                    publish_last=False), 2
             self.bind_account(entry, prov)
+            self.bound = True
             cal_archive.ensure_archive_dir(cfg.archive_root, uid=cfg.out_uid, gid=cfg.out_gid)
             cal_archive.ensure_archive_dir(cfg.archive_root / "cards", uid=cfg.out_uid, gid=cfg.out_gid)
             try:
@@ -277,6 +342,12 @@ class CalRunner(base.Runner):
                 pass
             self.prune_state()
             now = self.clock()
+            valid = bool(request["run_id"]) and now - base.REQUEST_MAX_AGE <= request["requested_at"] <= now + 5
+            pstop = self.provider_stop() if valid else None
+            if pstop:
+                # Defense in depth (the CC already refuses): before COVERED/limits/creds, never counted.
+                return self.finish(request, {"status": "PROVIDER_STOPPED_TODAY", "stage": "preflight",
+                                             "providerStop": pstop}), 2
             if (request["run_id"] and now - base.REQUEST_MAX_AGE <= request["requested_at"] <= now + 5
                     and not self.stop_file().exists()):
                 cap = self.effective_total_cap()

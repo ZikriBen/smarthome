@@ -18,7 +18,7 @@ OLD = HERE / "tests" / "fixtures" / "cal_single_account_a1a5c34.py"
 NEW = HERE / "command_center" / "cal.py"
 # Keys the multi-account version ADDS; everything else must be identical to the old output.
 ADDED = {"account", "accounts", "provider", "label", "enabled", "supported", "migration_pending",
-         "busy_with_account", "max_runs_total"}
+         "busy_with_account", "max_runs_total", "provider_stopped_today", "provider_stops"}
 
 
 def load(path, spool, archive_dir):
@@ -269,6 +269,73 @@ class RoutingTests(Base):
     def test_card_accounts_copy_identical(self):
         self.assertEqual((HERE / "command_center" / "card_accounts.py").read_bytes(),
                          (HERE.parent / "hapoalim-sync" / "host" / "card_accounts.py").read_bytes())
+
+
+class ProviderStopCCTests(Base):
+    def setUp(self):
+        super().setUp()
+        self.mirror()
+        self.ar.merge_sync(self.arch / "cards" / "cal-main", payload(["1111"], ["2026-02"], "m"))
+
+    def stop(self, date=None, account="cal-2", reason="CAL_BLOCKED"):
+        d = self.spool / "providers" / "cal"
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "stop-today.json").write_text(json.dumps({"date": date or self.new._today(), "provider": "cal",
+                                                       "status": "PROVIDER_STOPPED_TODAY", "reason": reason,
+                                                       "triggered_by": account, "at": time.time()}))
+
+    def test_status_shows_global_stop_everywhere(self):
+        self.stop()
+        st = self.new.status({}, {})
+        self.assertEqual(st["provider_stops"]["cal"]["triggered_by"], "cal-2")
+        self.assertEqual(st["provider_stops"]["cal"]["reason"], "CAL_BLOCKED")
+        self.assertTrue(st["provider_stops"]["cal"]["at_il"].startswith(self.new._today()))
+        for view in (st, st["accounts"]["cal-main"], st["accounts"]["cal-2"], self.new.status({"account": "cal-2"})):
+            self.assertFalse(view["can_run_today"])
+            self.assertEqual(view["provider_stopped_today"]["triggered_by"], "cal-2")
+            self.assertIn("cal-2", view["error_text"])
+        self.assertNotIn("password", json.dumps(st, ensure_ascii=False).lower())
+
+    def test_card_sync_refused_before_spool_for_every_cal_account(self):
+        self.stop()
+        for account in ("", "cal-main", "cal-2"):
+            out = self.new.propose_sync({"account": account, "from_month": "2026-02", "to_month": "2026-03"})
+            self.assertEqual((out["status"], out["triggered_by"]), ("PROVIDER_STOPPED_TODAY", "cal-2"))
+            self.assertFalse(out["retry_today"])
+        self.assertEqual(self.new._calls, [])                         # no approval card
+        with self.assertRaises(ValueError):
+            self.new.execute_sync({"actions": [{"name": "card_transactions"}], "account": "cal-main"})
+        self.assertFalse((self.spool / "request.json").exists())       # nothing spooled -> no budget used
+        self.assertFalse((self.spool / "accounts" / "cal-main" / "runs-today.json").exists())
+        # reads still work (archive, no login)
+        self.assertEqual(self.new.read_month({"month": "2026-02"})["row_count"], 1)
+
+    def test_expired_stop_is_ignored(self):
+        self.stop(date="2000-01-01")
+        self.assertEqual(self.new.status({}, {})["provider_stops"], {})
+        self.assertIsNone(self.new.status({"account": "cal-main"})["provider_stopped_today"])
+        self.assertEqual(self.new.propose_sync({"from_month": "2026-02", "to_month": "2026-03"})["status"],
+                         "pending_approval")
+
+    def test_corrupt_mirror_fails_closed(self):
+        d = self.spool / "providers" / "cal"
+        d.mkdir(parents=True)
+        (d / "stop-today.json").write_text("{bad")
+        self.assertEqual(self.new.propose_sync({})["status"], "PROVIDER_STOPPED_TODAY")
+
+    def test_account_stop_and_provider_stop_coexist(self):
+        d = self.spool / "accounts" / "cal-main"
+        d.mkdir(parents=True)
+        (d / "last-status.json").write_text(json.dumps({"status": "INVALID_PASSWORD", "stopForToday": True,
+                                                        "finishedAt": time.time()}))
+        st = self.new.status({"account": "cal-main"})
+        self.assertEqual(st["stopped_today"], "INVALID_PASSWORD")
+        self.assertIsNone(st["provider_stopped_today"])
+        self.assertEqual(self.new.status({"account": "cal-2"})["can_run_today"], True)   # auth stop is per account
+        self.stop()
+        st = self.new.status({"account": "cal-main"})
+        self.assertEqual((st["stopped_today"], st["provider_stopped_today"]["triggered_by"]), ("INVALID_PASSWORD", "cal-2"))
+        self.assertEqual(self.new.propose_sync({"account": "cal-main"})["status"], "PROVIDER_STOPPED_TODAY")
 
 
 if __name__ == "__main__":

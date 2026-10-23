@@ -345,7 +345,14 @@ proposes ONE account (default cal-main), approval card every time.
 
 Budget: per account `max_runs_per_day` (default `CAL_MAX_RUNS_PER_DAY` = 2); optional global cap
 `CARD_MAX_RUNS_TOTAL` (unit env) / `max_runs_total` (registry), lower wins, 0 = off. COVERED never counts.
-Stop-for-today (auth/OTP failure, CAL_BLOCKED, …) is per account. One login at a time: one spool request for all
+Stop-for-today after an auth/OTP failure is per account. A bot-detection / 429 / HTML-instead-of-JSON / captcha
+block (`CAL_BLOCKED`, `CAPTCHA_OR_BLOCK`, or a report with `blocked: true`) on ANY account sets a provider-wide stop:
+`/var/lib/cal/providers/cal/stop-today.json` (root, authoritative) mirrored to
+`/var/lib/cal-spool/providers/cal/stop-today.json` `{date, provider, status, reason, triggered_by, at}`; first
+trigger of the Israel day wins, expires at the date rollover. The CC refuses `card_sync` for every account of the
+provider with `PROVIDER_STOPPED_TODAY` (+ `triggered_by`, `reason`, `at_il`) before an approval/spool; the runner
+re-checks before login (never counted). Status: `provider_stopped_today` per account, `provider_stops` at the top.
+Code without this feature ignores the files. One login at a time: one spool request for all
 accounts, the card lock `/var/lib/cal/run.lock` AND the Hapoalim runner's lock `/var/lib/hapoalim/run.lock`
 (`CARD_BANK_LOCK`), both non-blocking → `LOCKED` (either side). Service name stays `cal-run.service/.path`.
 

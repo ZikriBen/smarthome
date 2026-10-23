@@ -15,7 +15,9 @@ def register(mcp, client):
         only), whether an SMS was needed, stopped_today, can_run_today, runs_today/max_runs/limit_reached/
         resets_at, pending run). Without account: the top level is the default account (cal-main) and
         `accounts` holds the same status for EVERY card account (id, label, provider). With account: only that
-        one. If can_run_today is false, do not offer a card sync today for that account. Relay error_text."""
+        one. If can_run_today is false, do not offer a card sync today for that account. Relay error_text.
+        provider_stopped_today / provider_stops = a bot-detection/429/captcha block on ONE account stopped ALL
+        accounts of that provider until midnight (reason, triggered_by account, at_il)."""
         if account:
             return client.request("POST", "/cal/status", {"account": account})
         return client.request("GET", "/cal/status")
@@ -27,7 +29,9 @@ def register(mcp, client):
         the upcoming one; max ≈18 months back. Only when Ben asks, every time: never on your own, never in a
         loop, never to retry a failure, never several accounts in a row without Ben asking for each.
         Result DAILY_LIMIT: today's login limit for that account (or all accounts) is used up — do NOT offer or
-        retry today; answer from the archive or suggest tomorrow. Result COVERED: archive already has those
+        retry today; answer from the archive or suggest tomorrow. Result PROVIDER_STOPPED_TODAY: Cal blocked
+        the fetch today on account `triggered_by`, so EVERY Cal account is stopped until midnight — do not offer
+        or retry any Cal account today. Result COVERED: archive already has those
         months — no approval/SMS; use card_read_month / card_read_range. Result pending_approval: show `text`
         and append [[CC_APPROVAL:<approval_id>]]. After approval the NUC logs in once; an SMS code is relayed
         automatically only if the card company asks — tell Ben NOT to log in meanwhile. Then card_status."""
