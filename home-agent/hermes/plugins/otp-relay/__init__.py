@@ -44,6 +44,8 @@ SITE_CODE_RE = {
     "super_hist": _standalone(6),
     # Placeholder for the allowlist; the real rule is built per message by _hapoalim_rules() (configurable length).
     "hapoalim": _standalone("5-6"),
+    # Placeholder too; the real rule is built by _cal_rules() (OTP_CAL_CODE_DIGITS, default 6).
+    "cal": _standalone(6),
 }
 
 # ---------------------------------------------------------------------------------------------- Bank Hapoalim
@@ -76,6 +78,32 @@ def _hapoalim_rules():
     return require, reject, _standalone(digits)
 
 
+# ---------------------------------------------------------------------------------------------- Cal (visaCal)
+# Only used if Cal ever asks for a code at login (the password login normally does not). Same stance as the bank:
+# the login SMS only; a purchase / 3-D Secure / wallet-token / transaction approval code must NEVER be relayed,
+# so REJECT always wins. UNVERIFIED wording: tune with OTP_RELAY_DEBUG_SHAPE=1 + OTP_CAL_REQUIRE_RE, never by
+# loosening OTP_CAL_REJECT_RE.
+CAL_REQUIRE_DEFAULT = r"כאל|cal-online|(?<![A-Za-z])CAL(?![A-Za-z])|(?<![A-Za-z])Cal(?![A-Za-z])|כניסה|התחברות|להתחבר|הזדהות|אימות|login|Login"
+CAL_REJECT_DEFAULT = (r"עסקה|עסקת|לאישור|אישור עסקה|אישור רכישה|רכישה|קנייה|באתר|אונליין|תשלום|לתשלום|חיוב|העברה|"
+                      r"הוראת קבע|הלוואה|מסגרת|ארנק|דיגיטלי|טוקן|Apple ?Pay|Google ?Pay|3-?D|3DS|secure|₪|ש\"ח|ILS|USD|"
+                      r"EUR|transaction|payment|purchase|approve|wallet|token")
+
+
+def _cal_rules():
+    """(require_re, reject_re, code_re) from env (OTP_CAL_REQUIRE_RE / _REJECT_RE / _CODE_DIGITS) or the strict
+    defaults. None when the configuration is invalid -> every cal message is dropped."""
+    try:
+        require = re.compile(os.environ.get("OTP_CAL_REQUIRE_RE", "").strip() or CAL_REQUIRE_DEFAULT, re.S)
+        reject = re.compile(os.environ.get("OTP_CAL_REJECT_RE", "").strip() or CAL_REJECT_DEFAULT, re.S | re.I)
+        digits = os.environ.get("OTP_CAL_CODE_DIGITS", "").strip() or "6"
+        m = re.fullmatch(r"([4-8])(?:-([4-8]))?", digits)
+        if not m or (m.group(2) and int(m.group(2)) < int(m.group(1))):
+            return None
+    except re.error:
+        return None
+    return require, reject, _standalone(digits)
+
+
 # A bank SMS must never feed another site's login (a mis-tagged forwarding rule): any non-bank site drops a
 # message that mentions the bank.
 BANK_MENTION_RE = re.compile(r"הפועלים|פועלים|poalim|בנק", re.I)
@@ -85,6 +113,18 @@ OTHER_SITE_RE = re.compile(r"super-hist|superhist|הסופר החברתי|הסו
 
 def guard_reason(site, body):
     """None when `body` may feed a code for `site`; else a digit-free reason to drop it."""
+    if site == "cal":
+        rules = _cal_rules()
+        if rules is None:
+            return "invalid cal pattern configuration"
+        if OTHER_SITE_RE.search(body or "") or BANK_MENTION_RE.search(body or ""):
+            return "mentions another site (bank/super_hist); not a Cal SMS"
+        require, reject, _ = rules
+        if reject.search(body):
+            return "looks like a purchase/approval SMS, not a login SMS"
+        if not require.search(body):
+            return "not Cal's login SMS wording"
+        return None
     if site != "hapoalim":
         return "mentions the bank; not a %s SMS" % site if BANK_MENTION_RE.search(body or "") else None
     rules = _hapoalim_rules()
@@ -104,6 +144,8 @@ SITE_WEBOTP_RE = {
     "super_hist": re.compile(r"^@super-hist\.co\.il #([0-9]{6})[ \t\r]*$", re.M),
     # UNVERIFIED: whether the bank's SMS carries a WebOTP line at all.
     "hapoalim": re.compile(r"^@(?:[a-z0-9-]+\.)*bankhapoalim\.co\.il #([0-9]{4,8})[ \t\r]*$", re.M),
+    # UNVERIFIED as well.
+    "cal": re.compile(r"^@(?:[a-z0-9-]+\.)*cal-online\.co\.il #([0-9]{4,8})[ \t\r]*$", re.M),
 }
 
 
@@ -130,6 +172,9 @@ def extract_code(site, body):
     rule = SITE_CODE_RE.get(site)
     if site == "hapoalim":
         rules = _hapoalim_rules()
+        rule = rules[2] if rules else None
+    elif site == "cal":
+        rules = _cal_rules()
         rule = rules[2] if rules else None
     if rule is None or not body:
         return None, (0, 0, 0), "no code found"

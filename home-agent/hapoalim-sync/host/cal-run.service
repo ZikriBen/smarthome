@@ -1,0 +1,35 @@
+[Unit]
+Description=Cal (visaCal) card sync on demand (one approved request, one login, card_transactions)
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+# Secrets: sealed with systemd-creds by Ben (cal-setup); decrypted only for this unit into $CREDENTIALS_DIRECTORY.
+LoadCredentialEncrypted=cal.username:/etc/credstore.encrypted/cal.username
+LoadCredentialEncrypted=cal.password:/etc/credstore.encrypted/cal.password
+UMask=0077
+PrivateTmp=yes
+ProtectHome=read-only
+# ProtectHome=read-only: allow data/cal (out/ + archive/) and the OTP inbox.
+ReadWritePaths=/home/ben/smarthome/data/cal /home/ben/smarthome/home-agent/hermes/otp
+NoNewPrivileges=yes
+Environment=CAL_SPOOL_DIR=/var/lib/cal-spool
+Environment=CAL_STATE_DIR=/var/lib/cal
+Environment=CAL_OUT_DIR=/home/ben/smarthome/data/cal/out
+Environment=CAL_ARCHIVE_DIR=/home/ben/smarthome/data/cal/archive
+Environment=CAL_OUT_UID=1000
+Environment=CAL_OUT_GID=1000
+Environment=CAL_INBOX_DB=/home/ben/smarthome/home-agent/hermes/otp/codes.sqlite
+Environment=CAL_OTP_TIMEOUT=120
+Environment=CAL_MONTHS=3
+Environment=CAL_RETENTION_DAYS=7
+Environment=CAL_REPULL_DAYS=10
+# Daily login cap. Override with a drop-in, e.g. /etc/systemd/system/cal-run.service.d/limits.conf:
+#   [Service]
+#   Environment=CAL_MAX_RUNS_PER_DAY=3
+Environment=CAL_MAX_RUNS_PER_DAY=2
+EnvironmentFile=/etc/cal/image.env
+ExecStart=/usr/local/lib/hapoalim/cal-runner.py
+TimeoutStartSec=20min
+Nice=10

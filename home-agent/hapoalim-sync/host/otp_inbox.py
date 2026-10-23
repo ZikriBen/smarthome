@@ -14,9 +14,9 @@ from pathlib import Path
 
 TTL = 600
 MAX_ROWS = 5
-SITES = {"super_hist": re.compile(r"\d{6}"), "hapoalim": re.compile(r"\d{4,8}")}
+SITES = {"super_hist": re.compile(r"\d{6}"), "hapoalim": re.compile(r"\d{4,8}"), "cal": re.compile(r"\d{4,8}")}
 # Per-site shorter lifetimes. Bank codes live 3 minutes here whatever the bank's own validity is.
-SITE_TTL = {"hapoalim": 180}
+SITE_TTL = {"hapoalim": 180, "cal": 180}
 SCHEMA = ("CREATE TABLE IF NOT EXISTS otp_codes (id INTEGER PRIMARY KEY AUTOINCREMENT, site TEXT NOT NULL, "
           "code TEXT NOT NULL, received REAL NOT NULL, ref TEXT UNIQUE)")
 

@@ -89,6 +89,8 @@ services:
       HAPOALIM_OUT_DIR: /hapoalim-out
       HAPOALIM_ARCHIVE_DIR: /hapoalim-archive
       HAPOALIM_REPULL_DAYS: ${HAPOALIM_REPULL_DAYS:-3}
+      CAL_SPOOL_DIR: /cal-spool
+      CAL_ARCHIVE_DIR: /cal-archive
     # Uptime Kuma publishes its read-only metrics endpoint on the host. This
     # hostname is available only to the Command Center, never to Hermes.
     extra_hosts:
@@ -111,6 +113,10 @@ services:
       - /var/lib/hapoalim-spool:/hapoalim-spool
       - /home/ben/smarthome/data/hapoalim/out:/hapoalim-out:ro
       - /home/ben/smarthome/data/hapoalim/archive:/hapoalim-archive:ro
+      # Cal (visaCal) credit cards (hapoalim-sync/host/setup-cal-host.sh): approved-run spool + the monthly
+      # card archive (read-only). Without them the Cal tools stay inert (no_archive / runner never fires).
+      - /var/lib/cal-spool:/cal-spool
+      - /home/ben/smarthome/data/cal/archive:/cal-archive:ro
       # This is the sole assistant-writable filesystem area. It is disposable
       # and deliberately not mounted into Hermes itself.
       - ./workspace:/workspace

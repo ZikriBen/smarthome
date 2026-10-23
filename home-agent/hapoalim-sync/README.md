@@ -220,3 +220,104 @@ python3 test/archive_test.py -v
   must not answer "no transactions" for days the archive does not have.
 * `hapoalim-archive-repair [--dry-run]` (root, once at deploy, with Ben's approval): backup tar.gz (0600) to
   `data/hapoalim/archive-backups/`, re-key, re-add rows from out/ CSVs, drop bogus coverage.
+
+## Cal (visaCal) credit cards — option B
+
+Same image, separate everything else. `cal-auto.mjs` (entrypoint override `--entrypoint dumb-init IMAGE -- node
+/app/cal-auto.mjs`) → `lib/cal/session.mjs` (ONE login, library `visaCal` scraper) → its own action registry
+(`lib/cal/actions/`, only `card_transactions`) → line protocol identical to the bank's (`username`/`password`
+instead of `userCode`). Root runner `host/cal-runner.py` subclasses the Hapoalim runner (hooks: `NAME`,
+`CSV_PATTERN`, `STOP`, `FIELDS`, `OTP_SITE`, `credential_payload`, `plan_actions`; defaults = Hapoalim behaviour).
+
+| | Hapoalim | Cal |
+|---|---|---|
+| unit | `hapoalim-run.service/.path` | `cal-run.service/.path` (same hardening) |
+| secrets | `hapoalim-setup` → `hapoalim.user_code`, `hapoalim.password` | `cal-setup` → `cal.username`, `cal.password` |
+| spool / state | `/var/lib/hapoalim-spool`, `/var/lib/hapoalim` | `/var/lib/cal-spool`, `/var/lib/cal` |
+| data | `~/smarthome/data/hapoalim/{out,archive}` | `~/smarthome/data/cal/{out,archive}` (dirs 0700, files 0600) |
+| image pin | `/etc/hapoalim/image.env` | `/etc/cal/image.env` (`CAL_SYNC_IMAGE`, own build `6.9.0-cal1`) |
+| daily limit | `HAPOALIM_MAX_RUNS_PER_DAY` 3 | `CAL_MAX_RUNS_PER_DAY` **2** (drop-in `cal-run.service.d/limits.conf`) |
+| OTP site | `hapoalim` | `cal` (only if Cal shows a code form; `CAL_OTP_ENTRY=0` → `OTP_REQUIRED` stop) |
+| approval | `hapoalim_sync` | `card_sync` |
+
+**Egress.** Browser: `*.cal-online.co.il` only (+ `CAL_EXTRA_HOSTS`); everything else is aborted and its hostname
+recorded (`blockedHosts`). Node side: the library calls the Cal API with Node's global `fetch` (not from the page),
+so `lib/cal/egress.mjs` wraps `globalThis.fetch` for the session: only `https://api.cal-online.co.il`
+(`apiHosts` / `blockedApiHosts` in the report); a 429 becomes the library's "Automation detected" error → walk
+`stopReason: blocked` → `CAL_BLOCKED…`, stop for today (rows already returned are still archived). An HTML answer
+from the API host (Akamai "Request Rejected") is treated the same way, with only the status recorded (`statuses.html`)
+and the body never read.
+
+**API transport (`CAL_API_TRANSPORT`, default `page`).** `page` is a port of upstream PR
+eshaham/israeli-bank-scrapers#1193 (open, head `82d17cf`; `src/scrapers/visa-cal.ts` `fetchCalApi`). It sends
+Frames / getClearanceRequests / getCardTransactionsDetails from inside the logged-in dashboard page, so they go out
+the way Cal's own web app sends them:
+- the real Chromium TLS/HTTP2 fingerprint;
+- the session and Akamai sensor cookies (`credentials: 'include'`);
+- the browser-set `Origin`/`Referer`/`Sec-Fetch-*`, instead of Node's undici with spoofed headers.
+
+That traffic goes through the browser allowlist above (`*.cal-online.co.il` already covers `api.cal-online.co.il`).
+If the page gets no HTTP response at all (CORS / destroyed context), it retries that request once from Node, through
+the Node guard. Any HTTP answer from the page is final: 429/HTML → blocked, other non-2xx → the walk stops.
+
+`node` is the library's 6.9.0 path: Node `fetch` from the same container and IP. Switch back with a root drop-in:
+`[Service]` and `Environment=CAL_API_TRANSPORT=node` in `/etc/systemd/system/cal-run.service.d/limits.conf`, then
+`daemon-reload`. No rebuild is needed; the patched library carries both paths.
+Hosts the library is known to touch: `www.cal-online.co.il` (login page), `connect.cal-online.co.il` (login iframe
++ SSO), `digital-web.cal-online.co.il` (dashboard; also the API `Origin`), `api.cal-online.co.il` (Frames,
+transactionsDetails, approvals/getClearanceRequests).
+
+**Login.** One attempt. Invalid password = the iframe shows `div.general-error > div` = "שם המשתמש או הסיסמה שהוזנו
+שגויים" → `INVALID_PASSWORD` (stop). Change-password form → `CHANGE_PASSWORD`. Captcha markers → `CAPTCHA_OR_BLOCK`.
+Anything else after submit → `LOGIN_UNKNOWN` (stop); before submit → `LOGIN_PAGE_FAILED` (no stop).
+`CAL_NAV_TIMEOUT_MS` (60 s) bounds the post-submit navigation wait. OTP (library has no hook for visaCal): a
+watcher looks for a code form in the `connect.*` iframe after submit (one code input or 4–8 single-char boxes,
+username field gone), emits `otp_needed` once, types the code once, clicks once, waits
+`CAL_OTP_RESULT_TIMEOUT_MS` (45 s) → `OTP_REJECTED` / `OTP_NO_RESULT` / `OTP_FORM_CHANGED` / `OTP_TIMEOUT`, all
+stop-for-today. The real Cal code form is UNVERIFIED (the fake mirrors a plausible one).
+
+**Months + walk.** Patch `patches/israeli-bank-scrapers+6.9.0-visa-cal.patch` (see patches/README.md): opt-in
+`calWalk` = one `getCardTransactionsDetails` request per billing month, newest → oldest, cards sequential, stop
+at the first failing month (no throw), per-month `{rows, capped}` metadata. Default request = the last
+`CAL_MONTHS` (3) statements + the next one; max 18 months back (library default lookback). The runner narrows it
+to the months the archive still needs (`plan_gaps`): COVERED (no login, not counted) when every month is
+complete + final for every card Cal last listed.
+
+**Date semantics.** File month = **billing (statement) month** = the month the walk asked for. `purchase_date` =
+original purchase day (`trnPurchaseDate`; the library's own `date` is shifted by n−1 months for installment n,
+so it is NOT used). `charge_date` = debit day (`debCrdDate`). Pending rows (`getClearanceRequests`) have no
+billing month/charge date → `cal-card-<last4>-pending.csv`, replaced each sync. `amount` keeps the library sign
+(negative = charge). A month is `final` only after month end + `CAL_REPULL_DAYS` (10); until then it is replaced by
+each new snapshot; a final month is merged by key (union). `card_read_range(by="charge")` filters on
+charge_date in the billing months spanning the range; `by="purchase"` scans up to 2 later statements.
+
+**Archive** `host/cal_archive.py` (byte-identical copy in `command-center/command_center/cal_archive.py`): see
+its docstring for the `c1:` key (last4 | billing_month | identifier | purchase_date | amount | original_amount |
+currency | description | installment n/m, + occurrence) and the re-key-tolerant reader.
+
+### Cal tests (box, synthetic, no network)
+
+```bash
+cd home-agent/hapoalim-sync
+node --test test/cal-units.test.mjs
+CHROMIUM_PATH=/usr/bin/google-chrome node --test --test-concurrency=1 test/cal-e2e.test.mjs
+python3 test/cal_runner_test.py -v && python3 test/cal_archive_test.py -v && python3 test/cal_systemd_unit_test.py -v
+# CC: python3 tests/test_cal.py -v && python3 tests/test_otp_relay_cal.py -v  (from home-agent/command-center)
+```
+
+### Cal risks / unverified
+
+* Cal's login flow and any code form are taken from library source only (no live run): the OTP form detector is a
+  guess; `CAL_OTP_ENTRY=0` makes any prompt a clean `OTP_REQUIRED` stop instead.
+* No known per-month row cap; `CAL_MONTH_CAP` (1000) only flags suspicious months as not complete.
+* Two cards with the same last-4 share archive files (key still differs by identifier).
+* Akamai bot protection on `api.cal-online.co.il` (upstream PR #1193, issue #1152): untested from a box. A block
+  shows up as `CAL_BLOCKED` (429 or HTML) and the run stops for the day. Default transport is `page` (#1193 port);
+  `CAL_API_TRANSPORT=node` is the 6.9.0 path. Neither has been tried against the live site.
+  Library fixes after 6.9.0 that are NOT in our pin: #1153 (bank- vs. Cal-issued frame/balance selection). It affects
+  only `balance`/`cardFrame`/`cardType`, which our archive doesn't use.
+* The browser allowlist is `*.cal-online.co.il` only. If Cal's dashboard starts loading code from another host (a CDN),
+  the SPA won't boot (`init` never appears, the same symptom as issue #1152) and `blockedHosts` names the host. Add it
+  via `CAL_EXTRA_HOSTS` after checking.
+* The library sends a constant `X-Site-Id`; if Cal rotates it, the walk fails with `stopReason: status` and nothing
+  is marked complete (no silent gap).

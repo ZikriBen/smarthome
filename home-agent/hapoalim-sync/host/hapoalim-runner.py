@@ -112,16 +112,17 @@ def atomic_write(path, data, mode=0o640, uid=None, gid=None):
         raise
 
 
-def cleanup_old_csv(out_dir, retention_days, now=None):
-    """Delete hapoalim-*.csv older than retention_days. Returns the number deleted. Never follows symlinks."""
+def cleanup_old_csv(out_dir, retention_days, now=None, pattern=None):
+    """Delete hapoalim-*.csv (or `pattern`) older than retention_days. Returns the number deleted. Never follows symlinks."""
     now = time.time() if now is None else now
+    pattern = pattern or CSV_RE
     removed = 0
     try:
         entries = list(os.scandir(out_dir))
     except OSError:
         return 0
     for entry in entries:
-        if not CSV_RE.match(entry.name) or not entry.is_file(follow_symlinks=False):
+        if not pattern.match(entry.name) or not entry.is_file(follow_symlinks=False):
             continue
         try:
             if now - entry.stat(follow_symlinks=False).st_mtime > retention_days * 86400:
@@ -133,6 +134,13 @@ def cleanup_old_csv(out_dir, retention_days, now=None):
 
 
 class Runner:
+    # Subclass hooks (host/cal-runner.py). The defaults ARE the Hapoalim behaviour.
+    NAME = "hapoalim"                      # container name prefix + out/ CSV prefix
+    CSV_PATTERN = CSV_RE                   # retention cleanup
+    STOP = STOP_STATUSES
+    FIELDS = REPORT_FIELDS
+    OTP_SITE = None                        # None: otp_take.py default site (hapoalim)
+
     def __init__(self, cfg, clock=time.time):
         self.cfg = cfg
         self.clock = clock
@@ -218,7 +226,7 @@ class Runner:
         if self.cfg.test_exec:
             return list(self.cfg.test_exec)
         uid, gid = self.cfg.container_uid, self.cfg.container_gid
-        argv = ["docker", "run", "--rm", "-i", "--name", f"hapoalim-sync-{run_id}",
+        argv = ["docker", "run", "--rm", "-i", "--name", f"{self.NAME}-sync-{run_id}",
                 "--read-only", "--cap-drop", "ALL", "--security-opt", "no-new-privileges",
                 "--pids-limit", "512", "--memory", "2g", "--shm-size", "256m",
                 "--tmpfs", "/tmp:rw,nosuid,nodev,size=512m",
@@ -230,6 +238,9 @@ class Runner:
         if self.cfg.extra_hosts:
             argv += ["-e", f"HAPOALIM_EXTRA_HOSTS={self.cfg.extra_hosts}"]
         return argv + [self.cfg.image]
+
+    def credential_payload(self, creds):
+        return {"userCode": creds[0], "password": creds[1]}
 
     def read_credentials(self):
         if not self.cfg.creds_dir:
@@ -244,6 +255,8 @@ class Runner:
     def wait_for_code(self, since):
         """One hapoalim code from the shared inbox, as the inbox owner. {"code"} | {"error"}."""
         argv = [sys.executable, str(HERE / "otp_take.py"), str(self.cfg.inbox_db), repr(since), str(self.cfg.otp_timeout)]
+        if self.OTP_SITE:
+            argv.append(self.OTP_SITE)
         kwargs = {}
         if os.geteuid() == 0:
             try:
@@ -278,7 +291,7 @@ class Runner:
 
         threading.Thread(target=pump, daemon=True).start()
         otp_wait = None
-        payload = {"userCode": creds[0], "password": creds[1]}
+        payload = self.credential_payload(creds)
         if actions:
             payload["actions"] = actions
         try:
@@ -340,7 +353,7 @@ class Runner:
                 proc.wait(timeout=20)
             except subprocess.TimeoutExpired:
                 if not self.cfg.test_exec:
-                    subprocess.run(["docker", "kill", f"hapoalim-sync-{run_id}"], capture_output=True, timeout=30)
+                    subprocess.run(["docker", "kill", f"{self.NAME}-sync-{run_id}"], capture_output=True, timeout=30)
                 proc.kill()
                 proc.wait(timeout=10)
         if report is None:
@@ -360,12 +373,13 @@ class Runner:
         for i, f in enumerate(files):
             kind = f.get("kind") or "csv"
             hint = re.sub(r"[^a-z0-9_]+", "", str(f.get("nameHint") or kind).lower())[:40] or kind
-            name = f"hapoalim-{stamp}-{hint}.csv" if len(files) == 1 else f"hapoalim-{stamp}-{hint}-{i+1}.csv"
-            if not CSV_RE.match(name.replace(hint, "x") if False else name) and not name.endswith(".csv"):
-                name = f"hapoalim-{stamp}-{i+1}.csv"
+            pfx = self.NAME
+            name = f"{pfx}-{stamp}-{hint}.csv" if len(files) == 1 else f"{pfx}-{stamp}-{hint}-{i+1}.csv"
+            if not self.CSV_PATTERN.match(name.replace(hint, "x") if False else name) and not name.endswith(".csv"):
+                name = f"{pfx}-{stamp}-{i+1}.csv"
             # Accept our own naming even when hint has underscores (CSV_RE is for retention cleanup).
             if (out / name).exists():
-                name = f"hapoalim-{stamp}-{hint}-{os.urandom(2).hex()}.csv"
+                name = f"{pfx}-{stamp}-{hint}-{os.urandom(2).hex()}.csv"
             atomic_write(out / name, f["body"], 0o600, self.cfg.out_uid, self.cfg.out_gid)
             written.append({"name": name, "path": str(out / name), "kind": kind, "nameHint": hint,
                             "rows": max(f["body"].count("\n") - 1, 0)})
@@ -472,7 +486,7 @@ class Runner:
             self.publish_runs()
         except OSError:
             pass
-        removed = cleanup_old_csv(cfg.out_dir, cfg.retention_days, self.clock())
+        removed = cleanup_old_csv(cfg.out_dir, cfg.retention_days, self.clock(), self.CSV_PATTERN)
         lock = open(cfg.state_dir / "run.lock", "a+")
         try:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -516,18 +530,7 @@ class Runner:
         creds = self.read_credentials()
         if creds is None:
             return self.finish(request, {"status": "NOT_CONFIGURED", "stage": "preflight"}), 2
-        actions = list(request.get("actions") or [{"name": "checking_transactions"}])
-        fetch_from = request.get("_fetch_from")
-        fetch_to = request.get("_fetch_to")
-        if fetch_from and fetch_to:
-            new_actions = []
-            for a in actions:
-                a = dict(a) if isinstance(a, dict) else {"name": "checking_transactions"}
-                if a.get("name") == "checking_transactions":
-                    a["from"] = fetch_from
-                    a["to"] = fetch_to
-                new_actions.append(a)
-            actions = new_actions
+        actions = self.plan_actions(request)
         atomic_write(self.runs_file(), f"{self.runs_today() + 1}\n", 0o600)   # counted BEFORE the bank
         try:
             self.publish_runs()
@@ -562,10 +565,26 @@ class Runner:
         status = self.finish(request, report, extra)
         return status, 0 if status["status"] == "DONE" else 1
 
+    def plan_actions(self, request):
+        """Actions sent to the container: the request's (or the default), narrowed to the gap plan."""
+        actions = list(request.get("actions") or [{"name": "checking_transactions"}])
+        fetch_from = request.get("_fetch_from")
+        fetch_to = request.get("_fetch_to")
+        if fetch_from and fetch_to:
+            new_actions = []
+            for a in actions:
+                a = dict(a) if isinstance(a, dict) else {"name": "checking_transactions"}
+                if a.get("name") == "checking_transactions":
+                    a["from"] = fetch_from
+                    a["to"] = fetch_to
+                new_actions.append(a)
+            actions = new_actions
+        return actions
+
     def finish(self, request, report, extra=None, publish_last=True):
-        status = {k: report[k] for k in REPORT_FIELDS if k in report}
+        status = {k: report[k] for k in self.FIELDS if k in report}
         status["status"] = str(status.get("status") or "INTERNAL")
-        if status["status"] in STOP_STATUSES or report.get("stopForToday") is True:
+        if status["status"] in self.STOP or report.get("stopForToday") is True:
             status["stopForToday"] = True
             try:
                 self.write_stop(status["status"])
