@@ -23,9 +23,14 @@ def load_cal(spool, archive_dir):
     sys.modules["cal_archive"] = amod
     spec.loader.exec_module(amod)
     sys.modules["approvals"] = approvals
+    spec2 = importlib.util.spec_from_file_location("card_accounts", HERE / "command_center" / "card_accounts.py")
+    cmod = importlib.util.module_from_spec(spec2)
+    sys.modules["card_accounts"] = cmod
+    spec2.loader.exec_module(cmod)
     source = (HERE / "command_center" / "cal.py").read_text()
     source = source.replace("from . import approvals", "import approvals")
     source = source.replace("from . import cal_archive as archive", "import cal_archive as archive")
+    source = source.replace("from . import card_accounts as accounts", "import card_accounts as accounts")
     module = types.ModuleType("cal_under_test")
     exec(compile(source, "cal.py", "exec"), module.__dict__)
     module.SPOOL_DIR = spool

@@ -29,9 +29,13 @@ class CalUnitTests(unittest.TestCase):
         for k in ("Type", "UMask", "PrivateTmp", "ProtectHome", "NoNewPrivileges"):
             self.assertEqual(cal.get(k), hap.get(k), k)
         self.assertEqual(cal["ExecStart"], ["/usr/local/lib/hapoalim/cal-runner.py"])
-        self.assertEqual(sorted(cal["LoadCredentialEncrypted"]), [
-            "cal.password:/etc/credstore.encrypted/cal.password",
-            "cal.username:/etc/credstore.encrypted/cal.username"])
+        # Multi-account: credentials come from the generated creds.conf drop-in (card_accounts.credential_dropin).
+        self.assertNotIn("LoadCredentialEncrypted", cal)
+        self.assertIn("creds.conf", UNIT.read_text())
+        env0 = dict(e.split("=", 1) for e in cal["Environment"])
+        self.assertEqual(env0["CARD_ACCOUNTS"], "/etc/card-accounts.json")
+        self.assertEqual(env0["CARD_BANK_LOCK"], "/var/lib/hapoalim/run.lock")
+        self.assertEqual(env0["CARD_MAX_RUNS_TOTAL"], "0")
         rwp = " ".join(cal["ReadWritePaths"])
         self.assertIn("/home/ben/smarthome/data/cal", rwp)
         self.assertIn("/home/ben/smarthome/home-agent/hermes/otp", rwp)
@@ -48,15 +52,18 @@ class CalUnitTests(unittest.TestCase):
 
     def test_setup_scripts(self):
         s = SETUP.read_text()
-        for needle in ("cal-run.service.d/paths.conf", "ReadWritePaths=$DATA_DIR $INBOX_DIR", "cal_archive.py",
+        for needle in ("card-migrate.py --apply", "card_accounts.py", "creds.conf", "ensure-default", "card-setup",
+                       "cal-run.service.d/paths.conf", "ReadWritePaths=$DATA_DIR $INBOX_DIR", "cal_archive.py",
                        "cal-runner.py", "calWalkCardData", "CAL_SYNC_IMAGE", "/var/lib/cal-spool"):
             self.assertIn(needle, s)
         self.assertNotIn("HAPOALIM_SYNC_IMAGE=", s)        # never re-pins the Hapoalim image
-        c = CREDS.read_text()
+        self.assertIn("exec /usr/local/sbin/card-setup cal-main --provider cal", CREDS.read_text())
+        c = (HERE / "host" / "card-setup").read_text()
         self.assertIn("read -r -s", c)
+        self.assertIn('decrypt --name="$old"', c)
         self.assertIn("systemd-creds encrypt", c)
         self.assertNotRegex(c, r"\becho\s+\"?\$value")
-        for p in (SETUP, CREDS):
+        for p in (SETUP, CREDS, HERE / "host" / "card-setup"):
             subprocess.run(["bash", "-n", str(p)], check=True)
 
     def test_systemd_analyze_verify(self):

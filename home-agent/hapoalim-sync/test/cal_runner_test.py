@@ -38,7 +38,10 @@ class CalRunnerTests(unittest.TestCase):
             "CAL_SPOOL_DIR": str(self.root / "spool"), "CAL_INBOX_DB": str(self.inbox),
             "CAL_OTP_TIMEOUT": "2", "CAL_RUN_DEADLINE": "60", "CREDENTIALS_DIRECTORY": str(self.root / "creds"),
             "CAL_OUT_UID": str(os.getuid()), "CAL_OUT_GID": str(os.getgid()),
+            "CARD_ACCOUNTS": str(self.root / "card-accounts.json"),
+            "CARD_BANK_LOCK": str(self.root / "hapoalim-state" / "run.lock"),
         }
+        (self.root / "hapoalim-state").mkdir()
 
     def tearDown(self):
         self.tmp.cleanup()
@@ -94,7 +97,7 @@ class CalRunnerTests(unittest.TestCase):
         self.assertEqual(oct((self.root / "out" / status["csv"]).stat().st_mode & 0o777), "0o600")
         self.assertNotIn("secretField", status)
         self.assertNotIn("detail", json.dumps(status.get("actions")))
-        arch = self.root / "archive"
+        arch = self.root / "archive" / "cards" / "cal-main"   # multi-account layout (default account)
         self.assertEqual(oct(arch.stat().st_mode & 0o777), "0o700")
         for c in ("1111", "2222"):
             for m in ("2026-02", "2026-03", "2026-04"):
@@ -103,7 +106,7 @@ class CalRunnerTests(unittest.TestCase):
                 self.assertEqual(oct(p.stat().st_mode & 0o777), "0o600")
         self.assertTrue((arch / "cal-card-1111-pending.csv").is_file())
         self.assertEqual(oct((arch / "_coverage.json").stat().st_mode & 0o777), "0o600")
-        runs = json.loads((self.root / "spool" / "runs-today.json").read_text())
+        runs = json.loads((self.root / "spool" / "accounts" / "cal-main" / "runs-today.json").read_text())
         self.assertEqual((runs["runs"], runs["max_runs"]), (1, 2))
         self.assertEqual(self.logins_count(), 1)
         # Second identical request: closed + final months -> COVERED without a login, not counted.
@@ -136,14 +139,14 @@ class CalRunnerTests(unittest.TestCase):
         self.queue(acts)
         status, _ = self.runner(CAL_MAX_RUNS_PER_DAY="3").run()
         self.assertEqual(status["status"], "DONE")
-        self.assertEqual(json.loads((self.root / "spool" / "runs-today.json").read_text())["max_runs"], 3)
+        self.assertEqual(json.loads((self.root / "spool" / "accounts" / "cal-main" / "runs-today.json").read_text())["max_runs"], 3)
 
     def test_auth_failure_stops_for_today(self):
         self.queue()
         status, code = self.runner("invalid").run()
         self.assertEqual(status["status"], "INVALID_PASSWORD")
         self.assertTrue(status["stopForToday"])
-        self.assertTrue((self.root / "state" / f"stop-{cr.base.today()}").is_file())
+        self.assertTrue((self.root / "state" / "accounts" / "cal-main" / f"stop-{cr.base.today()}").is_file())
         self.queue()
         status, _ = self.runner().run()
         self.assertEqual(status["status"], "STOPPED_TODAY")
@@ -170,7 +173,7 @@ class CalRunnerTests(unittest.TestCase):
         status, _ = self.runner("blocked").run()
         self.assertEqual(status["status"], "DONE")
         self.assertTrue(status["stopForToday"])
-        cov = cal_archive.load_coverage(self.root / "archive")
+        cov = cal_archive.load_coverage(self.root / "archive" / "cards" / "cal-main")
         self.assertIn("2026-04", cov["cards"]["1111"]["months"])
         self.assertNotIn("2026-03", cov["cards"]["1111"]["months"])
         self.assertTrue(any("stopped" in w for w in status["archiveWarnings"]))

@@ -1,5 +1,5 @@
 #!/bin/bash
-# One-time NUC setup for the Cal (visaCal) card sync. Run by BEN, as root (sudo), after he approved the deploy and
+# One-time NUC setup for the card sync (multi-account; provider cal = visaCal). Run by BEN, as root (sudo), after he approved the deploy and
 # after hapoalim-sync's setup-host.sh exists on this host (shared runner dir + OTP inbox). Idempotent. Creates no
 # secret (that is cal-setup) and never talks to Cal. Builds its OWN pinned image (CAL_SYNC_IMAGE), so the Hapoalim
 # unit keeps the image it already runs.
@@ -31,7 +31,11 @@ install -m 0755 -o root -g root "$HERE/cal-runner.py" /usr/local/lib/hapoalim/ca
 install -m 0644 -o root -g root "$HERE/cal_archive.py" /usr/local/lib/hapoalim/cal_archive.py
 install -m 0755 -o root -g root "$HERE/otp_take.py" /usr/local/lib/hapoalim/otp_take.py
 install -m 0644 -o root -g root "$HERE/otp_inbox.py" /usr/local/lib/hapoalim/otp_inbox.py
+install -m 0644 -o root -g root "$HERE/card_accounts.py" /usr/local/lib/hapoalim/card_accounts.py
+install -m 0755 -o root -g root "$HERE/card-migrate.py" /usr/local/lib/hapoalim/card-migrate.py
+install -m 0755 -o root -g root "$HERE/card-setup" /usr/local/sbin/card-setup
 install -m 0755 -o root -g root "$HERE/cal-setup" /usr/local/sbin/cal-setup
+ln -sfn /usr/local/lib/hapoalim/card-migrate.py /usr/local/sbin/card-migrate
 
 docker build --pull -t "$TAG" "$HERE/.."
 image_id=$(docker image inspect --format '{{.Id}}' "$TAG")
@@ -40,6 +44,17 @@ docker run --rm --network none --entrypoint node "$image_id" -e \
   || { echo "image is NOT patched for Cal" >&2; exit 1; }
 printf 'CAL_SYNC_IMAGE=%s\n' "$image_id" >/etc/cal/image.env
 chmod 0644 /etc/cal/image.env
+
+# Multi-account: stop the trigger, migrate the single-account layout to the cal-main namespace (idempotent,
+# lossless, manifest + sha256 in /var/lib/cal/migrations/), registry (cal-main if none), mirror, creds drop-in.
+systemctl stop cal-run.path 2>/dev/null || true
+CAL_ARCHIVE_DIR="$ARCHIVE_DIR" /usr/local/lib/hapoalim/card-migrate.py --apply
+python3 /usr/local/lib/hapoalim/card_accounts.py --registry /etc/card-accounts.json ensure-default
+chmod 0644 /etc/card-accounts.json
+python3 /usr/local/lib/hapoalim/card_accounts.py --registry /etc/card-accounts.json mirror /var/lib/cal-spool/accounts.json
+install -d -m 0755 /etc/systemd/system/cal-run.service.d
+python3 /usr/local/lib/hapoalim/card_accounts.py --registry /etc/card-accounts.json dropin /etc/credstore.encrypted \
+  /etc/systemd/system/cal-run.service.d/creds.conf
 
 install -m 0644 "$HERE/cal-run.service" "$HERE/cal-run.path" /etc/systemd/system/
 install -d -m 0755 /etc/systemd/system/cal-run.service.d
@@ -51,6 +66,8 @@ PATHS_EOF
 chmod 0644 /etc/systemd/system/cal-run.service.d/paths.conf
 systemctl daemon-reload
 systemctl enable --now cal-run.path
-echo "OK. Next: sudo cal-setup  (type the Cal username + password), then (as ben):"
+echo "OK. cal-main keeps its existing secrets (legacy cal.* names). New account: sudo card-setup cal-2 --provider cal"
+echo "(optional, re-seal cal-main under the new names: sudo card-setup cal-main --from-legacy). Then (as ben):"
 echo "  cd ~/smarthome/home-agent && docker compose up -d --build command-center command-center-mcp && docker compose restart hermes"
-echo "Daily limit: CAL_MAX_RUNS_PER_DAY=2 in the unit; override in /etc/systemd/system/cal-run.service.d/limits.conf."
+echo "Daily limit per account: CAL_MAX_RUNS_PER_DAY=2 (or max_runs_per_day in /etc/card-accounts.json);"
+echo "optional global cap: CARD_MAX_RUNS_TOTAL in /etc/systemd/system/cal-run.service.d/limits.conf."

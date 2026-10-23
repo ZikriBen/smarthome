@@ -1,29 +1,5 @@
 #!/bin/bash
-# Ben runs this HIMSELF, in his own terminal on the NUC (sudo). Not via Hermes, an agent, or a pasted command
-# with values in it. Values are read with echo off and piped (bash builtin printf: no argv, no env, no file)
-# straight into `systemd-creds encrypt`, sealed with the host key (+TPM2 when present) under
-# /etc/credstore.encrypted (root 0600). Only cal-run.service can decrypt them. Same pattern as hapoalim-setup.
+# Compat wrapper (pre-multi name). Ben runs it HIMSELF with sudo. Same as: sudo card-setup cal-main --provider cal
+# It now seals card-cal-main.username / card-cal-main.password (the runner prefers those over the legacy cal.*).
 set -euo pipefail
-[ "$(id -u)" = 0 ] || { echo "run with sudo" >&2; exit 1; }
-command -v systemd-creds >/dev/null || { echo "systemd-creds missing (systemd >= 250)" >&2; exit 1; }
-set +o history 2>/dev/null || true
-umask 077
-STORE=/etc/credstore.encrypted
-install -d -m 0700 -o root -g root "$STORE"
-
-seal() { systemd-creds encrypt --name="$1" - "$STORE/$1" >/dev/null && chmod 0600 "$STORE/$1"; }
-
-trap 'stty echo 2>/dev/null || true; unset value' EXIT INT TERM
-IFS= read -r -s -p 'Cal (cal-online.co.il) username (hidden): ' value; echo
-[ -n "$value" ] || { echo "empty" >&2; exit 1; }
-printf '%s' "$value" | seal cal.username
-IFS= read -r -s -p 'Cal password (hidden): ' value; echo
-[ -n "$value" ] || { echo "empty" >&2; exit 1; }
-printf '%s' "$value" | seal cal.password
-unset value
-
-for name in cal.username cal.password; do
-  n=$(systemd-creds decrypt --name="$name" "$STORE/$name" - | wc -c)
-  echo "$name: sealed, $n bytes"
-done
-echo "OK. Secrets are only decryptable by cal-run.service."
+exec /usr/local/sbin/card-setup cal-main --provider cal "$@"

@@ -4,9 +4,12 @@ import json
 import sys
 
 behaviour = sys.argv[1] if len(sys.argv) > 1 else "ok"
-if len(sys.argv) > 2:
-    open(sys.argv[2], "a").write("1\n")
 creds = json.loads(sys.stdin.readline())
+if len(sys.argv) > 2:
+    # One line per login; the synthetic username tells the multi-account tests whose credentials were used.
+    open(sys.argv[2], "a").write(f"1 {creds.get('username', '')}\n")
+# Synthetic second account (multi-account tests): different cards, 1111 shared on purpose (ambiguous last-4).
+CARDS = ("3333", "1111") if creds.get("username") == "cal2user" else ("1111", "2222")
 assert set(creds) >= {"username", "password"} and "userCode" not in creds
 actions = creds.get("actions") or [{"name": "card_transactions"}]
 a = actions[0]
@@ -48,7 +51,7 @@ stop = None
 if behaviour == "blocked":
     stop = months[1] if len(months) > 1 else None
 retr, rows = {}, []
-for card in ("1111", "2222"):
+for card in CARDS:
     got = months if stop is None else months[:months.index(stop)]
     retr[card] = {"known": True, "months": [{"month": m, "rows": 2, "capped": False} for m in got],
                   "complete": stop is None, "stopMonth": stop, "stopReason": "blocked" if stop else None,
@@ -61,7 +64,7 @@ for card in ("1111", "2222"):
     if card == "1111":
         rows.append({"card": card, "billing_month": None, "purchase_date": "2026-10-20", "charge_date": None,
                      "description": "pending synthetic", "amount": -3, "currency": "ILS", "status": "pending"})
-payload = {"from_month": from_m, "to_month": to_m, "months_requested": months, "cards": ["1111", "2222"],
+payload = {"from_month": from_m, "to_month": to_m, "months_requested": months, "cards": list(CARDS),
            "retrieval": retr, "rows": rows}
 report = {"site": "cal", "status": "DONE", "stage": "done", "stopForToday": behaviour == "blocked",
           "blocked": behaviour == "blocked", "otpRequested": otp_req, "otpDelivered": otp_del, "cardCount": 2,

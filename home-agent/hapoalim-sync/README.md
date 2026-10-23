@@ -321,3 +321,42 @@ python3 test/cal_runner_test.py -v && python3 test/cal_archive_test.py -v && pyt
   via `CAL_EXTRA_HOSTS` after checking.
 * The library sends a constant `X-Site-Id`; if Cal rotates it, the walk fails with `stopReason: status` and nothing
   is marked complete (no silent gap).
+
+## Multiple card accounts (cal-main, cal-2, …) — one contract
+
+Same six `card_*` tools; each takes an optional `account` (`^[a-z0-9][a-z0-9-]{1,23}$`). Empty = `cal-main` (the
+pre-multi account): calls without `account` return the old output unchanged (new keys only: `account`,
+`accounts`, `provider`, `label`, `enabled`, `supported`, `busy_with_account`, `migration_pending`).
+`card_status` / `card_coverage` / `card_list_archive` without `account` = cal-main at the top level plus
+`accounts: {id: …}` for every account. `card_read_month` / `card_read_range`: `account` and/or `card` (last-4);
+last-4 alone resolves across accounts, `AMBIGUOUS_CARD` (+ candidate `accounts`) if two have it. `card_sync`
+proposes ONE account (default cal-main), approval card every time.
+
+| what | where |
+|---|---|
+| registry (root, not secret) | `/etc/card-accounts.json` `{id, provider, label, enabled, max_runs_per_day}` + `max_runs_total`; missing = cal-main only |
+| mirror for the CC | `/var/lib/cal-spool/accounts.json` (written by the runner / card-setup / setup-cal-host.sh) |
+| provider adapters | `host/card_accounts.py` `PROVIDERS` (login fields, OTP site, egress hosts, archive prefix, entry). Only `cal`; anything else → `NOT_SUPPORTED` ("not supported yet") |
+| credentials | `/etc/credstore.encrypted/card-<id>.<field>`; cal-main also reads the legacy `cal.username` / `cal.password` |
+| unit credentials | generated drop-in `cal-run.service.d/creds.conf` (only files that exist) |
+| archive | `data/cal/archive/cards/<id>/cal-card-<last4>-YYYY-MM.csv` + `_coverage.json` (same file format) |
+| state | `/var/lib/cal/accounts/<id>/stop-*`, `runs-*` |
+| spool | `/var/lib/cal-spool/accounts/<id>/last-status.json`, `runs-today.json`; `runs-total.json`; `status-<run>.json` |
+
+Budget: per account `max_runs_per_day` (default `CAL_MAX_RUNS_PER_DAY` = 2); optional global cap
+`CARD_MAX_RUNS_TOTAL` (unit env) / `max_runs_total` (registry), lower wins, 0 = off. COVERED never counts.
+Stop-for-today (auth/OTP failure, CAL_BLOCKED, …) is per account. One login at a time: one spool request for all
+accounts, the card lock `/var/lib/cal/run.lock` AND the Hapoalim runner's lock `/var/lib/hapoalim/run.lock`
+(`CARD_BANK_LOCK`), both non-blocking → `LOCKED` (either side). Service name stays `cal-run.service/.path`.
+
+Setup: `sudo card-setup <account> [--provider cal] [--label TEXT] [--max-runs N]` asks only that provider's login
+fields. `sudo cal-setup` = `card-setup cal-main --provider cal`. `sudo card-setup cal-main --from-legacy`
+optionally re-seals the old `cal.*` under the new names (decrypt→encrypt in one pipe, verified, legacy kept).
+
+Migration: `sudo card-migrate --dry-run | --apply | --rollback-dry-run | --rollback` (idempotent, same-fs renames,
+sha256 before/after, manifest in `/var/lib/cal/migrations/`, conflict = nothing moves). `setup-cal-host.sh` runs
+`--apply`. While the old layout exists the runner refuses with `MIGRATION_PENDING` (no login) and the CC reads
+cal-main from the old layout. Rollback moves cal-main (including syncs made after the migration) back; other
+accounts stay in `archive/cards/<id>/` untouched.
+
+Tests: `python3 test/card_multi_test.py` (host) and `python3 tests/test_cal_multi.py` (CC).
