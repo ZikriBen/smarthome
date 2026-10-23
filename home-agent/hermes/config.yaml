@@ -84,6 +84,18 @@ mcp_servers:
         - hapoalim_status
         - hapoalim_sync
         - hapoalim_read_csv
+        # Bank Hapoalim archive (read-only, no bank login).
+        - hapoalim_read_month
+        - hapoalim_read_range
+        - hapoalim_coverage
+        - hapoalim_list_archive
+        # Cal (visaCal) credit cards: on-demand sync (approval card) + read-only archive.
+        - card_status
+        - card_sync
+        - card_read_month
+        - card_read_range
+        - card_list_archive
+        - card_coverage
 
 browser:
   # "off" = built-in browser_* tools on local Chromium (default auto-picks the Browser Use CLI,
