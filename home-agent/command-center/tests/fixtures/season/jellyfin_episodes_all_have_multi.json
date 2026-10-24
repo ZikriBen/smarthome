@@ -1,0 +1,25 @@
+{
+ "Items": [
+  {
+   "Id": "e1",
+   "Name": "Episode 1",
+   "IndexNumber": 1,
+   "IndexNumberEnd": null,
+   "ParentIndexNumber": 1,
+   "LocationType": "FileSystem",
+   "RunTimeTicks": 27000000000,
+   "PremiereDate": "2017-05-01T00:00:00.0000000Z"
+  },
+  {
+   "Id": "e2",
+   "Name": "Episode 2",
+   "IndexNumber": 2,
+   "IndexNumberEnd": 3,
+   "ParentIndexNumber": 1,
+   "LocationType": "FileSystem",
+   "RunTimeTicks": 27000000000,
+   "PremiereDate": "2017-05-02T00:00:00.0000000Z"
+  }
+ ],
+ "TotalRecordCount": 2
+}

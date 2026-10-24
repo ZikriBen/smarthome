@@ -1,0 +1,228 @@
+{
+ "full_3_pages": {
+  "query": "בית הנייר עונה 1",
+  "pages": [
+   {
+    "query": "בית הנייר עונה 1",
+    "message_id": 7001,
+    "total_results": null,
+    "page": 1,
+    "total_pages": 3,
+    "items": [
+     {
+      "title": "בית הנייר עונה 1 פרק 1 720p WEB-DL זירה מדיה",
+      "size": "520 MB",
+      "callback_data": "dl_621c2e130e3adecc9d3f6d57"
+     },
+     {
+      "title": "בית הנייר עונה 1 פרק 1 1080p זירה מדיה",
+      "size": "1.40 GB",
+      "callback_data": "dl_4fcb34ed4ac3112250461419"
+     },
+     {
+      "title": "בית הנייר עונה 1 פרק 2 720p זירה מדיה",
+      "size": "505 MB",
+      "callback_data": "dl_bc7fb71027cb739c204e1b3c"
+     },
+     {
+      "title": "בית הנייר עונה 1 פרק 2 480p",
+      "size": "210 MB",
+      "callback_data": "dl_f15f6dd0fb1ed11f876c177b"
+     },
+     {
+      "title": "בית הנייר קוריאה עונה 1 פרק 3 720p",
+      "size": "600 MB",
+      "callback_data": "dl_4454953c9318727a4df91acc"
+     },
+     {
+      "title": "בית הנייר עונה 1 פרק 3 720p זירה מדיה",
+      "size": "530 MB",
+      "callback_data": "dl_d35bc995dd466bf4d273ddd8"
+     },
+     {
+      "title": "בית הנייר עונה 1 פרק 3 720p נריה סרטים",
+      "size": "515 MB",
+      "callback_data": "dl_747f463369197ce913387e9b"
+     },
+     {
+      "title": "בית הנייר עונה 2 פרק 1 720p",
+      "size": "500 MB",
+      "callback_data": "dl_dde3bf1d84c9f26d2165f9ef"
+     },
+     {
+      "title": "בית הנייר עונה 1 פרק 20 720p",
+      "size": "500 MB",
+      "callback_data": "dl_725f4b60b6c937124c5c24cc"
+     },
+     {
+      "title": "בית הנייר עונה 1 מלאה 1080p",
+      "size": "14.2 GB",
+      "callback_data": "dl_4ee84a036ac9d95dcf58f56f"
+     }
+    ],
+    "navigation": [
+     {
+      "text": "עמוד 1/3",
+      "callback_data": "noop"
+     },
+     {
+      "text": "➡️",
+      "callback_data": "search#בית הנייר עונה 1#2"
+     }
+    ]
+   },
+   {
+    "query": "בית הנייר עונה 1",
+    "message_id": 7001,
+    "total_results": null,
+    "page": 2,
+    "total_pages": 3,
+    "items": [
+     {
+      "title": "בית הנייר עונה 1 פרק 4 720p זירה מדיה",
+      "size": "540 MB",
+      "callback_data": "dl_df71689394123bea9b8099e3"
+     },
+     {
+      "title": "בית הנייר עונה 1 פרק 4 720p",
+      "size": "35 MB",
+      "callback_data": "dl_8a60dc62b4778b207725418e"
+     },
+     {
+      "title": "בית הנייר עונה 1 פרק 5 1080p REMUX",
+      "size": "9.80 GB",
+      "callback_data": "dl_131e14f9197379cc3f2caf83"
+     },
+     {
+      "title": "בית הנייר עונה 1 פרק 6 720p מתורגם זירה מדיה",
+      "size": "560 MB",
+      "callback_data": "dl_51f9cefb09693613527b38af"
+     },
+     {
+      "title": "בית הנייר עונה 1 פרק 6 720p",
+      "size": "555 MB",
+      "callback_data": "dl_17470932c804d8a309c61af3"
+     },
+     {
+      "title": "בית הנייר ע1 פ7-8 720p זירה מדיה",
+      "size": "1.05 GB",
+      "callback_data": "dl_958c52468322e27e71799af3"
+     },
+     {
+      "title": "בית הנייר עונה 1 פרק 9 זירה מדיה",
+      "size": "480 MB",
+      "callback_data": "dl_f816f9736faaa2bca72358c5"
+     },
+     {
+      "title": "בית הנייר עונה 1 פרק 9",
+      "size": "90 MB",
+      "callback_data": "dl_4b5b35a41b4d6886a5d7fa49"
+     },
+     {
+      "title": "Money Heist S01E01 1080p",
+      "size": "1.2 GB",
+      "callback_data": "dl_cf36382093ec6838a3d5df53"
+     },
+     {
+      "title": "בית הנייר עונה 1 פרק 1 720p זירה מדיה",
+      "size": "520 MB",
+      "callback_data": "dl_52017d5f40a4dce915bcd545"
+     }
+    ],
+    "navigation": [
+     {
+      "text": "⬅️",
+      "callback_data": "search#בית הנייר עונה 1#1"
+     },
+     {
+      "text": "עמוד 2/3",
+      "callback_data": "noop"
+     },
+     {
+      "text": "➡️",
+      "callback_data": "search#בית הנייר עונה 1#3"
+     }
+    ]
+   },
+   {
+    "query": "בית הנייר עונה 1",
+    "message_id": 7001,
+    "total_results": null,
+    "page": 3,
+    "total_pages": 3,
+    "items": [
+     {
+      "title": "בית הנייר עונה 1 פרק 2 720p",
+      "size": "505 MB",
+      "callback_data": "dl_57699545ab28ad806400cd22"
+     }
+    ],
+    "navigation": [
+     {
+      "text": "⬅️",
+      "callback_data": "search#בית הנייר עונה 1#2"
+     },
+     {
+      "text": "עמוד 3/3",
+      "callback_data": "noop"
+     }
+    ]
+   }
+  ]
+ },
+ "short_variant": {
+  "query": "בית הנייר ע1",
+  "pages": [
+   {
+    "query": "בית הנייר ע1",
+    "message_id": 7002,
+    "total_results": null,
+    "page": 1,
+    "total_pages": 1,
+    "items": [
+     {
+      "title": "בית הנייר ע1 פ10 720p זירה מדיה",
+      "size": "530 MB",
+      "callback_data": "dl_441c237697721cadc7302815"
+     }
+    ],
+    "navigation": [
+     {
+      "text": "עמוד 1/1",
+      "callback_data": "noop"
+     }
+    ]
+   }
+  ]
+ },
+ "english_variant": {
+  "query": "Money Heist S01",
+  "pages": [
+   {
+    "query": "Money Heist S01",
+    "message_id": 7003,
+    "total_results": null,
+    "page": 1,
+    "total_pages": 1,
+    "items": [
+     {
+      "title": "Money.Heist.S01E10.720p.WEB-DL",
+      "size": "515 MB",
+      "callback_data": "dl_0761023e6cef4cbb97f65b28"
+     },
+     {
+      "title": "Money Heist S01E01 720p",
+      "size": "500 MB",
+      "callback_data": "dl_4c764118012eea0314a2c1f9"
+     }
+    ],
+    "navigation": [
+     {
+      "text": "עמוד 1/1",
+      "callback_data": "noop"
+     }
+    ]
+   }
+  ]
+ }
+}

@@ -1,4 +1,9 @@
+from . import season
+
+
 def register(mcp, client):
+    season.register(mcp, client)  # full-season tools (media_find_season, queue_season_candidates, ...)
+
     @mcp.tool()
     def media_download_status() -> dict:
         """Read Telegram Downloader queue counts and available media disk space. This is read-only."""

@@ -15,3 +15,6 @@ hermes/plugins/otp-relay/__pycache__/
 
 # OAuth client configuration and refreshed user tokens are server-only.
 google/
+
+# Service credential files mounted read-only into containers (e.g. secrets/tmdb/ for the season finder).
+secrets/
