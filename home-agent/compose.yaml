@@ -95,6 +95,8 @@ services:
       TMDB_API_KEY: ${TMDB_API_KEY:-}
       TMDB_READ_TOKEN_FILE: /run/secrets/tmdb/tmdb_read_token
       TMDB_API_KEY_FILE: /run/secrets/tmdb/tmdb_api_key
+      # Rami Levy store id to search (empty = the site's guest store 331). Keep it in .env, not git.
+      GROCERY_STORE: ${GROCERY_STORE:-}
       HAPOALIM_SPOOL_DIR: /hapoalim-spool
       HAPOALIM_OUT_DIR: /hapoalim-out
       HAPOALIM_ARCHIVE_DIR: /hapoalim-archive

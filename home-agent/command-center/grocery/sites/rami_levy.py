@@ -5,8 +5,9 @@ Search  POST https://www.rami-levy.co.il/api/catalog {"q","store","from":0,"size
         The old autocomplete GET /api/search?q=&store=&size= is kept as mode "search" (GROCERY_RAMI_SEARCH=search):
         live 2026-10-20 it returned only a hair cream for "יין לקידוש קדם" at 331 and nothing at 9001, while
         /api/catalog returned 90 / 65 real results (incl. "מיץ ענבים גאולה קדם רויאל" ₪26.60 at 9001).
-Store   Default store = $GROCERY_STORE or 1333. 331 is only the site's guest default
-        (cart/getStoreId → storeId || 331).
+Store   Set $GROCERY_STORE to the store that serves your delivery address (look it up with the public
+        /api/v2/site/supply/get-supply-date endpoint). Without it the adapter uses 331, the site's own
+        guest default (cart/getStoreId → storeId || 331). Fixtures were captured at stores 9001 and 331.
 Cart    PHASE 2, DISABLED by default. GET customer state (current cart) -> merge ->
         POST /api/v2/cart (REPLACE semantics: body = whole cart) -> diff -> checkout link.
         Never checks out, never pays.
@@ -34,12 +35,11 @@ WEB_ORIGIN = "https://www.rami-levy.co.il"
 API_ORIGIN = "https://www-api.rami-levy.co.il"
 SEARCH_URL = WEB_ORIGIN + "/api/search"
 CATALOG_URL = WEB_ORIGIN + "/api/catalog?"
-DEFAULT_STORE = "9001"
 GUEST_STORE = "331"              # the site's anonymous default
 
 
 def default_store() -> str:
-    return str(os.environ.get("GROCERY_STORE") or DEFAULT_STORE)
+    return str(os.environ.get("GROCERY_STORE") or GUEST_STORE)
 
 
 def search_mode() -> str:

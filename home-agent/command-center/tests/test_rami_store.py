@@ -1,4 +1,4 @@
-"""Rami Levy store + search endpoint (live NUC capture 2026-10-20): default store 9001;
+"""Rami Levy store + search endpoint (live NUC capture 2026-10-20): fixtures from stores 9001 and 331;
 the site's own search is POST /api/catalog. Offline on real responses."""
 import json
 import os
@@ -39,12 +39,12 @@ def items():
 
 
 class StoreConfig(unittest.TestCase):
-    def test_default_store_and_env_overrides(self):
+    def test_default_store_is_guest_store_and_env_overrides(self):
         old = os.environ.pop("GROCERY_STORE", None)
         try:
-            self.assertEqual(RL.RamiLevyAdapter().store, "9001")
-            os.environ["GROCERY_STORE"] = "331"
             self.assertEqual(RL.RamiLevyAdapter().store, "331")
+            os.environ["GROCERY_STORE"] = "9001"
+            self.assertEqual(RL.RamiLevyAdapter().store, "9001")
             self.assertEqual(RL.RamiLevyAdapter(store="412").store, "412")
         finally:
             os.environ.pop("GROCERY_STORE", None)

@@ -364,7 +364,7 @@ def build_parser() -> argparse.ArgumentParser:
         p.add_argument("--text", help='free text, e.g. "חלב, 2 מלפפון, חצי קילו עגבניות"')
         p.add_argument("--text-file", help="file with free text (commas/newlines)")
         p.add_argument("--defaults", default=DEFAULT_DEFAULTS, help="defaults.yaml (+ defaults.user.yaml next to it)")
-        p.add_argument("--store", help="Rami Levy store id (default: list file, $GROCERY_STORE, else 9001)")
+        p.add_argument("--store", help="Rami Levy store id (default: list file, $GROCERY_STORE, else 331 = the site's guest store)")
         p.add_argument("--size", type=int, default=10, help="results per search (default 10)")
         p.add_argument("--delay", type=float, default=1.5, help="seconds between requests (default 1.5 + jitter)")
         p.add_argument("--crawl-delay", type=float, default=None,
