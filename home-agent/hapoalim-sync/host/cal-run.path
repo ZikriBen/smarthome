@@ -1,0 +1,7 @@
+[Unit]
+Description=Watch for an approved Cal card sync request
+[Path]
+PathExists=/var/lib/cal-spool/request.json
+Unit=cal-run.service
+[Install]
+WantedBy=multi-user.target

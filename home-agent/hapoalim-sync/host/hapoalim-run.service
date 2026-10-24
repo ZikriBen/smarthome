@@ -1,0 +1,32 @@
+[Unit]
+Description=Bank Hapoalim on-demand sync (one approved request, one login, registered actions)
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+# Secrets: encrypted at rest with systemd-creds (host key / TPM2 when present), created by Ben with
+# hapoalim-setup. systemd decrypts them into $CREDENTIALS_DIRECTORY (private ramfs) for this one run.
+LoadCredentialEncrypted=hapoalim.user_code:/etc/credstore.encrypted/hapoalim.user_code
+LoadCredentialEncrypted=hapoalim.password:/etc/credstore.encrypted/hapoalim.password
+UMask=0077
+PrivateTmp=yes
+ProtectHome=read-only
+# ProtectHome=read-only: allow data/hapoalim (out/ + archive/) and the OTP inbox.
+ReadWritePaths=/home/ben/smarthome/data/hapoalim /home/ben/smarthome/home-agent/hermes/otp
+NoNewPrivileges=yes
+Environment=HAPOALIM_SPOOL_DIR=/var/lib/hapoalim-spool
+Environment=HAPOALIM_STATE_DIR=/var/lib/hapoalim
+Environment=HAPOALIM_OUT_DIR=/home/ben/smarthome/data/hapoalim/out
+Environment=HAPOALIM_ARCHIVE_DIR=/home/ben/smarthome/data/hapoalim/archive
+Environment=HAPOALIM_OUT_UID=1000
+Environment=HAPOALIM_OUT_GID=1000
+Environment=HAPOALIM_INBOX_DB=/home/ben/smarthome/home-agent/hermes/otp/codes.sqlite
+Environment=HAPOALIM_OTP_TIMEOUT=120
+Environment=HAPOALIM_DAYS=45
+Environment=HAPOALIM_RETENTION_DAYS=7
+Environment=HAPOALIM_REPULL_DAYS=3
+EnvironmentFile=/etc/hapoalim/image.env
+ExecStart=/usr/local/lib/hapoalim/hapoalim-runner.py
+TimeoutStartSec=15min
+Nice=10

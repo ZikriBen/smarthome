@@ -1,0 +1,12 @@
+telegram-browser: third-party notices
+
+app/stream/ranges.py
+  HTTP Range handling (single range, suffix ranges, 416 with "bytes */size")
+  was designed after reviewing FileToLink by Tj-Bots
+  (https://github.com/Tj-Bots/FileToLink, Thunder/server/stream_routes.py,
+  parse_range_header), licensed under the Apache License, Version 2.0.
+  No source code was copied; the implementation is original.
+  Apache-2.0: https://www.apache.org/licenses/LICENSE-2.0
+
+app/stream/telegram_source.py
+  Sender pool ported from this repository's telegram-downloader/app/fast_download.py.

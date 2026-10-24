@@ -1,0 +1,222 @@
+--- a/node_modules/israeli-bank-scrapers/lib/scrapers/visa-cal.js
++++ b/node_modules/israeli-bank-scrapers/lib/scrapers/visa-cal.js
+@@ -29,6 +29,52 @@
+ const FRAMES_REQUEST_ENDPOINT = 'https://api.cal-online.co.il/Frames/api/Frames/GetFrameStatus';
+ const PENDING_TRANSACTIONS_REQUEST_ENDPOINT = 'https://api.cal-online.co.il/Transactions/api/approvals/getClearanceRequests';
+ const SSO_AUTHORIZATION_REQUEST_ENDPOINT = 'https://connect.cal-online.co.il/col-rest/calconnect/authentication/SSO';
++// LOCAL PATCH (cal transport, opt-in calWalk.transport === 'page'; NOT upstream). Port of the idea in upstream PR
++// eshaham/israeli-bank-scrapers#1193 (open, head 82d17cf, src/scrapers/visa-cal.ts fetchCalApi): send the Cal API
++// POST from inside the logged-in page so it leaves via the browser's network path; if the page yields no HTTP response
++// at all (CORS / destroyed context) retry once from Node. Differences from #1193: error messages never quote response
++// bytes, 429 and HTML bodies (Akamai "Request Rejected") map to the library's "Automation detected" error so the walk
++// records `blocked`. Library-level default stays Node (calWalk.transport unset = 6.9.0 behaviour); our Cal action
++// (lib/cal/actions/card_transactions.mjs) sets 'page' unless CAL_API_TRANSPORT=node.
++async function calPagePost(page, url, data, headers) {
++  const endpoint = String(url).split('?')[0];
++  let text;
++  let status;
++  let contentType;
++  try {
++    [text, status, contentType] = await page.evaluate(async (innerUrl, innerData, innerHeaders) => {
++      const response = await fetch(innerUrl, {
++        method: 'POST',
++        body: JSON.stringify(innerData),
++        credentials: 'include',
++        headers: {
++          Accept: 'application/json',
++          'Content-Type': 'application/json',
++          ...innerHeaders
++        }
++      });
++      return [await response.text(), response.status, response.headers.get('content-type') || ''];
++    }, url, data, headers);
++  } catch (e) {
++    debug('in-page request to %s produced no response, falling back to node', endpoint);
++    return (0, _fetch.fetchPost)(url, data, {
++      ...headers,
++      'Content-Type': 'application/json',
++      ...apiHeaders
++    });
++  }
++  if (status === 429 || !/json/i.test(contentType) && /<html|request rejected/i.test(String(text).slice(0, 2000))) {
++    throw new Error(`Automation detected and blocked by server. Status: ${status}`);
++  }
++  if (status < 200 || status >= 300) {
++    throw new Error(`Cal API request to ${endpoint} failed with status ${status}`);
++  }
++  try {
++    return JSON.parse(text);
++  } catch {
++    throw new Error(`Cal API request to ${endpoint} returned a non-JSON response (status ${status})`);
++  }
++}
+ const InvalidPasswordMessage = 'שם המשתמש או הסיסמה שהוזנו שגויים';
+ const ChangePasswordMessage = 'להחליף סיסמה';
+ const ChangePasswordSubtitle = 'הגיע הזמן לסיסמה חדשה';
+@@ -187,6 +233,11 @@
+     if (installments) {
+       result.installments = installments;
+     }
++    if (options?.calWalk) {
++      // LOCAL PATCH (cal walk): the original purchase day (`date` above is shifted by n-1 months for installments).
++      const purchase = (0, _moment.default)(transaction.trnPurchaseDate);
++      result.calPurchaseDate = purchase.isValid() ? purchase.toISOString() : undefined;
++    }
+     if (options?.includeRawTransaction) {
+       result.rawTransaction = (0, _transactions.getRawTransaction)(transaction);
+     }
+@@ -282,7 +333,14 @@
+   }
+   async fetchCardData(card, startMoment, startDate, futureMonthsToScrape, Authorization, xSiteId) {
+     debug('fetch frames (misgarot) for card %s', card.cardUniqueId);
+-    const frames = await (0, _fetch.fetchPost)(FRAMES_REQUEST_ENDPOINT, {
++    const frames = this.options.calWalk?.transport === 'page' ? await calPagePost(this.page, FRAMES_REQUEST_ENDPOINT, {
++      cardsForFrameData: [{
++        cardUniqueId: card.cardUniqueId
++      }]
++    }, {
++      Authorization,
++      'X-Site-Id': xSiteId
++    }) : await (0, _fetch.fetchPost)(FRAMES_REQUEST_ENDPOINT, {
+       cardsForFrameData: [{
+         cardUniqueId: card.cardUniqueId
+       }]
+@@ -312,6 +370,9 @@
+     debug('searching for frame for card %s, found: %O', card.cardUniqueId, frame);
+     debug('card type for card %s: %s', card.cardUniqueId, cardType);
+     const balanceDate = frame?.nextDebitDate ?? accountGroup?.nextTotalDebitDateForAccount;
++    if (this.options.calWalk) {
++      return this.calWalkCardData(card, frame, cardType, accountGroup, balanceDate, Authorization, xSiteId);
++    }
+     const finalMonthToFetchMoment = (0, _moment.default)().add(futureMonthsToScrape, 'month');
+     const months = finalMonthToFetchMoment.diff(startMoment, 'months');
+     const allMonthsData = [];
+@@ -366,6 +427,110 @@
+     };
+     return result;
+   }
++  // LOCAL PATCH (cal walk, NOT upstream; see hapoalim-sync/patches/README.md). Opt-in via options.calWalk =
++  // { months: ['YYYY-MM', ...] newest first, cap, delayMs, pending }. One request per billing month, the walk STOPS
++  // at the first month that fails instead of throwing (months already fetched are kept), every row carries
++  // calBillingMonth (the statement month it came from; null for pending), and the card gets `retrieval`
++  // metadata (months/counts/status codes only, no amounts) so the host records coverage only for months that
++  // really came back. No date filter is applied in this mode (a billing month holds older purchases).
++  async calWalkCardData(card, frame, cardType, accountGroup, balanceDate, Authorization, xSiteId) {
++    const walk = this.options.calWalk || {};
++    const months = Array.isArray(walk.months) ? walk.months.filter(m => /^\d{4}-\d{2}$/.test(String(m))) : [];
++    const cap = Number(walk.cap) > 0 ? Number(walk.cap) : 0;
++    const delayMs = Number.isFinite(Number(walk.delayMs)) && Number(walk.delayMs) >= 0 ? Number(walk.delayMs) : 300;
++    const headers = {
++      Authorization,
++      'X-Site-Id': xSiteId,
++      'Content-Type': 'application/json',
++      ...apiHeaders
++    };
++    // LOCAL PATCH (cal transport): 'node' (library default, 6.9.0 behaviour) or 'page' (see calPagePost).
++    const transport = walk.transport === 'page' ? 'page' : 'node';
++    const post = (url, data) => transport === 'page' ? calPagePost(this.page, url, data, {
++      Authorization,
++      'X-Site-Id': xSiteId
++    }) : (0, _fetch.fetchPost)(url, data, headers);
++    const retrieval = {
++      months: [],
++      requested: months.length,
++      complete: true,
++      stopMonth: null,
++      stopReason: null,
++      stopStatusCode: null,
++      cap,
++      pending: 'skipped',
++      pendingRows: 0,
++      transport,
++      warnings: []
++    };
++    const txns = [];
++    if (walk.pending !== false) {
++      try {
++        const pendingData = await post(PENDING_TRANSACTIONS_REQUEST_ENDPOINT, {
++          cardUniqueIDArray: [card.cardUniqueId]
++        });
++        if ((pendingData?.statusCode === 1 || pendingData?.statusCode === 96) && isCardPendingTransactionDetails(pendingData)) {
++          const rows = convertParsedDataToTransactions([], pendingData, this.options);
++          for (const t of rows) txns.push({ ...t, calBillingMonth: null });
++          retrieval.pending = 'ok';
++          retrieval.pendingRows = rows.length;
++        } else if (pendingData?.statusCode === 96) {
++          retrieval.pending = 'ok';
++        } else {
++          retrieval.pending = 'failed';
++        }
++      } catch (e) {
++        retrieval.pending = /Automation detected/i.test(String(e?.message)) ? 'blocked' : 'failed';
++      }
++    }
++    for (let i = 0; i < months.length; i++) {
++      const ym = months[i];
++      if (i > 0 && delayMs) await new Promise(resolve => setTimeout(resolve, delayMs));
++      let monthData;
++      try {
++        monthData = await post(TRANSACTIONS_REQUEST_ENDPOINT, {
++          cardUniqueId: card.cardUniqueId,
++          month: String(Number(ym.slice(5, 7))),
++          year: ym.slice(0, 4)
++        });
++      } catch (e) {
++        retrieval.complete = false;
++        retrieval.stopMonth = ym;
++        retrieval.stopReason = /Automation detected/i.test(String(e?.message)) ? 'blocked' : 'error';
++        break;
++      }
++      if (monthData?.statusCode !== 1 || !isCardTransactionDetails(monthData)) {
++        retrieval.complete = false;
++        retrieval.stopMonth = ym;
++        retrieval.stopReason = 'status';
++        retrieval.stopStatusCode = Number.isFinite(monthData?.statusCode) ? monthData.statusCode : null;
++        break;
++      }
++      let rows;
++      try {
++        rows = convertParsedDataToTransactions([monthData], null, this.options);
++      } catch (e) {
++        retrieval.complete = false;
++        retrieval.stopMonth = ym;
++        retrieval.stopReason = 'shape';
++        break;
++      }
++      const capped = cap > 0 && rows.length >= cap;
++      retrieval.months.push({ month: ym, rows: rows.length, capped });
++      if (capped) retrieval.warnings.push(`${ym}: ${rows.length} rows >= cap ${cap}, treated as possibly truncated`);
++      for (const t of rows) txns.push({ ...t, calBillingMonth: ym });
++    }
++    const balanceAmount = frame?.nextTotalDebit ?? accountGroup?.nextTotalDebitForAccount;
++    return {
++      txns,
++      balance: balanceAmount != null ? -balanceAmount : undefined,
++      balanceDate: balanceDate != null ? balanceDate : undefined,
++      accountNumber: card.last4Digits,
++      cardType,
++      cardFrame: accountGroup?.frameLimitForCardAmount,
++      retrieval
++    };
++  }
+   async fetchData() {
+     const defaultStartMoment = (0, _moment.default)().subtract(1, 'years').subtract(6, 'months').add(1, 'day');
+     const startDate = this.options.startDate || defaultStartMoment.toDate();
+@@ -373,7 +538,16 @@
+     debug(`fetch transactions starting ${startMoment.format()}`);
+     const [cards, xSiteId, Authorization] = await Promise.all([this.getCards(), this.getXSiteId(), this.getAuthorizationHeader()]);
+     const futureMonthsToScrape = this.options.futureMonthsToScrape ?? 1;
+-    const accounts = await Promise.all(cards.map(card => this.fetchCardData(card, startMoment, startDate, futureMonthsToScrape, Authorization, xSiteId)));
++    let accounts;
++    if (this.options.calWalk) {
++      // LOCAL PATCH (cal walk): one card after the other (gentler on the API than Promise.all).
++      accounts = [];
++      for (const card of cards) {
++        accounts.push(await this.fetchCardData(card, startMoment, startDate, futureMonthsToScrape, Authorization, xSiteId));
++      }
++    } else {
++      accounts = await Promise.all(cards.map(card => this.fetchCardData(card, startMoment, startDate, futureMonthsToScrape, Authorization, xSiteId)));
++    }
+     debug('return the scraped accounts');
+     debug(JSON.stringify(accounts, null, 2));
+     return {

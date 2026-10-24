@@ -33,13 +33,119 @@ SKIP = {"action": "skip", "reason": "otp-relay"}
 # A code is a run of ASCII digits not touching another digit, nor a digit across a separator (phone numbers
 # like 03-123456, amounts like 123456.78, times, dates). Hebrew letters/punctuation next to it are fine.
 _SEP = r"[.,:/\-]"
+def _standalone(digits):
+    """`digits` = 6 or a range "5-6" (Hapoalim sends 5 or 6 digits depending on the channel)."""
+    lo, _, hi = str(digits).partition("-")
+    quant = f"{{{lo},{hi or lo}}}"
+    return re.compile(rf"(?<![0-9])(?<![0-9]{_SEP})([0-9]{quant})(?![0-9])(?!{_SEP}[0-9])")
+
+
 SITE_CODE_RE = {
-    "super_hist": re.compile(rf"(?<![0-9])(?<![0-9]{_SEP})([0-9]{{6}})(?![0-9])(?!{_SEP}[0-9])"),
+    "super_hist": _standalone(6),
+    # Placeholder for the allowlist; the real rule is built per message by _hapoalim_rules() (configurable length).
+    "hapoalim": _standalone("5-6"),
+    # Placeholder too; the real rule is built by _cal_rules() (OTP_CAL_CODE_DIGITS, default 6).
+    "cal": _standalone(6),
 }
+
+# ---------------------------------------------------------------------------------------------- Bank Hapoalim
+# Only the bank's LOGIN SMS may feed a code; anything that looks like a transfer/payment/beneficiary/card approval
+# code is dropped, because a relayed approval code would be a far bigger risk than a login code.
+# UNVERIFIED: the real wording of the Hapoalim login SMS is not known yet. These defaults are deliberately strict
+# (a false reject only means the run ends with OTP_TIMEOUT); tune them with OTP_RELAY_DEBUG_SHAPE=1 and the env
+# overrides below, never by loosening the reject list.
+# Real wording still UNVERIFIED (the live PoC code was typed by hand). Default since 2026-10-22: the bank name OR a
+# login/identification word (the phone rule already limits the forward to the bank's sender); REJECT always wins.
+HAPOALIM_REQUIRE_DEFAULT = r"הפועלים|פועלים|Poalim|POALIM|כניסה|התחברות|להתחבר|הזדהות|אימות|login|Login"
+HAPOALIM_REJECT_DEFAULT = (r"העברה|העברת|להעברת|אישור פעולה|לאישור הפעולה|אישור עסקה|עסקה|תשלום|לתשלום|מוטב|"
+                           r"הוראת קבע|הרשאה לחיוב|כרטיס|הלוואה|פיקדון|פקדון|משיכה|(?<![א-ת])ביט(?![א-ת])|מט.ח|"
+                           r"transfer|payment|beneficiary|transaction|approve")
+
+
+def _hapoalim_rules():
+    """(require_re, reject_re, code_re) from env (OTP_HAPOALIM_REQUIRE_RE / _REJECT_RE / _CODE_DIGITS) or the
+    strict defaults. None when the configuration is invalid -> every hapoalim message is dropped."""
+    try:
+        require = re.compile(os.environ.get("OTP_HAPOALIM_REQUIRE_RE", "").strip() or HAPOALIM_REQUIRE_DEFAULT, re.S)
+        reject = re.compile(os.environ.get("OTP_HAPOALIM_REJECT_RE", "").strip() or HAPOALIM_REJECT_DEFAULT,
+                            re.S | re.I)
+        digits = os.environ.get("OTP_HAPOALIM_CODE_DIGITS", "").strip() or "5-6"
+        m = re.fullmatch(r"([4-8])(?:-([4-8]))?", digits)
+        if not m or (m.group(2) and int(m.group(2)) < int(m.group(1))):
+            return None
+    except re.error:
+        return None
+    return require, reject, _standalone(digits)
+
+
+# ---------------------------------------------------------------------------------------------- Cal (visaCal)
+# Only used if Cal ever asks for a code at login (the password login normally does not). Same stance as the bank:
+# the login SMS only; a purchase / 3-D Secure / wallet-token / transaction approval code must NEVER be relayed,
+# so REJECT always wins. UNVERIFIED wording: tune with OTP_RELAY_DEBUG_SHAPE=1 + OTP_CAL_REQUIRE_RE, never by
+# loosening OTP_CAL_REJECT_RE.
+CAL_REQUIRE_DEFAULT = r"כאל|cal-online|(?<![A-Za-z])CAL(?![A-Za-z])|(?<![A-Za-z])Cal(?![A-Za-z])|כניסה|התחברות|להתחבר|הזדהות|אימות|login|Login"
+CAL_REJECT_DEFAULT = (r"עסקה|עסקת|לאישור|אישור עסקה|אישור רכישה|רכישה|קנייה|באתר|אונליין|תשלום|לתשלום|חיוב|העברה|"
+                      r"הוראת קבע|הלוואה|מסגרת|ארנק|דיגיטלי|טוקן|Apple ?Pay|Google ?Pay|3-?D|3DS|secure|₪|ש\"ח|ILS|USD|"
+                      r"EUR|transaction|payment|purchase|approve|wallet|token")
+
+
+def _cal_rules():
+    """(require_re, reject_re, code_re) from env (OTP_CAL_REQUIRE_RE / _REJECT_RE / _CODE_DIGITS) or the strict
+    defaults. None when the configuration is invalid -> every cal message is dropped."""
+    try:
+        require = re.compile(os.environ.get("OTP_CAL_REQUIRE_RE", "").strip() or CAL_REQUIRE_DEFAULT, re.S)
+        reject = re.compile(os.environ.get("OTP_CAL_REJECT_RE", "").strip() or CAL_REJECT_DEFAULT, re.S | re.I)
+        digits = os.environ.get("OTP_CAL_CODE_DIGITS", "").strip() or "6"
+        m = re.fullmatch(r"([4-8])(?:-([4-8]))?", digits)
+        if not m or (m.group(2) and int(m.group(2)) < int(m.group(1))):
+            return None
+    except re.error:
+        return None
+    return require, reject, _standalone(digits)
+
+
+# A bank SMS must never feed another site's login (a mis-tagged forwarding rule): any non-bank site drops a
+# message that mentions the bank.
+BANK_MENTION_RE = re.compile(r"הפועלים|פועלים|poalim|בנק", re.I)
+# ...and the reverse: a Super-Hist SMS mis-tagged `#OTP hapoalim` (or a rule forwarding both) never feeds the bank.
+OTHER_SITE_RE = re.compile(r"super-hist|superhist|הסופר החברתי|הסופר|ההסתדרות|histadrut", re.I)
+
+
+def guard_reason(site, body):
+    """None when `body` may feed a code for `site`; else a digit-free reason to drop it."""
+    if site == "cal":
+        rules = _cal_rules()
+        if rules is None:
+            return "invalid cal pattern configuration"
+        if OTHER_SITE_RE.search(body or "") or BANK_MENTION_RE.search(body or ""):
+            return "mentions another site (bank/super_hist); not a Cal SMS"
+        require, reject, _ = rules
+        if reject.search(body):
+            return "looks like a purchase/approval SMS, not a login SMS"
+        if not require.search(body):
+            return "not Cal's login SMS wording"
+        return None
+    if site != "hapoalim":
+        return "mentions the bank; not a %s SMS" % site if BANK_MENTION_RE.search(body or "") else None
+    rules = _hapoalim_rules()
+    if rules is None:
+        return "invalid hapoalim pattern configuration"
+    if OTHER_SITE_RE.search(body or ""):
+        return "mentions another site (super_hist); not a bank SMS"
+    require, reject, _ = rules
+    if reject.search(body):
+        return "looks like a transfer/approval SMS, not a login SMS"
+    if not require.search(body):
+        return "not the bank's login SMS wording"
+    return None
 # WebOTP / SMS-retriever origin-bound line (`@<domain> #<code>` on its own line), the authoritative code when the
 # SMS carries one. The real Super-Hist SMS is "<code> הוא קוד הכניסה החד פעמי לאתר\n@super-hist.co.il #<code>".
 SITE_WEBOTP_RE = {
     "super_hist": re.compile(r"^@super-hist\.co\.il #([0-9]{6})[ \t\r]*$", re.M),
+    # UNVERIFIED: whether the bank's SMS carries a WebOTP line at all.
+    "hapoalim": re.compile(r"^@(?:[a-z0-9-]+\.)*bankhapoalim\.co\.il #([0-9]{4,8})[ \t\r]*$", re.M),
+    # UNVERIFIED as well.
+    "cal": re.compile(r"^@(?:[a-z0-9-]+\.)*cal-online\.co\.il #([0-9]{4,8})[ \t\r]*$", re.M),
 }
 
 
@@ -64,6 +170,12 @@ def extract_code(site, body):
        none -> reject, two or more distinct values -> reject.
     `stats` = (raw candidate count, distinct values, WebOTP lines). `reason` never contains digits."""
     rule = SITE_CODE_RE.get(site)
+    if site == "hapoalim":
+        rules = _hapoalim_rules()
+        rule = rules[2] if rules else None
+    elif site == "cal":
+        rules = _cal_rules()
+        rule = rules[2] if rules else None
     if rule is None or not body:
         return None, (0, 0, 0), "no code found"
     found = rule.findall(body)
@@ -119,6 +231,12 @@ def consume(user_id, chat_id, is_private, text, message_id=None):
     if site not in SITE_CODE_RE or site not in otp_inbox.SITES:
         _log_shape(text)
         logger.info("otp-relay: dropped a forward-bot message (unknown site)")
+        return True
+    blocked = guard_reason(site, body)
+    if blocked:
+        _log_shape(text)
+        del text, body
+        logger.info("otp-relay: dropped a %s message (%s)", site, blocked)
         return True
     code, stats, reason = extract_code(site, body)
     _log_shape(text, stats)

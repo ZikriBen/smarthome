@@ -1,0 +1,7 @@
+[Unit]
+Description=Watch for an approved Bank Hapoalim sync request
+[Path]
+PathExists=/var/lib/hapoalim-spool/request.json
+Unit=hapoalim-run.service
+[Install]
+WantedBy=multi-user.target

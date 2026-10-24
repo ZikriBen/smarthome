@@ -1,0 +1,5 @@
+#!/bin/bash
+# Compat wrapper (pre-multi name). Ben runs it HIMSELF with sudo. Same as: sudo card-setup cal-main --provider cal
+# It now seals card-cal-main.username / card-cal-main.password (the runner prefers those over the legacy cal.*).
+set -euo pipefail
+exec /usr/local/sbin/card-setup cal-main --provider cal "$@"

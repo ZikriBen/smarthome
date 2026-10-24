@@ -125,6 +125,14 @@ def summarize(action, payload):
         if action in ("super_hist_cart_write", "super_hist_cart_batch"):
             # Built by super_hist._propose: store, item, unit price, qty before→after, expected new total.
             return _clip(p.get("summary"), 220)
+        if action == "hapoalim_sync":
+            window = f"{_clip(p.get('from') or '≈45י', 10)}..{_clip(p.get('to') or 'היום', 10)}"
+            return f"סנכרון עו״ש בנק הפועלים {window} (התחברות אחת; SMS רק אם הבנק יבקש)"
+        if action == "card_sync":
+            window = f"{_clip(p.get('fetch_from') or p.get('from_month') or '3 חודשים', 10)}..{_clip(p.get('fetch_to') or p.get('to_month') or 'הבא', 10)}"
+            acct = str(p.get("account") or "cal-main")
+            who = "" if acct == "cal-main" else f" — {_clip(p.get('label') or acct, 24)} ({_clip(acct, 24)})"
+            return f"סנכרון כרטיסי אשראי כאל{who}, חודשי חיוב {window} (התחברות אחת; SMS רק אם כאל תבקש)"
         if action == "price_watch_create":
             return f"מעקב מחיר {_clip(p.get('url'), 60)} (יעד {p.get('target')})"
     except Exception:

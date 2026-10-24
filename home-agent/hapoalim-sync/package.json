@@ -1,0 +1,17 @@
+{
+  "name": "hapoalim-sync",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "description": "Bank Hapoalim on-demand sync: one login + registered actions (checking_transactions)",
+  "scripts": {
+    "test": "node --test test/*.test.mjs"
+  },
+  "dependencies": {
+    "israeli-bank-scrapers": "6.9.0",
+    "puppeteer": "24.43.1"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

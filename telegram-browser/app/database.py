@@ -271,6 +271,28 @@ class CatalogDatabase:
 
         return len(items)
 
+    def get_variant_details(
+        self,
+        message_id: int,
+    ) -> dict | None:
+        """One catalog variant joined with its movie (read-only), for streaming."""
+        with self.connect() as db:
+            row = db.execute(
+                """
+                SELECT
+                    v.message_id, v.details_message_id, v.quality,
+                    v.filename, v.mime_type, v.size,
+                    m.title, m.english_title, m.year, m.imdb_rating,
+                    m.genres_json, m.description, m.poster_message_id
+                FROM variants v
+                JOIN movies m
+                    ON m.details_message_id = v.details_message_id
+                WHERE v.message_id = ?
+                """,
+                (int(message_id),),
+            ).fetchone()
+        return dict(row) if row else None
+
     def get_state(
         self,
         key: str,

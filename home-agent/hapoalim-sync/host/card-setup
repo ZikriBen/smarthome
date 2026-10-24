@@ -1,0 +1,78 @@
+#!/bin/bash
+# sudo card-setup <account> [--provider cal] [--label TEXT] [--max-runs N]   — seal one card account's login
+# sudo card-setup cal-main --from-legacy                                    — re-seal the old cal.* under new names
+#
+# Ben runs this HIMSELF, in his own terminal on the NUC (sudo). Not via Hermes, an agent, or a pasted command with
+# values in it. Asks ONLY the provider's login fields (cal: username, password). Values are read with echo off and
+# piped (bash builtin printf: no argv, no env, no file) straight into `systemd-creds encrypt`, sealed with the host
+# key (+TPM2 when present) as /etc/credstore.encrypted/card-<account>.<field> (root 0600). Then: registry entry in
+# /etc/card-accounts.json (not secret), its mirror for the Command Center, and the cal-run.service credential
+# drop-in (creds.conf, only files that exist). Only cal-run.service can decrypt them.
+#
+# --from-legacy (cal-main only): decrypt the old cal.username / cal.password (sealed by the old cal-setup; the
+# credential NAME is bound at encryption time, so a rename needs a re-encrypt) and re-encrypt under
+# card-cal-main.* in ONE pipe (plaintext never touches disk, argv or env). Optional: without it the runner keeps
+# reading the legacy names for cal-main. The legacy files are left in place (delete them later if you want).
+set -euo pipefail
+[ "$(id -u)" = 0 ] || { echo "run with sudo" >&2; exit 1; }
+command -v systemd-creds >/dev/null || { echo "systemd-creds missing (systemd >= 250)" >&2; exit 1; }
+set +o history 2>/dev/null || true
+umask 077
+HELPER=${CARD_ACCOUNTS_HELPER:-/usr/local/lib/hapoalim/card_accounts.py}
+REGISTRY=${CARD_ACCOUNTS:-/etc/card-accounts.json}
+STORE=/etc/credstore.encrypted
+SPOOL=${CAL_SPOOL_DIR:-/var/lib/cal-spool}
+DROPIN=/etc/systemd/system/cal-run.service.d/creds.conf
+
+usage() { echo "usage: sudo card-setup <account> [--provider cal] [--label TEXT] [--max-runs N] | cal-main --from-legacy" >&2; exit 2; }
+[ $# -ge 1 ] || usage
+ACCOUNT=$1; shift
+PROVIDER=cal; LABEL=""; MAXRUNS=""; LEGACY=0
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --provider) PROVIDER=${2:-}; shift 2 ;;
+    --label) LABEL=${2:-}; shift 2 ;;
+    --max-runs) MAXRUNS=${2:-}; shift 2 ;;
+    --from-legacy) LEGACY=1; shift ;;
+    *) usage ;;
+  esac
+done
+FIELDS=$(CARD_ACCOUNTS="$REGISTRY" python3 "$HELPER" fields "$ACCOUNT" "$PROVIDER") || exit 2
+install -d -m 0700 -o root -g root "$STORE"
+
+seal() { systemd-creds encrypt --name="$1" - "$STORE/$1.new" >/dev/null && chmod 0600 "$STORE/$1.new" && mv -f "$STORE/$1.new" "$STORE/$1"; }
+
+if [ "$LEGACY" = 1 ]; then
+  [ "$ACCOUNT" = cal-main ] && [ "$PROVIDER" = cal ] || { echo "--from-legacy is only for cal-main (provider cal)" >&2; exit 2; }
+  for f in $FIELDS; do
+    old="cal.$f"; new="card-cal-main.$f"
+    [ -f "$STORE/$old" ] || { echo "$STORE/$old missing: run sudo card-setup cal-main (types the values)" >&2; exit 1; }
+    systemd-creds decrypt --name="$old" "$STORE/$old" - | seal "$new"
+    a=$(systemd-creds decrypt --name="$old" "$STORE/$old" - | sha256sum | cut -c1-64)
+    b=$(systemd-creds decrypt --name="$new" "$STORE/$new" - | sha256sum | cut -c1-64)
+    [ "$a" = "$b" ] || { rm -f "$STORE/$new"; echo "$new: verification failed, removed (legacy kept)" >&2; exit 1; }
+    echo "$new: re-sealed from $old (verified identical; $old left in place)"
+  done
+else
+  trap 'stty echo 2>/dev/null || true; unset value' EXIT INT TERM
+  for f in $FIELDS; do
+    IFS= read -r -s -p "$PROVIDER account '$ACCOUNT' — $f (hidden): " value; echo
+    [ -n "$value" ] || { echo "empty" >&2; exit 1; }
+    printf '%s' "$value" | seal "card-$ACCOUNT.$f"
+  done
+  unset value
+  for f in $FIELDS; do
+    n=$(systemd-creds decrypt --name="card-$ACCOUNT.$f" "$STORE/card-$ACCOUNT.$f" - | wc -c)
+    echo "card-$ACCOUNT.$f: sealed, $n bytes"
+  done
+fi
+
+args=(add "$ACCOUNT" "$PROVIDER")
+[ -n "$LABEL" ] && args+=(--label "$LABEL")
+[ -n "$MAXRUNS" ] && args+=(--max-runs "$MAXRUNS")
+python3 "$HELPER" --registry "$REGISTRY" "${args[@]}"
+chmod 0644 "$REGISTRY"
+[ -d "$SPOOL" ] && python3 "$HELPER" --registry "$REGISTRY" mirror "$SPOOL/accounts.json"
+python3 "$HELPER" --registry "$REGISTRY" dropin "$STORE" "$DROPIN"
+systemctl daemon-reload
+echo "OK. $ACCOUNT ready; only cal-run.service can decrypt its secrets. Ask Hermes: card_status account=$ACCOUNT"

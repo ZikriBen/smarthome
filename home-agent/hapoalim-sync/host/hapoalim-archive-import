@@ -1,0 +1,59 @@
+#!/usr/bin/env python3
+"""Idempotent import of Hapoalim CSV files into the file-name archive.
+
+Usage:
+  hapoalim-archive-import [--archive DIR] [--account-suffix NNNN] <csv...>
+
+out/ CSVs mask the account (`******78`); pass the real last 4 digits with --account-suffix
+(must end with the visible digits) or the file is refused.
+
+Coverage is set to min..max of row dates (warning). Never prints amounts/descriptions.
+"""
+from __future__ import annotations
+
+import argparse
+import os
+import sys
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+if str(HERE) not in sys.path:
+    sys.path.insert(0, str(HERE))
+import archive  # noqa: E402
+
+
+def main(argv=None):
+    p = argparse.ArgumentParser(description=__doc__)
+    p.add_argument("csv", nargs="+", type=Path)
+    p.add_argument("--archive", type=Path,
+                   default=Path(os.environ.get(
+                       "HAPOALIM_ARCHIVE_DIR",
+                       "/home/ben/smarthome/data/hapoalim/archive")))
+    p.add_argument("--account-suffix", default=None,
+                   help="real last 4 digits for masked account columns")
+    p.add_argument("--uid", type=int, default=int(os.environ.get("HAPOALIM_OUT_UID", "1000")))
+    p.add_argument("--gid", type=int, default=int(os.environ.get("HAPOALIM_OUT_GID", "1000")))
+    args = p.parse_args(argv)
+    rc = 0
+    for path in args.csv:
+        if not path.is_file():
+            print(f"SKIP missing {path.name}", file=sys.stderr)
+            continue
+        try:
+            result = archive.import_csv_file(args.archive, path, uid=args.uid, gid=args.gid,
+                                             account_suffix_override=args.account_suffix)
+        except ValueError as exc:
+            print(f"REFUSED {path.name}: {exc}", file=sys.stderr)
+            rc = 2
+            continue
+        warn = (result.get("coverage_warning") or "")[:80]
+        print(
+            f"OK {path.name} new={result.get('new', 0)} upd={result.get('updated', 0)} "
+            f"months={len(result.get('months') or [])}"
+            + (f" warn={warn}" if warn else "")
+        )
+    return rc
+
+
+if __name__ == "__main__":
+    sys.exit(main())
