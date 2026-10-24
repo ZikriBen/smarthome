@@ -101,7 +101,7 @@ def load_config() -> Config:
 
         jellyfin_url=os.getenv(
             "JELLYFIN_URL",
-            "http://<LAN_IP>:8096",
+            f"http://{os.getenv('LAN_IP', '127.0.0.1')}:8096",
         ).rstrip("/"),
 
         jellyfin_api_key=os.getenv(

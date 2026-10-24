@@ -53,10 +53,9 @@ SOURCE_CHAT_ID = int(
 )
 
 SEARCH_CHAT_ID = int(
-    os.getenv(
-        "SEARCH_CHAT_ID",
-        "-1000000000000",
-    )
+    os.environ[
+        "SEARCH_CHAT_ID"
+    ]
 )
 
 SEARCH_DELIVERY_BOT = os.getenv(
@@ -120,7 +119,7 @@ POSTER_CACHE_MAX_GB = float(
 
 DOWNLOADER_URL = os.getenv(
     "DOWNLOADER_URL",
-    "http://<LAN_IP>:8787",
+    f"http://{os.getenv('LAN_IP', '127.0.0.1')}:8787",
 ).rstrip("/")
 
 
