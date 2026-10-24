@@ -250,7 +250,7 @@ SearchGram interactions are serialized to prevent multiple simultaneous Telegram
 
 Configuration is stored in `telegram-browser/.env`:
 
-    SEARCH_CHAT_ID=-100XXXXXXXXXX
+    SEARCH_CHAT_ID=-1000000000000
     SEARCH_DELIVERY_BOT=searchgram_bbot
 
 Do not commit the real `.env`.
