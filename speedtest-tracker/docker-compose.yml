@@ -12,7 +12,7 @@ services:
       # Replace this!
       - APP_KEY=${SPEEDTEST_APP_KEY}
 
-      - APP_URL=http://<LAN_IP>:8765
+      - APP_URL=http://${LAN_IP:?set LAN_IP in speedtest-tracker/.env}:8765
       - DB_CONNECTION=sqlite
 
       # Run every hour

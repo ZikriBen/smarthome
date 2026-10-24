@@ -81,7 +81,7 @@ flowchart TD
 ## Home LAN
 
 ```text
-Network:       10.0.0.0/24
+Network:       <LAN_CIDR>
 Router:        <ROUTER_IP>
 Ubuntu NUC:    <LAN_IP>
 Wi-Fi device:  wlp6s0

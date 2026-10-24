@@ -3,10 +3,10 @@ services:
     image: adguard/adguardhome:latest
     restart: unless-stopped
     ports:
-      - "<LAN_IP>:53:53/tcp"
-      - "<LAN_IP>:53:53/udp"
-      - "<LAN_IP>:3000:3000/tcp"
-      - "<LAN_IP>:8080:80/tcp"
+      - "${LAN_IP:?set LAN_IP in adguard/.env}:53:53/tcp"
+      - "${LAN_IP:?set LAN_IP in adguard/.env}:53:53/udp"
+      - "${LAN_IP:?set LAN_IP in adguard/.env}:3000:3000/tcp"
+      - "${LAN_IP:?set LAN_IP in adguard/.env}:8080:80/tcp"
     volumes:
       - ./work:/opt/adguardhome/work
       - ./conf:/opt/adguardhome/conf
