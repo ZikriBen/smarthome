@@ -96,6 +96,10 @@ mcp_servers:
         - card_read_range
         - card_list_archive
         - card_coverage
+        # Added by 19-apply-searchgram-season.sh (full-season finder).
+        - media_find_season
+        - queue_season_candidates
+        - media_season_candidates
 
 browser:
   # "off" = built-in browser_* tools on local Chromium (default auto-picks the Browser Use CLI,
