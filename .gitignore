@@ -67,3 +67,10 @@ beszel/.env
 
 # Beszel local data backups
 beszel/beszel_data.new-backup/
+
+# OS / build junk
+.DS_Store
+__pycache__/
+*.pyc
+# Tailscale status dumps (device names, owner login, tailnet IPs): never commit
+infrastructure/tailscale/*.txt

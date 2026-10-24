@@ -137,7 +137,7 @@ class TelegramService:
         # Do NOT use events.NewMessage(chats=...).
         #
         # We already verified that Telethon's chat filter
-        # does not reliably fire for this MediaBot chat.
+        # does not reliably fire for this media bot chat.
         #
         # Listen globally and filter ourselves instead.
         self.client.add_event_handler(

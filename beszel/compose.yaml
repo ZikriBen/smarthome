@@ -4,7 +4,7 @@ services:
     container_name: beszel
     restart: unless-stopped
     environment:
-      APP_URL: https://<your-host>.<your-tailnet>.ts.net/beszel
+      APP_URL: ${BESZEL_APP_URL:?set BESZEL_APP_URL in beszel/.env (e.g. https://<host>/beszel)}
     ports:
       - "8090:8090"
     volumes:

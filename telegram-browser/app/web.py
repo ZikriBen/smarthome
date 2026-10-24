@@ -544,6 +544,8 @@ templates = Jinja2Templates(
         / "templates"
     )
 )
+# UI title; set BRAND_NAME in .env to personalise it.
+templates.env.globals["brand"] = os.getenv("BRAND_NAME", "Media Browser")
 
 
 @app.get(
