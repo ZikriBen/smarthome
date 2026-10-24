@@ -85,6 +85,13 @@ services:
       TELEGRAM_DOWNLOADER_URL: http://host.docker.internal:8787
       JELLYFIN_URL: http://host.docker.internal:8096
       JELLYFIN_API_KEY: ${JELLYFIN_API_KEY:?set JELLYFIN_API_KEY in .env}
+      # Season finder (media_find_season). Optional TMDb credential = the PRIMARY episode-list source; without
+      # it Jellyfin metadata + TVmaze (public, no key; egress to api.tvmaze.com) are used. Preferred: a 0600
+      # file under ./secrets/tmdb/ (mounted read-only below). Values are never logged.
+      TMDB_READ_TOKEN: ${TMDB_READ_TOKEN:-}
+      TMDB_API_KEY: ${TMDB_API_KEY:-}
+      TMDB_READ_TOKEN_FILE: /run/secrets/tmdb/tmdb_read_token
+      TMDB_API_KEY_FILE: /run/secrets/tmdb/tmdb_api_key
       HAPOALIM_SPOOL_DIR: /hapoalim-spool
       HAPOALIM_OUT_DIR: /hapoalim-out
       HAPOALIM_ARCHIVE_DIR: /hapoalim-archive
@@ -102,6 +109,8 @@ services:
     volumes:
       - ./command-center/data:/data
       - ./google:/google:ro
+      # Optional TMDb credential files for the season finder (absent = TMDb not used).
+      - ./secrets/tmdb:/run/secrets/tmdb:ro
       # Incoming Telegram documents are an import-only, read-only source.
       - ./hermes/cache/documents:/attachments:ro
       # One-time-code inbox written by Hermes's otp-relay plugin; read + single-use delete here.

@@ -14,13 +14,13 @@ from .database import approval_lock, connection
 _delivery_lock = threading.Lock()
 
 
-def internal_json(method, base, path, payload=None):
+def internal_json(method, base, path, payload=None, timeout=90):
     if not base:
         raise ValueError("internal media service is not configured")
     data = json.dumps(payload).encode() if payload is not None else None
     request = urllib.request.Request(
         base + path, data=data, method=method, headers={"Content-Type": "application/json"})
-    with urllib.request.urlopen(request, timeout=90) as response:
+    with urllib.request.urlopen(request, timeout=timeout) as response:
         return json.load(response)
 
 
@@ -97,6 +97,30 @@ def _finish_delivery(audit_id, status, error=None):
         connection.commit()
 
 
+def start_delivery(*, query, title, size, message_id, callback_data, page_callback=None, extra=None):
+    """Audit row (searchgram_download, processing) + one serialized background delivery. Returns the audit id.
+
+    ``page_callback`` (season finder): the result's own page, so telegram-browser can re-open it once if
+    SearchGram refuses a result shown on an earlier page."""
+    audit_id = approvals.create("searchgram_download", {
+        "query": query, "title": title, "size": size, **(extra or {})}, status="processing")
+    body = {"message_id": message_id, "callback_data": callback_data}
+    if page_callback:
+        body.update(query=query, page_callback=page_callback)
+
+    def deliver():
+        with _delivery_lock:
+            try:
+                internal_json("POST", BROWSER_URL, "/api/search/download", body)
+            except Exception as exc:
+                _finish_delivery(audit_id, "failed", exc)
+            else:
+                _finish_delivery(audit_id, "executed")
+
+    threading.Thread(target=deliver, daemon=True).start()
+    return audit_id
+
+
 def queue_result(session_id, result_number):
     page = load_session(session_id)
     if isinstance(result_number, bool) or not isinstance(result_number, int) or result_number < 1:
@@ -105,21 +129,8 @@ def queue_result(session_id, result_number):
     if result_number > len(items):
         raise ValueError("result number is not on the current SearchGram page")
     item = items[result_number - 1]
-    audit_id = approvals.create("searchgram_download", {
-        "query": page["query"], "title": item.get("title"), "size": item.get("size")},
-        status="processing")
-
-    def deliver():
-        with _delivery_lock:
-            try:
-                internal_json("POST", BROWSER_URL, "/api/search/download", {
-                    "message_id": page["message_id"], "callback_data": item["callback_data"]})
-            except Exception as exc:
-                _finish_delivery(audit_id, "failed", exc)
-            else:
-                _finish_delivery(audit_id, "executed")
-
-    threading.Thread(target=deliver, daemon=True).start()
+    audit_id = start_delivery(query=page["query"], title=item.get("title"), size=item.get("size"),
+                              message_id=page["message_id"], callback_data=item["callback_data"])
     return {"audit_id": audit_id,
             "queued_result": {"title": item.get("title"), "size": item.get("size")},
             "status": "processing", "follow_up_after_seconds": 30}
@@ -163,6 +174,8 @@ def download_status():
 
 
 def register_routes(router):
+    from . import season  # full-season finder routes live with SearchGram (lazy: season imports this module)
+    season.register_routes(router)
     router.get("/v1/media/download-status", lambda _p, _q: download_status())
     router.post("/v1/searchgram/search", lambda p, _q: search(p["query"]))
     router.post("/v1/searchgram/next-page", lambda p, _q: navigate(p["search_id"], "next"))

@@ -1,0 +1,42 @@
+{
+ "id": 100088,
+ "name": "האחרונים מבינינו",
+ "original_name": "The Last of Us",
+ "first_air_date": "2023-01-15",
+ "status": "Returning Series",
+ "episode_run_time": [],
+ "seasons": [
+  {
+   "season_number": 1,
+   "episode_count": 9,
+   "air_date": "2023-01-15",
+   "name": "עונה 1"
+  },
+  {
+   "season_number": 2,
+   "episode_count": 7,
+   "air_date": "2025-04-13",
+   "name": "עונה 2"
+  }
+ ],
+ "external_ids": {
+  "imdb_id": "tt3581920",
+  "tvdb_id": 392256
+ },
+ "translations": {
+  "translations": [
+   {
+    "iso_639_1": "en",
+    "data": {
+     "name": ""
+    }
+   },
+   {
+    "iso_639_1": "he",
+    "data": {
+     "name": "האחרונים מבינינו"
+    }
+   }
+  ]
+ }
+}

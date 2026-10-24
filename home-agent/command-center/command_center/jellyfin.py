@@ -15,6 +15,16 @@ def get(path, params):
         return json.load(response)
 
 
+def post_json(path, payload, timeout=20):
+    """POST JSON with the same API-key header as ``get`` (used by the season finder's RemoteSearch)."""
+    request = urllib.request.Request(
+        JELLYFIN_URL + path, data=json.dumps(payload).encode(), method="POST",
+        headers={"Authorization": f'MediaBrowser Token="{JELLYFIN_API_KEY}"',
+                 "Content-Type": "application/json"})
+    with urllib.request.urlopen(request, timeout=timeout) as response:
+        return json.load(response)
+
+
 def search(query):
     query = str(query).strip()
     if not query:

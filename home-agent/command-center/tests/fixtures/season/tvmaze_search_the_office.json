@@ -1,0 +1,152 @@
+[
+ {
+  "score": 1.1816224,
+  "show": {
+   "id": 526,
+   "name": "The Office",
+   "premiered": "2005-03-24",
+   "status": "Ended",
+   "language": "English",
+   "externals": {
+    "tvrage": 6061,
+    "thetvdb": 73244,
+    "imdb": "tt0386676"
+   }
+  }
+ },
+ {
+  "score": 1.1768994,
+  "show": {
+   "id": 1292,
+   "name": "The Office",
+   "premiered": "2001-07-09",
+   "status": "Ended",
+   "language": "English",
+   "externals": {
+    "tvrage": 6060,
+    "thetvdb": 78107,
+    "imdb": "tt0290978"
+   }
+  }
+ },
+ {
+  "score": 1.163801,
+  "show": {
+   "id": 69044,
+   "name": "The Office",
+   "premiered": "2024-10-18",
+   "status": "Ended",
+   "language": "English",
+   "externals": {
+    "tvrage": null,
+    "thetvdb": 453455,
+    "imdb": "tt10193026"
+   }
+  }
+ },
+ {
+  "score": 1.1612302,
+  "show": {
+   "id": 57704,
+   "name": "The Office",
+   "premiered": "2019-06-28",
+   "status": "Ended",
+   "language": "Hindi",
+   "externals": {
+    "tvrage": null,
+    "thetvdb": 366061,
+    "imdb": "tt8305218"
+   }
+  }
+ },
+ {
+  "score": 1.1348246,
+  "show": {
+   "id": 57168,
+   "name": "The Office",
+   "premiered": "1995-03-11",
+   "status": "Ended",
+   "language": "English",
+   "externals": {
+    "tvrage": null,
+    "thetvdb": 77470,
+    "imdb": "tt0112108"
+   }
+  }
+ },
+ {
+  "score": 0.9929445,
+  "show": {
+   "id": 80108,
+   "name": "The Office Movers",
+   "premiered": "2024-10-11",
+   "status": "Running",
+   "language": "English",
+   "externals": {
+    "tvrage": null,
+    "thetvdb": 454908,
+    "imdb": "tt31187479"
+   }
+  }
+ },
+ {
+  "score": 0.9870554,
+  "show": {
+   "id": 58531,
+   "name": "The Office PL",
+   "premiered": "2021-10-22",
+   "status": "Running",
+   "language": "Polish",
+   "externals": {
+    "tvrage": null,
+    "thetvdb": 410750,
+    "imdb": "tt15019916"
+   }
+  }
+ },
+ {
+  "score": 0.9795103,
+  "show": {
+   "id": 36116,
+   "name": "The Naked Office",
+   "premiered": "2010-05-18",
+   "status": "Ended",
+   "language": "English",
+   "externals": {
+    "tvrage": null,
+    "thetvdb": 103541,
+    "imdb": "tt1695361"
+   }
+  }
+ },
+ {
+  "score": 0.96078074,
+  "show": {
+   "id": 39299,
+   "name": "The Singing Office",
+   "premiered": "2008-06-29",
+   "status": "Ended",
+   "language": "English",
+   "externals": {
+    "tvrage": null,
+    "thetvdb": null,
+    "imdb": "tt0835055"
+   }
+  }
+ },
+ {
+  "score": 0.92517614,
+  "show": {
+   "id": 49531,
+   "name": "The Office: Blackmail",
+   "premiered": "2009-05-07",
+   "status": "Ended",
+   "language": "English",
+   "externals": {
+    "tvrage": null,
+    "thetvdb": null,
+    "imdb": "tt1494540"
+   }
+  }
+ }
+]

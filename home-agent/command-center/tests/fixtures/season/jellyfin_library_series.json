@@ -1,0 +1,26 @@
+{
+ "Items": [
+  {
+   "Id": "ser-mh",
+   "Name": "בית הנייר",
+   "OriginalTitle": "La casa de papel",
+   "SortName": "בית הנייר",
+   "ProductionYear": 2017,
+   "ProviderIds": {
+    "Tmdb": "71446",
+    "Imdb": "tt6468322",
+    "Tvdb": "327417"
+   }
+  },
+  {
+   "Id": "ser-mhk",
+   "Name": "בית הנייר: קוריאה",
+   "OriginalTitle": "Money Heist: Korea",
+   "ProductionYear": 2022,
+   "ProviderIds": {
+    "Tmdb": "113988"
+   }
+  }
+ ],
+ "TotalRecordCount": 2
+}

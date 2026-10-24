@@ -29,6 +29,7 @@ from telethon import TelegramClient
 
 from app.database import CatalogDatabase
 from app.searchgram import SearchGram
+from app import season_search
 from app.stream import signing as stream_signing
 from app.stream import watch as stream_watch
 from app.stream.cache import ChunkCache
@@ -888,6 +889,97 @@ async def api_search_navigate(
 
 
 @app.post(
+    "/api/search/season",
+)
+async def api_search_season(
+    request: Request,
+):
+    """Season-level search: query variants, bounded paging, parse + rank (app/season_parse.py).
+
+    Body: {"titles": [str, ...], "season": int, "episodes": [{"n": int, "runtime": int|null}] | null,
+    "have": [int, ...]}. ``episodes`` null = the episode list is unknown (picks cover what was observed)."""
+    try:
+        payload = await request.json()
+        titles = [str(t).strip() for t in payload.get("titles") or [] if str(t).strip()][:6]
+        season = payload["season"]
+        if isinstance(season, bool) or not isinstance(season, int) or not 0 <= season <= 99:
+            raise ValueError("season")
+        episodes = payload.get("episodes")
+        if episodes is not None:
+            episodes = [{"n": int(e["n"]), "runtime": (int(e["runtime"]) if e.get("runtime") else None)}
+                        for e in episodes][:300]
+        have = [int(x) for x in payload.get("have") or []][:300]
+        if not titles:
+            raise ValueError("titles")
+    except Exception:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid season search request",
+        )
+
+    service = require_searchgram()
+
+    try:
+        result = await season_search.find_season(
+            service, titles=titles, season=season, episodes=episodes, have=have)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    if not result["queries_ok"]:
+        print(
+            "SearchGram season search failed: "
+            + ", ".join(f"{e.get('error')}" for e in result["errors"]),
+            flush=True,
+        )
+        raise HTTPException(
+            status_code=502,
+            detail="SearchGram search failed",
+        )
+
+    return result
+
+
+async def _request_media_page_fallback(
+    service,
+    *,
+    message_id: int,
+    callback_data: str,
+    query: str | None,
+    page_callback: str | None,
+):
+    """Request one result; if SearchGram refuses a result from an earlier page, re-open it once and retry.
+
+    Only a refusal at the callback stage (no delivery URL / start token, before anything is sent to the
+    delivery bot) is retried, so the media can never be requested twice."""
+    try:
+        return await service.request_media(
+            message_id=message_id,
+            callback_data=callback_data,
+        )
+    except RuntimeError as exc:
+        if not (
+            query
+            and page_callback
+            and page_callback.startswith("search#")
+            and str(exc).startswith("SearchGram callback")
+        ):
+            raise
+        print(
+            "SearchGram result callback refused; re-opening its page once",
+            flush=True,
+        )
+    await service.navigate(
+        message_id=message_id,
+        callback_data=page_callback,
+        query=query,
+    )
+    return await service.request_media(
+        message_id=message_id,
+        callback_data=callback_data,
+    )
+
+
+@app.post(
     "/api/search/download",
 )
 async def api_search_download(
@@ -903,6 +995,11 @@ async def api_search_download(
         callback_data = str(
             payload["callback_data"]
         )
+
+        page_query = payload.get("query")
+        page_callback = payload.get("page_callback")
+        page_query = str(page_query) if page_query else None
+        page_callback = str(page_callback) if page_callback else None
 
     except (
         Exception,
@@ -922,11 +1019,14 @@ async def api_search_download(
 
     try:
         media = (
-            await service.request_media(
+            await _request_media_page_fallback(
+                service,
                 message_id=message_id,
                 callback_data=(
                     callback_data
                 ),
+                query=page_query,
+                page_callback=page_callback,
             )
         )
 

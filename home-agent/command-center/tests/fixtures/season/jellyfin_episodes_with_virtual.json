@@ -1,0 +1,105 @@
+{
+ "Items": [
+  {
+   "Id": "e1",
+   "Name": "Episode 1",
+   "IndexNumber": 1,
+   "IndexNumberEnd": null,
+   "ParentIndexNumber": 1,
+   "LocationType": "FileSystem",
+   "RunTimeTicks": 27000000000,
+   "PremiereDate": "2017-05-01T00:00:00.0000000Z"
+  },
+  {
+   "Id": "e2",
+   "Name": "Episode 2",
+   "IndexNumber": 2,
+   "IndexNumberEnd": null,
+   "ParentIndexNumber": 1,
+   "LocationType": "FileSystem",
+   "RunTimeTicks": 27000000000,
+   "PremiereDate": "2017-05-02T00:00:00.0000000Z"
+  },
+  {
+   "Id": "e3",
+   "Name": "Episode 3",
+   "IndexNumber": 3,
+   "IndexNumberEnd": null,
+   "ParentIndexNumber": 1,
+   "LocationType": "Virtual",
+   "RunTimeTicks": 27000000000,
+   "PremiereDate": "2017-05-03T00:00:00.0000000Z"
+  },
+  {
+   "Id": "e4",
+   "Name": "Episode 4",
+   "IndexNumber": 4,
+   "IndexNumberEnd": null,
+   "ParentIndexNumber": 1,
+   "LocationType": "Virtual",
+   "RunTimeTicks": 27000000000,
+   "PremiereDate": "2017-05-04T00:00:00.0000000Z"
+  },
+  {
+   "Id": "e5",
+   "Name": "Episode 5",
+   "IndexNumber": 5,
+   "IndexNumberEnd": null,
+   "ParentIndexNumber": 1,
+   "LocationType": "Virtual",
+   "RunTimeTicks": 27000000000,
+   "PremiereDate": "2017-05-05T00:00:00.0000000Z"
+  },
+  {
+   "Id": "e6",
+   "Name": "Episode 6",
+   "IndexNumber": 6,
+   "IndexNumberEnd": null,
+   "ParentIndexNumber": 1,
+   "LocationType": "Virtual",
+   "RunTimeTicks": 27000000000,
+   "PremiereDate": "2017-05-06T00:00:00.0000000Z"
+  },
+  {
+   "Id": "e7",
+   "Name": "Episode 7",
+   "IndexNumber": 7,
+   "IndexNumberEnd": null,
+   "ParentIndexNumber": 1,
+   "LocationType": "Virtual",
+   "RunTimeTicks": 27000000000,
+   "PremiereDate": "2017-05-07T00:00:00.0000000Z"
+  },
+  {
+   "Id": "e8",
+   "Name": "Episode 8",
+   "IndexNumber": 8,
+   "IndexNumberEnd": null,
+   "ParentIndexNumber": 1,
+   "LocationType": "Virtual",
+   "RunTimeTicks": 27000000000,
+   "PremiereDate": "2017-05-08T00:00:00.0000000Z"
+  },
+  {
+   "Id": "e9",
+   "Name": "Episode 9",
+   "IndexNumber": 9,
+   "IndexNumberEnd": null,
+   "ParentIndexNumber": 1,
+   "LocationType": "Virtual",
+   "RunTimeTicks": 27000000000,
+   "PremiereDate": "2017-05-09T00:00:00.0000000Z"
+  },
+  {
+   "Id": "e10",
+   "Name": "Episode 10",
+   "IndexNumber": 10,
+   "IndexNumberEnd": null,
+   "ParentIndexNumber": 1,
+   "LocationType": "Virtual",
+   "RunTimeTicks": 27000000000,
+   "PremiereDate": "2017-05-10T00:00:00.0000000Z"
+  }
+ ],
+ "TotalRecordCount": 10
+}

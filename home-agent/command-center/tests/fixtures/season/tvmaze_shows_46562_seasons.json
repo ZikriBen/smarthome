@@ -1,0 +1,23 @@
+[
+ {
+  "id": 134145,
+  "number": 1,
+  "episodeOrder": 9,
+  "premiereDate": "2023-01-15",
+  "endDate": "2023-03-12"
+ },
+ {
+  "id": 148200,
+  "number": 2,
+  "episodeOrder": 7,
+  "premiereDate": "2025-04-13",
+  "endDate": "2025-05-25"
+ },
+ {
+  "id": 184287,
+  "number": 3,
+  "episodeOrder": null,
+  "premiereDate": null,
+  "endDate": null
+ }
+]
