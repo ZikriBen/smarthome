@@ -30,6 +30,13 @@ from telethon import TelegramClient
 from app.database import CatalogDatabase
 from app.searchgram import SearchGram
 from app import season_search
+from app.stream import signing as stream_signing
+from app.stream import watch as stream_watch
+from app.stream.cache import ChunkCache
+from app.stream.server import EmbeddedServer, build_stream_app
+from app.stream import subs as stream_subs
+from app.stream.service import StreamService, is_matroska, is_media_mime
+from app.stream.telegram_source import TelegramChunkSource
 from app.sync import CatalogSyncer
 
 
@@ -137,6 +144,53 @@ POSTER_CACHE_DIR = Path(
     )
 )
 
+
+# ---------------------------------------------------------------- tg-stream PoC
+# Direct watch (Lulu catalog only). Served on a SEPARATE listener (default
+# :8789) by the same process, so it uses this app's live Telethon client.
+TG_STREAM_HMAC_KEY_FILE = os.getenv("TG_STREAM_HMAC_KEY_FILE", "")
+TG_STREAM_BIND = os.getenv("TG_STREAM_BIND", "0.0.0.0")  # container-internal; publish LAN-only in compose
+TG_STREAM_PORT = int(os.getenv("TG_STREAM_PORT", "8789"))
+TG_STREAM_PUBLIC_BASE = os.getenv("TG_STREAM_PUBLIC_BASE", "").rstrip("/")
+TG_STREAM_CONNECTIONS = min(2, max(1, int(os.getenv("TG_STREAM_CONNECTIONS", "2"))))
+TG_STREAM_MAX_STREAMS = min(2, max(1, int(os.getenv("TG_STREAM_MAX_STREAMS", "2"))))
+TG_STREAM_CACHE_MB = int(os.getenv("TG_STREAM_CACHE_MB", "128"))
+TG_STREAM_PREFETCH_MB = float(os.getenv("TG_STREAM_PREFETCH_MB", "2"))
+TG_STREAMS_DIR = Path(os.getenv("TG_STREAMS_DIR", "/streams"))
+JELLYFIN_URL = os.getenv("JELLYFIN_URL", "http://<LAN_IP>:8096").rstrip("/")
+JELLYFIN_PUBLIC_URL = os.getenv("JELLYFIN_PUBLIC_URL", JELLYFIN_URL).rstrip("/")
+JELLYFIN_API_KEY_FILE = os.getenv("JELLYFIN_API_KEY_FILE", "")
+JELLYFIN_STREAMS_PATH = os.getenv("JELLYFIN_STREAMS_PATH", "/media/telegram-streams")
+JELLYFIN_STREAMS_LIBRARY_ID = os.getenv("JELLYFIN_STREAMS_LIBRARY_ID", "").strip() or None
+JELLYFIN_POLL_TIMEOUT_S = float(os.getenv("JELLYFIN_POLL_TIMEOUT_S", "45"))
+JELLYFIN_FALLBACK_AFTER_S = float(os.getenv("JELLYFIN_FALLBACK_AFTER_S", "6"))
+# Subtitle sidecars (background, low priority; see app/stream/subs.py).
+TG_SUBS_ENABLED = os.getenv("TG_SUBS_ENABLED", "1").strip().lower() not in ("0", "false", "no", "off")
+TG_SUBS_MAX_MB = int(os.getenv("TG_SUBS_MAX_MB", "4096"))
+TG_SUBS_MAX_MINUTES = float(os.getenv("TG_SUBS_MAX_MINUTES", "30"))
+# Watch now waits this long for the subtitle job to parse the MKV header and put
+# the (placeholder) Hebrew sidecar in place BEFORE asking Jellyfin to scan, so
+# the sidecar is in Jellyfin's very first directory listing of the folder.
+TG_SUBS_HEADER_WAIT_S = float(os.getenv("TG_SUBS_HEADER_WAIT_S", "6"))
+
+
+def _origin(url: str) -> str | None:
+    from urllib.parse import urlsplit
+
+    parts = urlsplit(url)
+    return f"{parts.scheme}://{parts.netloc}" if parts.scheme and parts.netloc else None
+
+
+# Exact origins allowed to read streams cross-origin (only matters if Jellyfin
+# Web uses crossorigin=use-credentials). Default: the Jellyfin public URL.
+TG_STREAM_CORS_ORIGINS = frozenset(
+    o for o in (
+        [x.strip().rstrip("/") for x in os.getenv("TG_STREAM_CORS_ORIGINS", "").split(",") if x.strip()]
+        or [_origin(JELLYFIN_PUBLIC_URL)]
+    ) if o
+)
+JELLYFIN_LIBRARY = stream_watch.LibraryState(JELLYFIN_STREAMS_LIBRARY_ID, JELLYFIN_STREAMS_PATH)
+
 POSTER_CACHE_DIR.mkdir(
     parents=True,
     exist_ok=True,
@@ -156,6 +210,97 @@ searchgram: SearchGram | None = None
 background_sync_task: (
     asyncio.Task | None
 ) = None
+
+stream_service: StreamService | None = None
+
+stream_server: EmbeddedServer | None = None
+
+stream_source: TelegramChunkSource | None = None
+
+subtitle_jobs: stream_subs.SubtitleJobs | None = None
+
+_stream_tasks: set = set()
+
+
+def stream_key() -> bytes | None:
+    # Re-read lazily so a rotated key file is picked up without restart;
+    # the value is never logged or returned.
+    try:
+        return stream_signing.load_key(TG_STREAM_HMAC_KEY_FILE)
+    except stream_signing.HmacKeyError as exc:
+        print(f"tg-stream disabled: {exc}", flush=True)
+        return None
+
+
+def make_stream_service(tg_client) -> StreamService:
+    async def fetch_message(variant_id: int):
+        # Chat is fixed to the Lulu source; callers can only pass a variant id.
+        return await tg_client.get_messages(SOURCE_CHAT_ID, ids=int(variant_id))
+
+    global stream_source
+    stream_source = TelegramChunkSource(tg_client, connections=TG_STREAM_CONNECTIONS)
+    return StreamService(
+        catalog_lookup=database.get_variant_details,
+        fetch_message=fetch_message,
+        source=stream_source,
+        cache=ChunkCache(TG_STREAM_CACHE_MB * 1024 * 1024),
+        max_streams=TG_STREAM_MAX_STREAMS,
+    )
+
+
+def jellyfin_client() -> "stream_watch.JellyfinClient | None":
+    api_key = stream_watch.jellyfin_api_key(
+        {"JELLYFIN_API_KEY_FILE": JELLYFIN_API_KEY_FILE, "JELLYFIN_API_KEY": os.getenv("JELLYFIN_API_KEY", "")}
+    )
+    return stream_watch.JellyfinClient(JELLYFIN_URL, api_key) if api_key else None
+
+
+async def refresh_item_for_subs(variant_id: int, folder: Path, names: list[str]) -> None:
+    """After sidecars are written: refresh the Jellyfin item so it lists them."""
+    jf = jellyfin_client()
+    row = database.get_variant_details(variant_id)
+    if jf is None or not row:
+        return
+    entry = stream_watch.entry_paths(TG_STREAMS_DIR, row, row)
+    lib = await JELLYFIN_LIBRARY.library_id(jf)
+    item_id = await jf.find_by_path(
+        stream_watch.jellyfin_path(entry.strm, TG_STREAMS_DIR, JELLYFIN_STREAMS_PATH),
+        row.get("english_title") or row.get("title"),
+        lib,
+        folder=stream_watch.jellyfin_path(entry.folder, TG_STREAMS_DIR, JELLYFIN_STREAMS_PATH),
+    )
+    if item_id:
+        await jf.refresh_item(item_id)
+        print(f"[subs] {int(variant_id)}: jellyfin item refreshed", flush=True)
+    elif lib:
+        await jf.refresh_library(lib)
+        print(f"[subs] {int(variant_id)}: jellyfin library refreshed (item not indexed yet)", flush=True)
+
+
+async def migrate_round1_sidecars() -> None:
+    """Startup sweep: rename full Hebrew tracks that round 1 named .heb.forced.srt
+    (MKV forced flag) to .heb.default.srt in place, then refresh those items."""
+    try:
+        renamed = await asyncio.to_thread(
+            stream_subs.migrate_all_sidecars, TG_STREAMS_DIR, stream_watch.MARKER,
+            lambda m: print(m, flush=True))
+        for vid, folder, names in renamed:
+            try:
+                await refresh_item_for_subs(vid, folder, names)
+            except Exception as exc:  # noqa: BLE001
+                print(f"[subs] {vid}: jellyfin refresh after rename failed: {type(exc).__name__}", flush=True)
+    except Exception as exc:  # noqa: BLE001
+        print(f"[subs] sidecar migration failed: {type(exc).__name__}: {exc}", flush=True)
+
+
+def make_subtitle_jobs(service: StreamService) -> stream_subs.SubtitleJobs:
+    return stream_subs.SubtitleJobs(
+        service,
+        marker_name=stream_watch.MARKER,
+        max_bytes=TG_SUBS_MAX_MB * 1024 * 1024,
+        max_seconds=TG_SUBS_MAX_MINUTES * 60,
+        on_done=refresh_item_for_subs,
+    )
 
 
 def cleanup_poster_cache() -> None:
@@ -487,6 +632,25 @@ async def lifespan(
 
     cleanup_poster_cache()
 
+    global stream_service
+    global stream_server
+    global subtitle_jobs
+
+    stream_service = make_stream_service(client)
+    subtitle_jobs = make_subtitle_jobs(stream_service)
+    asyncio.create_task(migrate_round1_sidecars())
+
+    if stream_key():
+        stream_server = EmbeddedServer(
+            build_stream_app(stream_service, stream_key, TG_STREAM_CORS_ORIGINS),
+            TG_STREAM_BIND,
+            TG_STREAM_PORT,
+        )
+        stream_server.start()
+        print(f"tg-stream listening on container port {TG_STREAM_PORT}", flush=True)
+    else:
+        print("tg-stream disabled: no TG_STREAM_HMAC_KEY_FILE", flush=True)
+
     background_sync_task = (
         asyncio.create_task(
             syncer.run_background(
@@ -515,6 +679,12 @@ async def lifespan(
 
             except asyncio.CancelledError:
                 pass
+
+        if stream_server is not None:
+            await stream_server.stop()
+
+        if stream_source is not None:
+            await stream_source.close()
 
         await client.disconnect()
 
@@ -1441,6 +1611,173 @@ async def poster(
     )
 
 
+@app.api_route(
+    "/s/{rest:path}",
+    methods=["GET", "HEAD", "POST"],
+)
+async def no_streams_here(rest: str):
+    # Streams are served ONLY by the separate LAN-only listener.
+    raise HTTPException(status_code=404, detail="Not Found")
+
+
+async def poster_bytes(poster_message_id: int | None) -> bytes | None:
+    if not poster_message_id:
+        return None
+    cached = POSTER_CACHE_DIR / f"{int(poster_message_id)}.jpg"
+    if cached.exists():
+        return cached.read_bytes()
+    try:
+        response = await poster(int(poster_message_id))
+    except HTTPException:
+        return None
+    return bytes(response.body)
+
+
+def _spawn(coro) -> None:
+    task = asyncio.create_task(coro)
+    _stream_tasks.add(task)
+    task.add_done_callback(_stream_tasks.discard)
+
+
+def _watch_row(variant_id: int) -> dict:
+    row = database.get_variant_details(variant_id)
+    if not row or not is_media_mime(row.get("mime_type")):
+        raise HTTPException(status_code=404, detail="Unknown variant")
+    return row
+
+
+def _subs_status(variant_id: int) -> dict | None:
+    return subtitle_jobs.public(variant_id) if subtitle_jobs is not None else None
+
+
+WATCH_MESSAGES = {
+    "ready": "Ready in Jellyfin",
+    "refresh_skipped": "Files written; Jellyfin refresh skipped (no API key configured)",
+}
+
+
+# In-flight Watch-now jobs per variant: a double tap (or a second device)
+# joins the running job instead of starting a second refresh cycle. The job
+# is shielded, so it finishes even if the browser navigates away.
+_watch_inflight: dict[int, dict] = {}
+
+
+def library_url() -> str:
+    """Fallback link: the Telegram Streams library in Jellyfin (home if unknown)."""
+    lib = JELLYFIN_LIBRARY.configured_id or JELLYFIN_LIBRARY.discovered_id
+    if lib:
+        return (f"{JELLYFIN_PUBLIC_URL}/web/#/movies?topParentId={urllib.parse.quote(lib)}"
+                "&collectionType=movies")
+    return f"{JELLYFIN_PUBLIC_URL}/web/#/home"
+
+
+async def _do_watch(variant_id: int, row: dict, key: bytes, progress: dict) -> dict:
+    progress["phase"] = "writing"
+    url = f"{TG_STREAM_PUBLIC_BASE}/s/{int(variant_id)}/{stream_signing.sign(key, variant_id)}"
+    picture = await poster_bytes(row.get("poster_message_id"))
+    entry, changed = await asyncio.to_thread(
+        stream_watch.write_entry, TG_STREAMS_DIR, row, row, url, picture
+    )
+    if stream_service is not None and TG_STREAM_PREFETCH_MB > 0:
+        # Lulu has no delivery quota (DESIGN 3b), so warming is free of slots.
+        _spawn(stream_service.prefetch_edges(int(variant_id), int(TG_STREAM_PREFETCH_MB * 1024 * 1024)))
+    if subtitle_jobs is not None and TG_SUBS_ENABLED:
+        subtitle_jobs.schedule(int(variant_id), row, entry.folder, entry.strm.name, is_matroska(row))
+        subtitle_jobs.boost(int(variant_id))
+        progress["phase"] = "subs_header"
+        await subtitle_jobs.wait_header(int(variant_id), TG_SUBS_HEADER_WAIT_S)
+    result = {"variant_id": int(variant_id), "folder": entry.name, "written": changed}
+    jf = jellyfin_client()
+    if jf is None:
+        return {**result, "status": "refresh_skipped", "message": WATCH_MESSAGES["refresh_skipped"]}
+    found = await stream_watch.refresh_and_find(
+        jf,
+        strm_path=stream_watch.jellyfin_path(entry.strm, TG_STREAMS_DIR, JELLYFIN_STREAMS_PATH),
+        folder_path=stream_watch.jellyfin_path(entry.folder, TG_STREAMS_DIR, JELLYFIN_STREAMS_PATH),
+        search_term=row.get("english_title") or row.get("title"),
+        library=JELLYFIN_LIBRARY,
+        public_url=JELLYFIN_PUBLIC_URL,
+        timeout=JELLYFIN_POLL_TIMEOUT_S,
+        fallback_after=JELLYFIN_FALLBACK_AFTER_S,
+        progress=progress,
+    )
+    found.setdefault("message", WATCH_MESSAGES.get(found["status"], found["status"]))
+    print(f"[watch] {int(variant_id)}: {found['status']} steps={','.join(found.get('steps', []))} "
+          f"elapsed={found.get('elapsed_s')}", flush=True)
+    return {**result, **found}
+
+
+@app.post(
+    "/api/watch/{variant_id}",
+)
+async def watch_now(
+    variant_id: int,
+):
+    key = stream_key()
+    if key is None or not TG_STREAM_PUBLIC_BASE:
+        raise HTTPException(status_code=503, detail="Streaming is not configured")
+    row = _watch_row(variant_id)
+    vid = int(variant_id)
+    job = _watch_inflight.get(vid)
+    joined = job is not None and not job["task"].done()
+    if not joined:
+        progress: dict = {"phase": "queued", "steps": []}
+        task = asyncio.create_task(_do_watch(vid, row, key, progress))
+        job = {"task": task, "progress": progress, "started": asyncio.get_running_loop().time()}
+        _watch_inflight[vid] = job
+        task.add_done_callback(lambda t, v=vid, j=job: _watch_inflight.pop(v, None)
+                               if _watch_inflight.get(v) is j else None)
+    try:
+        result = await asyncio.shield(job["task"])
+    except Exception as exc:  # noqa: BLE001
+        print(f"[watch] {vid}: failed {type(exc).__name__}: {exc}", flush=True)
+        return {"variant_id": vid, "status": "error", "message": "Watch now failed",
+                "library_url": library_url(), "subtitles": _subs_status(vid)}
+    return {**result, "joined": joined, "library_url": library_url(), "subtitles": _subs_status(vid)}
+
+
+@app.get(
+    "/api/watch/{variant_id}",
+)
+async def watch_status(
+    variant_id: int,
+):
+    """Cheap follow-up for a 'pending' Watch now: one lookup, no refresh."""
+    row = _watch_row(variant_id)
+    entry = stream_watch.entry_paths(TG_STREAMS_DIR, row, row)
+    base = {"variant_id": int(variant_id), "folder": entry.name, "subtitles": _subs_status(variant_id),
+            "library_url": library_url()}
+    if subtitle_jobs is not None:
+        subtitle_jobs.boost(int(variant_id))  # the popup is open and polling
+        base["subtitles"] = _subs_status(variant_id)
+    job = _watch_inflight.get(int(variant_id))
+    if job is not None and not job["task"].done():
+        prog = job["progress"]
+        return {**base, "status": "pending", "in_progress": True, "phase": prog.get("phase"),
+                "steps": list(prog.get("steps", [])),
+                "elapsed_s": round(asyncio.get_running_loop().time() - job["started"], 1),
+                "message": "Watch now is in progress"}
+    if not entry.strm.exists():
+        return {**base, "status": "not_prepared", "message": "Press Watch now first"}
+    jf = jellyfin_client()
+    if jf is None:
+        return {**base, "status": "refresh_skipped", "message": WATCH_MESSAGES["refresh_skipped"]}
+    try:
+        item_id = await jf.find_by_path(
+            stream_watch.jellyfin_path(entry.strm, TG_STREAMS_DIR, JELLYFIN_STREAMS_PATH),
+            row.get("english_title") or row.get("title"),
+            JELLYFIN_LIBRARY.configured_id or JELLYFIN_LIBRARY.discovered_id,
+            folder=stream_watch.jellyfin_path(entry.folder, TG_STREAMS_DIR, JELLYFIN_STREAMS_PATH),
+            timeout=5,
+        )
+    except (OSError, ValueError):
+        item_id = None
+    if not item_id:
+        return {**base, "status": "pending", "message": "Not indexed by Jellyfin yet"}
+    return {**base, "status": "ready", "item_id": item_id, "message": WATCH_MESSAGES["ready"],
+            "url": f"{JELLYFIN_PUBLIC_URL}/web/#/details?id={urllib.parse.quote(item_id)}"}
+
+
 @app.get(
     "/health",
 )
@@ -1510,6 +1847,20 @@ async def health():
 
         "searchgram":
             searchgram is not None,
+
+        "tg_stream":
+            {
+                **stream_service.health(),
+                "subs": subtitle_jobs.summary() if subtitle_jobs is not None else None,
+                "library_id_source": (
+                    "env" if JELLYFIN_LIBRARY.configured_id
+                    else "discovered" if JELLYFIN_LIBRARY.discovered_id
+                    else None
+                ),
+            }
+            if stream_server is not None
+            and stream_service is not None
+            else None,
     }
 
 
