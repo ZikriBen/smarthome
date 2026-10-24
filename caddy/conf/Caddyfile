@@ -24,6 +24,11 @@
 		{$CADDY_BASIC_AUTH_USER} {$CADDY_BASIC_AUTH_HASH}
 	}
 
+	# tg-stream: never proxy streams through the public front door.
+	handle /s/* {
+		respond 404
+	}
+
 	handle {
 		reverse_proxy host.docker.internal:8788
 	}
