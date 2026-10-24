@@ -143,38 +143,6 @@
 </dialog>
 
 
-<div id="watchOverlay" class="watch-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="watchTitle">
-    <div class="watch-box">
-        <h2 id="watchTitle" class="watch-title"></h2>
-        <ol class="watch-steps">
-            <li id="watchStepJf" class="watch-step" data-state="active">
-                <span class="watch-step-icon" aria-hidden="true"></span>
-                <div class="watch-step-body">
-                    <div class="watch-step-label">מכינה את הסרט ב-Jellyfin</div>
-                    <div id="watchJfDetail" class="watch-step-detail" aria-live="polite"></div>
-                </div>
-            </li>
-            <li id="watchStepSubs" class="watch-step" data-state="waiting">
-                <span class="watch-step-icon" aria-hidden="true"></span>
-                <div class="watch-step-body">
-                    <div class="watch-step-label">מכינה כתוביות בעברית</div>
-                    <div class="watch-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
-                        <div id="watchSubsBar" class="watch-bar-fill"></div>
-                    </div>
-                    <div id="watchSubsDetail" class="watch-step-detail" aria-live="polite"></div>
-                </div>
-            </li>
-        </ol>
-        <p id="watchHint" class="watch-hint"></p>
-        <div class="watch-actions">
-            <button id="watchGo" class="watch-action primary" type="button" hidden>לצפות עכשיו</button>
-            <button id="watchRetry" class="watch-action primary" type="button" hidden>נסה שוב</button>
-            <a id="watchLibrary" class="watch-action" href="#" hidden>פתח את ספריית Telegram Streams</a>
-            <button id="watchClose" class="watch-action" type="button">סגור</button>
-        </div>
-    </div>
-</div>
-
 <script>
 
 const PAGE_SIZE = 25;
@@ -972,37 +940,36 @@ function renderGrid(
         const variantButtons =
             variants
             .map(
-                variant => {
-                    const quality = escapeHtml(variant.quality || "וידאו");
-                    const size = escapeHtml(formatSize(variant.size));
-                    return `
-                    <div class="variant-row">
-                        <div class="variant-meta">
-                            <span class="variant-quality">${quality}</span>
-                            <span class="variant-size">${size}</span>
-                        </div>
-                        <div class="variant-actions">
-                            <button
-                                class="variant-action watch-button"
-                                type="button"
-                                data-watch-id="${variant.message_id}"
-                                data-watch-title="${escapeHtml(item.title || item.english_title || "")}"
-                                data-watch-quality="${quality}"
-                                aria-label="צפייה ישירה ${quality}"
-                            >צפייה ישירה</button>
-                            <button
-                                class="variant-action quality-button"
-                                type="button"
-                                data-mode="save"
-                                data-message-id="${variant.message_id}"
-                                data-quality="${quality}"
-                                data-size="${size}"
-                                aria-label="שמירה ${quality} (${size})"
-                            >שמירה</button>
-                        </div>
-                    </div>
-                `;
-                }
+                variant => `
+                    <button
+                        class="quality-button"
+                        data-message-id="${variant.message_id}"
+                        data-quality="${escapeHtml(
+                            variant.quality
+                            || "וידאו"
+                        )}"
+                        data-size="${escapeHtml(
+                            formatSize(
+                                variant.size
+                            )
+                        )}"
+                    >
+
+                        <span class="quality-label">
+                            ${escapeHtml(
+                                variant.quality
+                                || "וידאו"
+                            )}
+                        </span>
+
+                        <small>
+                            ${formatSize(
+                                variant.size
+                            )}
+                        </small>
+
+                    </button>
+                `
             )
             .join("");
 
@@ -1178,25 +1145,6 @@ function renderGrid(
             }
         );
 
-        card.querySelectorAll(
-            ".watch-button"
-        ).forEach(
-            button => {
-                button.addEventListener(
-                    "click",
-                    async event => {
-                        event.stopPropagation();
-                        await watchNow(
-                            Number(button.dataset.watchId),
-                            button,
-                            button.dataset.watchTitle,
-                            button.dataset.watchQuality
-                        );
-                    }
-                );
-            }
-        );
-
         grid.appendChild(
             card
         );
@@ -1223,13 +1171,6 @@ function resetButtonDisplay(
 
     button.disabled =
         false;
-
-    if (button.dataset.mode === "save") {
-        // card row: quality + size are shown as text next to the buttons
-        button.textContent = "שמירה";
-        button.removeAttribute("title");
-        return;
-    }
 
     button.innerHTML = `
 
@@ -1309,11 +1250,6 @@ function applyJobState(
         button.title =
             job.last_error
             || "Download failed";
-    }
-
-    if (button.dataset.mode === "save") {
-        button.textContent = statusText(state);
-        return;
     }
 
     button.innerHTML = `
@@ -1459,195 +1395,6 @@ function stopDownloadPolling() {
 }
 
 
-// ---------------------------------------------------------------- Watch now
-// No about:blank tab: an in-page popup with two live steps, both driven by
-// GET /api/watch/{id}: (1) the Jellyfin item, (2) the Hebrew subtitle sidecar
-// (% of the planned bytes + ETA). When both are done THIS tab navigates to
-// Jellyfin (same-tab navigation is never a popup, so no blocker can stop it;
-// Back returns here). "לצפות עכשיו" is offered as soon as step 1 is done.
-const WATCH_PHASES = {
-    queued: "מתחילה…",
-    writing: "כותבת את הקבצים…",
-    subs_header: "בודקת אילו כתוביות יש בקובץ…",
-    media_updated: "מודיעה ל-Jellyfin על הסרט…",
-    polling: "מחכה ש-Jellyfin יוסיף את הסרט לספרייה…",
-    library_refresh: "מרעננת את ספריית Telegram Streams…",
-    full_refresh: "סורקת את הספריות (בפעם הראשונה זה לוקח יותר זמן)…",
-};
-const WATCH_ERRORS = {
-    pending: "Jellyfin עדיין לא סרק את הסרט. בדרך כלל זה מסתדר תוך דקה.",
-    refresh_skipped: "הקבצים נוצרו, אבל אין מפתח API של Jellyfin ולכן לא ביקשתי ממנו לסרוק.",
-    refresh_failed: "Jellyfin לא זמין כרגע. הסרט יופיע בסריקה הבאה שלו.",
-    auth_failed: "Jellyfin דחה את מפתח ה-API.",
-    error: "משהו השתבש בהכנת הצפייה.",
-    network: "אין חיבור לשרת הקטלוג.",
-};
-const WATCH_POLL_MS = 1500;
-const WATCH_EXTRA_WAIT_MS = 30000;  // keep checking after the server's own budget
-const watchBusy = new Set();
-let watchSession = 0;
-
-function fmtDuration(s) {
-    if (s == null || !isFinite(s)) { return ""; }
-    if (s < 60) { return `${Math.max(1, Math.round(s))} שנ׳`; }
-    const m = Math.floor(s / 60), r = Math.round(s % 60);
-    return r ? `${m} דק׳ ${r} שנ׳` : `${m} דק׳`;
-}
-
-function subsView(subs) {
-    // -> {state: waiting|active|done|none|failed, pct, text}
-    if (!subs) { return { state: "waiting", pct: 0, text: "" }; }
-    const st = subs.state || subs.status;
-    if (st === "done") { return { state: "done", pct: 100, text: "הכתוביות מוכנות" }; }
-    if (st === "none" || subs.hebrew === false) {
-        return { state: "none", pct: 0, text: "אין כתוביות בעברית בקובץ הזה" };
-    }
-    if (st === "failed") {
-        return { state: "failed", pct: 0, text: "לא הצלחתי להכין כתוביות. אפשר לבחור את הכתוביות המובנות בנגן." };
-    }
-    const pct = Math.round(100 * (subs.progress || 0));
-    if (st === "queued" || subs.hebrew == null) {
-        return { state: "active", pct: 0, text: st === "queued" ? "ממתינה בתור…" : "בודקת את הקובץ…" };
-    }
-    const eta = subs.eta_s != null ? ` · עוד בערך ${fmtDuration(subs.eta_s)}` : "";
-    return { state: "active", pct, text: `${pct}%${eta}` };
-}
-
-function renderWatch(v) {
-    const overlay = document.getElementById("watchOverlay");
-    overlay.hidden = false;
-    overlay.dataset.state = v.overall;  // loading | ready | error
-    document.getElementById("watchTitle").textContent = v.title;
-    const jf = document.getElementById("watchStepJf");
-    jf.dataset.state = v.jfState;
-    document.getElementById("watchJfDetail").textContent = v.jfText || "";
-    const sub = document.getElementById("watchStepSubs");
-    sub.dataset.state = v.subs.state;
-    const bar = document.getElementById("watchSubsBar");
-    bar.style.width = `${v.subs.pct}%`;
-    bar.parentElement.setAttribute("aria-valuenow", String(v.subs.pct));
-    bar.parentElement.hidden = v.subs.state !== "active" && v.subs.state !== "done";
-    document.getElementById("watchSubsDetail").textContent = v.subs.text;
-    document.getElementById("watchHint").textContent = v.hint || "";
-    document.getElementById("watchGo").hidden = !v.goUrl;
-    document.getElementById("watchRetry").hidden = v.overall !== "error";
-    const lib = document.getElementById("watchLibrary");
-    if (v.libraryUrl) { lib.href = v.libraryUrl; }
-    lib.hidden = v.overall !== "error" || !v.libraryUrl;
-}
-
-function closeWatchOverlay() {
-    watchSession++;  // stops polling; the server-side job still finishes
-    document.getElementById("watchOverlay").hidden = true;
-}
-
-async function getWatchStatus(variantId) {
-    const r = await fetch(`/api/watch/${variantId}`, { cache: "no-store" });
-    if (!r.ok) {
-        throw new Error(`status ${r.status}`);
-    }
-    return r.json();
-}
-
-const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
-
-async function watchNow(variantId, button, title, quality) {
-    if (watchBusy.has(variantId)) {
-        return;  // double tap: the first one is still running (the server joins it too)
-    }
-    watchBusy.add(variantId);
-    const session = ++watchSession;
-    const live = () => session === watchSession;
-    const buttons = document.querySelectorAll(`.watch-button[data-watch-id="${variantId}"]`);
-    buttons.forEach(b => { b.disabled = true; b.textContent = "מכינה…"; });
-    const heading = [title, quality].filter(Boolean).join(" · ") || "צפייה ישירה";
-    const started = Date.now();
-    let libraryUrl = null, readyUrl = null, subs = null, phase = "queued", postDone = null;
-    const view = () => {
-        const sv = subsView(subs);
-        const secs = Math.round((Date.now() - started) / 1000);
-        let hint = "";
-        if (readyUrl && sv.state === "active") {
-            hint = "אפשר כבר לצפות; הכתוביות ימשיכו להיטען ברקע. אם נכנסת לפני שסיימו, בחר/י שוב \"עברית\" בתפריט הכתוביות בעוד כמה דקות.";
-        } else if (!readyUrl && secs >= 3) {
-            hint = `${secs} שניות · אפשר לחכות כאן, זה נפתח לבד`;
-        }
-        renderWatch({
-            overall: "loading", title: heading,
-            jfState: readyUrl ? "done" : "active",
-            jfText: readyUrl ? "מוכן" : (WATCH_PHASES[phase] || WATCH_PHASES.polling),
-            subs: sv, hint, goUrl: readyUrl, libraryUrl,
-        });
-        return sv;
-    };
-    const go = url => {
-        if (!live()) { return; }
-        renderWatch({ overall: "ready", title: heading, jfState: "done", jfText: "פותחת את Jellyfin…",
-                      subs: subsView(subs), goUrl: null });
-        window.location.assign(url);
-    };
-    const fail = (kind, detail) => {
-        if (!live()) { return; }
-        renderWatch({
-            overall: "error", title: heading, jfState: "failed",
-            jfText: WATCH_ERRORS[kind] || detail || WATCH_ERRORS.error,
-            subs: subsView(subs),
-            hint: "אפשר לנסות שוב, או לפתוח את הספרייה ב-Jellyfin ולחפש את הסרט שם.",
-            libraryUrl,
-        });
-        document.getElementById("watchRetry").onclick = () => watchNow(variantId, button, title, quality);
-    };
-    document.getElementById("watchGo").onclick = () => { if (readyUrl) { go(readyUrl); } };
-    const absorb = st => {
-        if (!st) { return; }
-        libraryUrl = st.library_url || libraryUrl;
-        if (st.subtitles !== undefined) { subs = st.subtitles; }
-        if (st.phase) { phase = st.phase; }
-        if (st.status === "ready" && st.url) { readyUrl = st.url; }
-    };
-    const terminal = sv => sv.state === "done" || sv.state === "none" || sv.state === "failed" || !subs;
-    try {
-        view();
-        const post = fetch(`/api/watch/${variantId}`, { method: "POST" })
-            .then(async r => {
-                const data = await r.json().catch(() => ({}));
-                postDone = r.ok ? data : { status: "error", message: data.detail };
-            })
-            .catch(() => { postDone = { status: "network" }; });
-        let extraUntil = null;
-        while (live()) {
-            await sleep(WATCH_POLL_MS);
-            if (!live()) { return; }
-            if (postDone) { absorb(postDone); }
-            try { absorb(await getWatchStatus(variantId)); } catch (e) { /* transient */ }
-            const sv = view();
-            if (readyUrl && terminal(sv)) { return go(readyUrl); }  // both steps done (or no Hebrew)
-            if (postDone && !readyUrl) {
-                if (postDone.status === "pending") {
-                    extraUntil = extraUntil || Date.now() + WATCH_EXTRA_WAIT_MS;
-                    if (Date.now() < extraUntil) { continue; }
-                }
-                await post;
-                return fail(postDone.status, postDone.message);
-            }
-        }
-    } catch (error) {
-        console.error(error);
-        fail("error");
-    } finally {
-        watchBusy.delete(variantId);
-        buttons.forEach(b => { b.disabled = false; b.textContent = "צפייה ישירה"; });
-    }
-}
-
-document.getElementById("watchClose").addEventListener("click", closeWatchOverlay);
-document.addEventListener("keydown", e => {
-    if (e.key === "Escape" && !document.getElementById("watchOverlay").hidden) { closeWatchOverlay(); }
-});
-// Back from Jellyfin (bfcache): never show a stale popup.
-window.addEventListener("pageshow", () => { document.getElementById("watchOverlay").hidden = true; });
-
-
 async function selectDownload(
     messageId,
     button
@@ -1660,9 +1407,7 @@ async function selectDownload(
         "download-active"
     );
 
-    if (button.dataset.mode === "save") {
-        button.textContent = "שולח…";
-    } else button.innerHTML = `
+    button.innerHTML = `
         <span>
             שולח…
         </span>
