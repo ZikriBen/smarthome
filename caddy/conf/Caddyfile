@@ -18,8 +18,10 @@
 }
 
 :8091 {
+	# Credentials come from the container env (caddy/.env, git-ignored; compose env_file), never from git.
+	# Hash: docker run --rm caddy:latest caddy hash-password
 	basicauth {
-		ben <CADDY_BASIC_AUTH_HASH>
+		{$CADDY_BASIC_AUTH_USER} {$CADDY_BASIC_AUTH_HASH}
 	}
 
 	# tg-stream: never proxy streams through the public front door.
