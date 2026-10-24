@@ -125,11 +125,8 @@ platforms:
 
 # Hermes latches first-touch hints here; keep the profile-building offer suppressed.
     enabled: true
-    home_channel:
-      platform: telegram
-      chat_id: '<TELEGRAM_HOME_CHANNEL>'
-      name: <HOME_CHANNEL_NAME>
-      user_id: '<TELEGRAM_HOME_CHANNEL>'
+    # home_channel is NOT tracked here (it is a personal chat id). Hermes reads it from the
+    # TELEGRAM_HOME_CHANNEL / TELEGRAM_HOME_CHANNEL_NAME env vars (see home-agent/.env.example).
 # Local plugins (hermes/plugins/<name>); opt-in list.
 plugins:
   enabled:

@@ -22,6 +22,9 @@ services:
       HERMES_UID: 1000
       HERMES_GID: 1000
       SEARXNG_URL: http://searxng:8080
+      # Home channel for cron/proactive messages (a personal chat id: kept out of git, set in .env).
+      TELEGRAM_HOME_CHANNEL: ${TELEGRAM_HOME_CHANNEL:-}
+      TELEGRAM_HOME_CHANNEL_NAME: ${TELEGRAM_HOME_CHANNEL_NAME:-Home}
       # otp-relay plugin (hermes/plugins/otp-relay): numeric user id of Ben's SMS forward bot. Empty = inert.
       # All its messages are consumed by the Telegram adapter BEFORE auth/the agent (it is not an allowed user);
       # from its private chat, `#OTP <site> <raw SMS>` with exactly one code -> only the code lands in hermes/otp/.
