@@ -13,6 +13,11 @@ services:
       - "127.0.0.1:8088:80"
       - "127.0.0.1:8091:8091"
 
+    environment:
+      # :8091 basic-auth (see conf/Caddyfile). Put them in caddy/.env; single-quote the bcrypt hash there.
+      CADDY_BASIC_AUTH_USER: ${CADDY_BASIC_AUTH_USER:?set CADDY_BASIC_AUTH_USER in caddy/.env}
+      CADDY_BASIC_AUTH_HASH: ${CADDY_BASIC_AUTH_HASH:?set CADDY_BASIC_AUTH_HASH in caddy/.env}
+
     extra_hosts:
       - "host.docker.internal:host-gateway"
 
